@@ -1,0 +1,31 @@
+[project]
+name = "agentlens"
+version = "0.1.0"
+description = "Multi-Agent Review & Encrypted Collaboration Platform"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+
+[tool.uv.workspace]
+members = [
+    "packages/sdk-core",
+    "packages/sdk-langgraph",
+    "packages/otel-semconv",
+    "packages/graph-engine",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

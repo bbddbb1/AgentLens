@@ -1,0 +1,31 @@
+{
+  "name": "agentlens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-Agent Review & Encrypted Collaboration Platform",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentlens/agentlens"
+  },
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "node scripts/run-dev.js",
+    "dev:skip-docker": "turbo dev",
+    "dev:api-ts": "pnpm --filter api-ts dev",
+    "build": "turbo build",
+    "build:api-ts": "pnpm --filter api-ts build",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "clean": "turbo clean",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.4.0",
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0"
+  }
+}
