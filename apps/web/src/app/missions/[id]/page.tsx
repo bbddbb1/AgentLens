@@ -1,0 +1,580 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Download,
+  GitBranch,
+  Loader2,
+  Lock,
+  Maximize2,
+  Minimize2,
+  PauseCircle,
+  Share2,
+  Shield,
+  Telescope,
+  Users,
+  XCircle,
+} from 'lucide-react';
+import type { MissionEventRecord, ReplayBranch, ReplayStateResponse, RuntimeState } from '@agentlens/protocol';
+import { AiAssistant } from '@/components/ai/AiAssistant';
+import { MissionGraph } from '@/components/graph/MissionGraph';
+import { BranchExplorer } from '@/components/replay/BranchExplorer';
+import { ReplayControls } from '@/components/replay/ReplayControls';
+import { ReviewPanel } from '@/components/review/ReviewPanel';
+import { MissionTimeline } from '@/components/timeline/MissionTimeline';
+import { api } from '@/lib/api';
+import { useGraphStore, type GraphSnapshot } from '@/stores/graphStore';
+import type { Mission } from '@/stores/missionStore';
+import { useReplayStore } from '@/stores/replayStore';
+
+function websocketBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
+  return apiUrl.replace(/^http/, 'ws');
+}
+
+function buildDemoReplay(): ReplayStateResponse {
+  const snapshots: GraphSnapshot[] = [
+    {
+      id: 'snap-1',
+      mission_id: 'demo-mission',
+      branch_id: 'main',
+      sequence_num: 0,
+      timestamp: new Date(Date.now() - 300000).toISOString(),
+      event_type: 'task.started',
+      event_description: 'Planner initialized and began decomposing the mission.',
+      source_event_id: 'event-1',
+      source_event_sequence_num: 0,
+      phase: 'planning',
+      nodes: [
+        {
+          id: 'planner',
+          type: 'agent',
+          label: 'Planner',
+          status: 'active',
+          position: { x: 300, y: 0 },
+          agent_id: 'planner',
+          agent_role: 'planner',
+          agent_team: 'Core',
+          confidence: 0.95,
+          summary: 'Decomposing objective into subtasks',
+        },
+      ],
+      edges: [],
+    },
+    {
+      id: 'snap-2',
+      mission_id: 'demo-mission',
+      branch_id: 'main',
+      sequence_num: 1,
+      timestamp: new Date(Date.now() - 240000).toISOString(),
+      event_type: 'delegation',
+      event_description: 'Planner delegated parallel work to Researcher and Writer.',
+      source_event_id: 'event-2',
+      source_event_sequence_num: 1,
+      phase: 'executing',
+      nodes: [
+        {
+          id: 'planner',
+          type: 'agent',
+          label: 'Planner',
+          status: 'completed',
+          position: { x: 300, y: 0 },
+          agent_id: 'planner',
+          agent_role: 'planner',
+          agent_team: 'Core',
+          confidence: 0.95,
+          summary: 'Plan created: 3 research tasks, 1 writing task',
+        },
+        {
+          id: 'researcher',
+          type: 'agent',
+          label: 'Researcher',
+          status: 'active',
+          position: { x: 100, y: 180 },
+          agent_id: 'researcher',
+          agent_role: 'researcher',
+          agent_team: 'Research',
+          confidence: 0.82,
+          summary: 'Gathering data from multiple sources',
+        },
+        {
+          id: 'writer',
+          type: 'agent',
+          label: 'Writer',
+          status: 'waiting',
+          position: { x: 500, y: 180 },
+          agent_id: 'writer',
+          agent_role: 'writer',
+          agent_team: 'Content',
+          confidence: 0.78,
+          summary: 'Awaiting research results',
+        },
+      ],
+      edges: [
+        { id: 'e-1', source: 'planner', target: 'researcher', type: 'delegation', label: 'delegates research', status: 'active', animated: true },
+        { id: 'e-2', source: 'planner', target: 'writer', type: 'delegation', label: 'delegates writing', status: 'pending' },
+      ],
+    },
+    {
+      id: 'snap-3',
+      mission_id: 'demo-mission',
+      branch_id: 'main',
+      sequence_num: 2,
+      timestamp: new Date(Date.now() - 180000).toISOString(),
+      event_type: 'tool.called',
+      event_description: 'Researcher invoked search and analysis tools to expand evidence.',
+      source_event_id: 'event-3',
+      source_event_sequence_num: 2,
+      phase: 'executing',
+      nodes: [
+        {
+          id: 'planner',
+          type: 'agent',
+          label: 'Planner',
+          status: 'completed',
+          position: { x: 300, y: 0 },
+          agent_id: 'planner',
+          agent_role: 'planner',
+          agent_team: 'Core',
+          confidence: 0.95,
+        },
+        {
+          id: 'researcher',
+          type: 'agent',
+          label: 'Researcher',
+          status: 'active',
+          position: { x: 100, y: 180 },
+          agent_id: 'researcher',
+          agent_role: 'researcher',
+          agent_team: 'Research',
+          confidence: 0.88,
+          summary: 'Analyzing 12 data sources',
+        },
+        {
+          id: 'writer',
+          type: 'agent',
+          label: 'Writer',
+          status: 'waiting',
+          position: { x: 500, y: 180 },
+          agent_id: 'writer',
+          agent_role: 'writer',
+          agent_team: 'Content',
+          confidence: 0.78,
+        },
+        { id: 'tool-search', type: 'tool', label: 'Web Search', status: 'completed', position: { x: 0, y: 350 } },
+        { id: 'tool-analysis', type: 'tool', label: 'Data Analysis', status: 'active', position: { x: 200, y: 350 } },
+        { id: 'mem-findings', type: 'memory', label: 'Research Findings', status: 'active', position: { x: 400, y: 350 } },
+      ],
+      edges: [
+        { id: 'e-1', source: 'planner', target: 'researcher', type: 'delegation', label: 'delegates', status: 'completed' },
+        { id: 'e-2', source: 'planner', target: 'writer', type: 'delegation', label: 'delegates', status: 'pending' },
+        { id: 'e-3', source: 'researcher', target: 'tool-search', type: 'uses', label: 'calls', status: 'completed' },
+        { id: 'e-4', source: 'researcher', target: 'tool-analysis', type: 'uses', label: 'calls', status: 'active', animated: true },
+        { id: 'e-5', source: 'researcher', target: 'mem-findings', type: 'data_flow', label: 'writes', status: 'active' },
+      ],
+    },
+    {
+      id: 'snap-4',
+      mission_id: 'demo-mission',
+      branch_id: 'main',
+      sequence_num: 3,
+      timestamp: new Date(Date.now() - 120000).toISOString(),
+      event_type: 'review.changes_requested',
+      event_description: 'Critic requested another pass after finding coverage gaps.',
+      source_event_id: 'event-4',
+      source_event_sequence_num: 3,
+      phase: 'reviewing',
+      nodes: [
+        {
+          id: 'planner',
+          type: 'agent',
+          label: 'Planner',
+          status: 'completed',
+          position: { x: 300, y: 0 },
+          agent_id: 'planner',
+          agent_role: 'planner',
+          agent_team: 'Core',
+          confidence: 0.95,
+        },
+        {
+          id: 'researcher',
+          type: 'agent',
+          label: 'Researcher',
+          status: 'active',
+          position: { x: 100, y: 180 },
+          agent_id: 'researcher',
+          agent_role: 'researcher',
+          agent_team: 'Research',
+          confidence: 0.72,
+          summary: 'Revising findings based on critique',
+        },
+        {
+          id: 'critic',
+          type: 'agent',
+          label: 'Critic',
+          status: 'reviewing',
+          position: { x: 300, y: 180 },
+          agent_id: 'critic',
+          agent_role: 'critic',
+          agent_team: 'QA',
+          confidence: 0.91,
+          summary: 'Found gaps in market data coverage',
+        },
+        {
+          id: 'writer',
+          type: 'agent',
+          label: 'Writer',
+          status: 'waiting',
+          position: { x: 500, y: 180 },
+          agent_id: 'writer',
+          agent_role: 'writer',
+          agent_team: 'Content',
+          confidence: 0.78,
+        },
+        { id: 'tool-search', type: 'tool', label: 'Web Search', status: 'completed', position: { x: 0, y: 350 } },
+        { id: 'tool-analysis', type: 'tool', label: 'Data Analysis', status: 'completed', position: { x: 200, y: 350 } },
+        { id: 'mem-findings', type: 'memory', label: 'Research Findings', status: 'active', position: { x: 400, y: 350 } },
+      ],
+      edges: [
+        { id: 'e-1', source: 'planner', target: 'researcher', type: 'delegation', label: 'delegates', status: 'completed' },
+        { id: 'e-2', source: 'planner', target: 'writer', type: 'delegation', label: 'delegates', status: 'pending' },
+        { id: 'e-2b', source: 'planner', target: 'critic', type: 'delegation', label: 'delegates review', status: 'active' },
+        { id: 'e-3', source: 'researcher', target: 'tool-search', type: 'uses', label: 'calls', status: 'completed' },
+        { id: 'e-4', source: 'researcher', target: 'tool-analysis', type: 'uses', label: 'calls', status: 'completed' },
+        { id: 'e-5', source: 'researcher', target: 'mem-findings', type: 'data_flow', label: 'writes', status: 'active' },
+        { id: 'e-6', source: 'critic', target: 'researcher', type: 'review', label: 'changes requested', status: 'active' },
+      ],
+    },
+    {
+      id: 'snap-5',
+      mission_id: 'demo-mission',
+      branch_id: 'main',
+      sequence_num: 4,
+      timestamp: new Date(Date.now() - 60000).toISOString(),
+      event_type: 'artifact.created',
+      event_description: 'Writer resumed on approved research and started drafting output.',
+      source_event_id: 'event-5',
+      source_event_sequence_num: 4,
+      phase: 'executing',
+      nodes: [
+        { id: 'planner', type: 'agent', label: 'Planner', status: 'completed', position: { x: 300, y: 0 }, agent_id: 'planner', agent_role: 'planner', agent_team: 'Core', confidence: 0.95 },
+        { id: 'researcher', type: 'agent', label: 'Researcher', status: 'completed', position: { x: 100, y: 180 }, agent_id: 'researcher', agent_role: 'researcher', agent_team: 'Research', confidence: 0.94, summary: 'Research complete - 15 sources analyzed' },
+        { id: 'critic', type: 'agent', label: 'Critic', status: 'completed', position: { x: 300, y: 180 }, agent_id: 'critic', agent_role: 'critic', agent_team: 'QA', confidence: 0.93, summary: 'Approved revised findings' },
+        { id: 'writer', type: 'agent', label: 'Writer', status: 'active', position: { x: 500, y: 180 }, agent_id: 'writer', agent_role: 'writer', agent_team: 'Content', confidence: 0.86, summary: 'Generating executive summary draft' },
+        { id: 'tool-search', type: 'tool', label: 'Web Search', status: 'completed', position: { x: 0, y: 350 } },
+        { id: 'tool-analysis', type: 'tool', label: 'Data Analysis', status: 'completed', position: { x: 200, y: 350 } },
+        { id: 'mem-findings', type: 'memory', label: 'Research Findings', status: 'completed', position: { x: 400, y: 350 } },
+        { id: 'artifact-report', type: 'artifact', label: 'Executive Summary', status: 'active', position: { x: 600, y: 350 } },
+      ],
+      edges: [
+        { id: 'e-1', source: 'planner', target: 'researcher', type: 'delegation', status: 'completed' },
+        { id: 'e-2', source: 'planner', target: 'writer', type: 'delegation', status: 'active', animated: true },
+        { id: 'e-2b', source: 'planner', target: 'critic', type: 'delegation', status: 'completed' },
+        { id: 'e-3', source: 'researcher', target: 'tool-search', type: 'uses', status: 'completed' },
+        { id: 'e-4', source: 'researcher', target: 'tool-analysis', type: 'uses', status: 'completed' },
+        { id: 'e-5', source: 'researcher', target: 'mem-findings', type: 'data_flow', status: 'completed' },
+        { id: 'e-6', source: 'critic', target: 'researcher', type: 'review', label: 'approved', status: 'completed' },
+        { id: 'e-7', source: 'mem-findings', target: 'writer', type: 'data_flow', label: 'reads', status: 'active' },
+        { id: 'e-8', source: 'writer', target: 'artifact-report', type: 'produces', label: 'produces', status: 'active', animated: true },
+      ],
+    },
+  ];
+
+  const branches: ReplayBranch[] = [
+    {
+      id: 'main',
+      mission_id: 'demo-mission',
+      name: 'Main',
+      status: 'active',
+      metadata: {},
+      created_at: snapshots[0].timestamp,
+      updated_at: snapshots[snapshots.length - 1].timestamp,
+    },
+  ];
+
+  const events: MissionEventRecord[] = snapshots.map((snapshot, index) => ({
+    id: `event-${index + 1}`,
+    mission_id: 'demo-mission',
+    branch_id: 'main',
+    sequence_num: index,
+    branch_sequence_num: index,
+    event_type: snapshot.event_type ?? 'span.completed',
+    timestamp: snapshot.timestamp,
+    agent_id: snapshot.nodes.find((node) => node.type === 'agent' && node.status === 'active')?.agent_id,
+    payload: {
+      event_description: snapshot.event_description,
+      phase: snapshot.phase,
+    },
+    metadata: {},
+  }));
+
+  const currentState: RuntimeState = {
+    mission_id: 'demo-mission',
+    branch_id: 'main',
+    status: 'active',
+    phase: snapshots[snapshots.length - 1]?.phase ?? 'executing',
+    sequence_num: snapshots.length - 1,
+    agents: {
+      planner: { agent_id: 'planner', name: 'Planner', role: 'planner', team: 'Core', status: 'completed', history: [0, 1], metadata: {} },
+      researcher: { agent_id: 'researcher', name: 'Researcher', role: 'researcher', team: 'Research', status: 'completed', history: [1, 2, 3], metadata: {} },
+      critic: { agent_id: 'critic', name: 'Critic', role: 'critic', team: 'QA', status: 'completed', history: [3, 4], metadata: {} },
+      writer: { agent_id: 'writer', name: 'Writer', role: 'writer', team: 'Content', status: 'active', current_task_id: 'draft-report', history: [1, 4], metadata: {} },
+    },
+    interrupts: {},
+    nodes: snapshots[snapshots.length - 1]?.nodes ?? [],
+    edges: snapshots[snapshots.length - 1]?.edges ?? [],
+  };
+
+  const durationSeconds =
+    (new Date(snapshots[snapshots.length - 1].timestamp).getTime() - new Date(snapshots[0].timestamp).getTime()) / 1000;
+
+  return {
+    mission_id: 'demo-mission',
+    branch_id: 'main',
+    total_frames: snapshots.length,
+    duration_seconds: durationSeconds,
+    branches,
+    events,
+    snapshots,
+    current_state: currentState,
+  };
+}
+
+const statusConfig: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
+  active: { icon: <Loader2 size={12} className="animate-spin" />, color: '#818cf8', label: 'Active' },
+  completed: { icon: <CheckCircle2 size={12} />, color: '#34d399', label: 'Completed' },
+  failed: { icon: <XCircle size={12} />, color: '#f87171', label: 'Failed' },
+  paused: { icon: <PauseCircle size={12} />, color: '#fbbf24', label: 'Paused' },
+};
+
+export default function MissionWorkspacePage() {
+  const { setSnapshots, applySnapshot, snapshots } = useGraphStore();
+  const currentFrame = useReplayStore((state) => state.currentFrame);
+  const branches = useReplayStore((state) => state.branches);
+  const currentBranchId = useReplayStore((state) => state.currentBranchId);
+  const currentState = useReplayStore((state) => state.currentState);
+  const setReplayData = useReplayStore((state) => state.setReplayData);
+  const setCurrentFrame = useReplayStore((state) => state.setCurrentFrame);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isBranchExplorerCollapsed, setIsBranchExplorerCollapsed] = useState(false);
+  const [mission, setMission] = useState<Mission | null>(null);
+  const [missionLoadError, setMissionLoadError] = useState<string | null>(null);
+  const params = useParams<{ id?: string }>();
+  const missionId = Array.isArray(params?.id) ? params.id[0] : params?.id ?? 'demo-mission';
+
+  const syncReplayToGraph = useCallback((replay: ReplayStateResponse) => {
+    setSnapshots(replay.snapshots);
+    setReplayData(replay);
+    if (replay.snapshots.length > 0) {
+      const nextFrame = Math.max(0, Math.min(currentFrame, replay.snapshots.length - 1));
+      setCurrentFrame(nextFrame);
+      applySnapshot(replay.snapshots[nextFrame]);
+    }
+  }, [applySnapshot, currentFrame, setCurrentFrame, setReplayData, setSnapshots]);
+
+  const loadReplay = useCallback(async (branchId?: string) => {
+    if (!missionId || missionId === 'demo-mission') {
+      const demoReplay = buildDemoReplay();
+      syncReplayToGraph(demoReplay);
+      setMission(null);
+      setMissionLoadError(null);
+      return;
+    }
+
+    const [missionData, replay] = await Promise.all([
+      api.missions.get(missionId),
+      api.replay.get(missionId, branchId),
+    ]);
+
+    setMission(missionData);
+    setMissionLoadError(null);
+    syncReplayToGraph(replay);
+  }, [missionId, syncReplayToGraph]);
+
+  useEffect(() => {
+    let active = true;
+    const run = async () => {
+      try {
+        await loadReplay();
+      } catch (cause) {
+        if (!active) return;
+        const demoReplay = buildDemoReplay();
+        setMission(null);
+        setMissionLoadError(cause instanceof Error ? cause.message : 'Failed to load mission.');
+        syncReplayToGraph(demoReplay);
+      }
+    };
+
+    void run();
+    return () => {
+      active = false;
+    };
+  }, [loadReplay, syncReplayToGraph]);
+
+  useEffect(() => {
+    if (!snapshots.length) return;
+    const snapshot = snapshots[currentFrame] ?? snapshots[snapshots.length - 1];
+    if (snapshot) {
+      applySnapshot(snapshot);
+    }
+  }, [applySnapshot, currentFrame, snapshots]);
+
+  useEffect(() => {
+    if (!missionId || missionId === 'demo-mission') return;
+
+    const ws = new WebSocket(`${websocketBaseUrl()}/ws/missions/${missionId}`);
+    ws.onmessage = (event: MessageEvent<string>) => {
+      try {
+        const message = JSON.parse(event.data) as { type?: string; mission?: Mission };
+        if (message.type === 'mission.updated' && message.mission) {
+          setMission(message.mission);
+        }
+        if (message.type === 'graph.snapshot.created' || message.type === 'interrupt.created' || message.type === 'interrupt.decided' || message.type === 'interrupt.resumed') {
+          void loadReplay(currentBranchId ?? undefined);
+        }
+      } catch {
+        // Ignore malformed realtime messages.
+      }
+    };
+
+    return () => ws.close();
+  }, [currentBranchId, loadReplay, missionId]);
+
+  const currentSnapshot = snapshots[currentFrame] ?? snapshots[snapshots.length - 1] ?? null;
+  const missionStatus = mission?.status ?? currentState?.status ?? 'active';
+  const statusBadge = statusConfig[missionStatus] ?? statusConfig.active;
+  const activeAgents = useMemo(() => Object.values(currentState?.agents ?? {}).filter((agent) => agent.status === 'active').length, [currentState]);
+  const pendingInterrupts = useMemo(() => Object.values(currentState?.interrupts ?? {}).filter((interrupt) => interrupt.status === 'pending').length, [currentState]);
+  const showMissionError = Boolean(missionLoadError && missionId !== 'demo-mission');
+
+  return (
+    <div className="h-screen flex flex-col bg-[#0a0b10] overflow-hidden">
+      <header className="flex items-center justify-between px-4 py-2 border-b border-[rgba(255,255,255,0.05)] bg-[rgba(10,11,16,0.9)] backdrop-blur-xl z-40">
+        <div className="flex items-center gap-4">
+          <Link href="/" className="flex items-center gap-2 text-[#5d6180] hover:text-[#9498b0] transition-colors">
+            <ArrowLeft size={16} />
+          </Link>
+          <div className="flex items-center gap-2">
+            <Telescope size={18} className="text-[#818cf8]" />
+            <span className="text-[14px] font-bold gradient-text">AgentLens</span>
+          </div>
+          <div className="h-4 w-px bg-[rgba(255,255,255,0.08)]" />
+          <div className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+              style={{ background: `${statusBadge.color}15`, color: statusBadge.color }}
+            >
+              {statusBadge.icon}
+              {statusBadge.label}
+            </div>
+            <h1 className="text-[13px] font-medium text-[#e8eaf0] max-w-md truncate">
+              {mission?.objective ?? 'Mission overview'}
+            </h1>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 text-[10px] text-[#34d399] mr-2">
+            <Lock size={10} />
+            <span>E2E Encrypted</span>
+          </div>
+          <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] text-[#9498b0] hover:text-[#e8eaf0] hover:bg-[rgba(255,255,255,0.04)] transition-colors">
+            <Share2 size={12} />
+            Share
+          </button>
+          <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] text-[#9498b0] hover:text-[#e8eaf0] hover:bg-[rgba(255,255,255,0.04)] transition-colors">
+            <Download size={12} />
+            Export
+          </button>
+          <button
+            onClick={() => setIsFullscreen((value) => !value)}
+            className="p-1.5 rounded-lg text-[#5d6180] hover:text-[#e8eaf0] hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+          >
+            {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
+        </div>
+      </header>
+
+      <div className="flex-1 flex overflow-hidden">
+        {!isFullscreen && <MissionTimeline />}
+
+        <div className="flex-1 relative overflow-hidden">
+          <MissionGraph />
+
+          {showMissionError && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(10,11,16,0.72)] backdrop-blur-sm p-6">
+              <div className="max-w-md rounded-2xl border border-[rgba(248,113,113,0.18)] bg-[rgba(36,17,20,0.92)] px-5 py-4 text-center shadow-[0_24px_64px_rgba(0,0,0,0.4)]">
+                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[rgba(248,113,113,0.12)] text-[#f87171]">
+                  <XCircle size={18} />
+                </div>
+                <h2 className="text-[14px] font-semibold text-[#f3d0d0]">Mission unavailable</h2>
+                <p className="mt-2 text-[12px] leading-relaxed text-[#d8b4b4]">{missionLoadError}</p>
+              </div>
+            </div>
+          )}
+
+          <div className="absolute top-3 left-3 right-3 z-10 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
+                <Users size={12} className="text-[#818cf8]" />
+                <span className="text-[#9498b0]">{Object.keys(currentState?.agents ?? {}).length} agents</span>
+              </div>
+              <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
+                <GitBranch size={12} className="text-[#67e8f9]" />
+                <span className="text-[#9498b0]">{branches.length} branches</span>
+              </div>
+              <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
+                <Shield size={12} className="text-[#34d399]" />
+                <span className="text-[#9498b0]">{pendingInterrupts} pending interrupts</span>
+              </div>
+              <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
+                <Loader2 size={12} className={activeAgents > 0 ? 'text-[#fbbf24] animate-spin' : 'text-[#5d6180]'} />
+                <span className="text-[#9498b0]">{activeAgents} active agents</span>
+              </div>
+            </div>
+
+            <BranchExplorer
+              missionId={missionId}
+              isCollapsed={isBranchExplorerCollapsed}
+              onToggleCollapsed={() => setIsBranchExplorerCollapsed((value) => !value)}
+              onBranchChange={async (branchId) => {
+                await loadReplay(branchId);
+              }}
+            />
+          </div>
+
+          {currentSnapshot && (
+            <div className="absolute bottom-4 left-4 z-10 max-w-sm rounded-2xl border border-[rgba(255,255,255,0.06)] bg-[rgba(10,11,16,0.82)] px-4 py-3 shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-[#7b819f]">
+                Current Event
+              </div>
+              <div className="mt-1 text-[13px] font-medium text-[#eef1fa]">
+                {currentSnapshot.event_description ?? currentSnapshot.event_type ?? 'Replay frame'}
+              </div>
+              <div className="mt-2 text-[11px] text-[#8f95b2]">
+                {new Date(currentSnapshot.timestamp).toLocaleString()} • phase {currentSnapshot.phase ?? currentState?.phase ?? 'executing'}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {!isFullscreen && <ReviewPanel />}
+      </div>
+
+      <div className="border-t border-[rgba(255,255,255,0.05)] px-4 py-2 bg-[rgba(10,11,16,0.9)] backdrop-blur-xl">
+        <ReplayControls />
+      </div>
+
+      <AiAssistant
+        missionId={missionId}
+        missionObjective={mission?.objective ?? 'Mission overview'}
+        missionStatus={missionStatus}
+      />
+    </div>
+  );
+}

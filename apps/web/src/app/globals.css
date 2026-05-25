@@ -1,0 +1,228 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+/* ─── AgentLens Design System ─── */
+
+@theme {
+  /* Core palette — deep space-inspired dark theme */
+  --color-bg-primary: #0a0b10;
+  --color-bg-secondary: #12131a;
+  --color-bg-tertiary: #1a1b25;
+  --color-bg-elevated: #1e2030;
+  --color-bg-hover: #252738;
+  --color-bg-active: #2d2f44;
+
+  /* Glass surfaces */
+  --color-glass: rgba(30, 32, 48, 0.7);
+  --color-glass-border: rgba(255, 255, 255, 0.06);
+  --color-glass-hover: rgba(40, 42, 60, 0.8);
+
+  /* Text hierarchy */
+  --color-text-primary: #e8eaf0;
+  --color-text-secondary: #9498b0;
+  --color-text-muted: #5d6180;
+  --color-text-accent: #8b9cf7;
+
+  /* Brand gradient */
+  --color-brand-start: #6366f1;
+  --color-brand-mid: #8b5cf6;
+  --color-brand-end: #a78bfa;
+
+  /* Semantic colors */
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error: #f87171;
+  --color-info: #60a5fa;
+
+  /* Node type colors */
+  --color-node-agent: #818cf8;
+  --color-node-human: #f0abfc;
+  --color-node-task: #67e8f9;
+  --color-node-tool: #fbbf24;
+  --color-node-memory: #34d399;
+  --color-node-team: #a78bfa;
+  --color-node-artifact: #fb923c;
+
+  /* Edge type colors */
+  --color-edge-delegation: #818cf8;
+  --color-edge-critique: #f87171;
+  --color-edge-review: #34d399;
+  --color-edge-escalation: #fbbf24;
+  --color-edge-dataflow: #60a5fa;
+
+  /* Status colors */
+  --color-status-active: #818cf8;
+  --color-status-completed: #34d399;
+  --color-status-failed: #f87171;
+  --color-status-waiting: #fbbf24;
+  --color-status-idle: #5d6180;
+
+  /* Spacing */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* Shadows */
+  --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.15);
+  --shadow-float: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* ─── Base ─── */
+
+html, body {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Scrollbar ─── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg-active);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* ─── Glass Morphism Utilities ─── */
+
+.glass {
+  background: var(--color-glass);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--color-glass-border);
+}
+
+.glass-card {
+  background: var(--color-glass);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.glass-hover:hover {
+  background: var(--color-glass-hover);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ─── Brand Gradient ─── */
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--color-brand-start), var(--color-brand-mid), var(--color-brand-end));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-border {
+  position: relative;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, var(--color-brand-start), var(--color-brand-end));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* ─── Status Badges ─── */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.status-active { background: rgba(129, 140, 248, 0.15); color: var(--color-status-active); }
+.status-completed { background: rgba(52, 211, 153, 0.15); color: var(--color-status-completed); }
+.status-failed { background: rgba(248, 113, 113, 0.15); color: var(--color-status-failed); }
+.status-waiting { background: rgba(251, 191, 36, 0.15); color: var(--color-status-waiting); }
+
+/* ─── React Flow Overrides ─── */
+
+.react-flow__background {
+  background-color: var(--color-bg-primary) !important;
+}
+
+.react-flow__minimap {
+  background-color: var(--color-bg-secondary) !important;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-glass-border) !important;
+}
+
+.react-flow__controls {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--color-glass-border) !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+.react-flow__controls-button {
+  background-color: var(--color-bg-elevated) !important;
+  border-color: var(--color-glass-border) !important;
+  color: var(--color-text-secondary) !important;
+  fill: var(--color-text-secondary) !important;
+}
+
+.react-flow__controls-button:hover {
+  background-color: var(--color-bg-hover) !important;
+  color: var(--color-text-primary) !important;
+  fill: var(--color-text-primary) !important;
+}
+
+.react-flow__edge-path {
+  stroke-width: 2;
+}
+
+.react-flow__panel {
+  margin: 12px !important;
+}
+
+/* ─── Animations ─── */
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(99, 102, 241, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.4); }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fade-in-up {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-slide-in-right { animation: slide-in-right 0.3s ease-out; }
+.animate-fade-in-up { animation: fade-in-up 0.3s ease-out; }
