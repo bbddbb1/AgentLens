@@ -1,0 +1,21 @@
+[project]
+name = "agentlens-sdk-langgraph"
+version = "0.1.0"
+description = "LangGraph instrumentation adapter for AgentLens"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "agentlens-sdk-core",
+    "langgraph>=0.0.26",
+    "langchain-core>=0.1.0",
+]
+
+[tool.uv.sources]
+agentlens-sdk-core = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentlens_langgraph"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
