@@ -1,0 +1,49 @@
+name: Feature Request
+description: Suggest an idea for AgentLens
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Please describe the problem you're trying to solve before proposing a solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve? What's the user story?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the solution you'd like. Include how it fits into the existing architecture.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative approaches you've thought about.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Primary component affected
+      options:
+        - api-ts
+        - web
+        - protocol
+        - sdk-core
+        - sdk-langgraph
+        - otel-semconv
+        - graph-engine
+        - docs
+        - examples
+        - other
+    validations:
+      required: true
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Contributing
+      options:
+        - label: I'm willing to open a PR for this feature.
