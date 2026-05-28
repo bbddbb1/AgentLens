@@ -83,6 +83,11 @@ export const AgentEvents = {
   MISSION_PHASE_CHANGED: 'mission.phase.changed',
   MISSION_COMPLETED: 'mission.completed',
   MISSION_FAILED: 'mission.failed',
+  LLM_CALL: 'gen_ai.call',
+  LLM_RESPONSE: 'gen_ai.response',
+  LLM_ERROR: 'gen_ai.error',
+  LLM_STREAMING_START: 'gen_ai.streaming.start',
+  LLM_STREAMING_END: 'gen_ai.streaming.end',
 } as const;
 
 export const AgentSpanKind = {
@@ -107,6 +112,29 @@ export const Frameworks = {
   CREWAI: 'crewai',
   OPENAI_AGENTS: 'openai_agents',
   MS_AGENT_FRAMEWORK: 'ms_agent_framework',
+} as const;
+
+export const LLMAttributes = {
+  MODEL_PROVIDER: 'gen_ai.system',
+  MODEL_NAME: 'gen_ai.request.model',
+  MODEL_VERSION: 'gen_ai.model.version',
+  PROMPT: 'gen_ai.prompt',
+  COMPLETION: 'gen_ai.completion',
+  TOKENS_INPUT: 'gen_ai.usage.input_tokens',
+  TOKENS_OUTPUT: 'gen_ai.usage.output_tokens',
+  TOKENS_TOTAL: 'gen_ai.usage.total_tokens',
+  TEMPERATURE: 'gen_ai.request.temperature',
+  MAX_TOKENS: 'gen_ai.request.max_tokens',
+  STOP_REASON: 'gen_ai.response.finish_reason',
+  LATENCY_MS: 'gen_ai.latency_ms',
+} as const;
+
+export const ErrorAttributes = {
+  SOURCE: 'error.source',
+  CAUSE: 'error.cause',
+  SEVERITY: 'error.severity',
+  RECOVERY_ACTION: 'error.recovery.action',
+  ORIGINAL_ERROR: 'error.original',
 } as const;
 
 const frameworkAliases: Record<string, string> = {

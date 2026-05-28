@@ -15,5 +15,6 @@ Usage:
 from agentlens_sdk.client import AgentLens
 from agentlens_sdk.mission import Mission
 from agentlens_sdk.agent import AgentInstrumentor
+from .proxy import ToolExecutionProxy
 
-__all__ = ["AgentLens", "Mission", "AgentInstrumentor"]
+__all__ = ["AgentLens", "Mission", "AgentInstrumentor", "ToolExecutionProxy"]

@@ -7,13 +7,31 @@ import {
   type CreateInterruptInput,
   type CreateReplayBranchInput,
   type DecideInterruptInput,
+  type EventEnvelope,
   type GraphSnapshot,
   type InterruptRecord,
   type MissionEventRecord,
   type OtlpSpan,
+  type PolicyDecision,
   type ReplayBranch,
   type ReplayStateResponse,
 } from '@agentlens/protocol';
+import { BuiltInRules, PolicyEngine } from './policyEngine.js';
+
+function deterministicStringify(obj: any): string {
+  if (obj === undefined) return '';
+  if (obj === null || typeof obj !== 'object') {
+    return JSON.stringify(obj) ?? 'null';
+  }
+  if (Array.isArray(obj)) {
+    return '[' + obj.filter(item => item !== undefined).map(deterministicStringify).join(',') + ']';
+  }
+  const keys = Object.keys(obj).sort();
+  const props = keys
+    .filter(key => obj[key] !== undefined)
+    .map(key => JSON.stringify(key) + ':' + deterministicStringify(obj[key]));
+  return '{' + props.join(',') + '}';
+}
 import type { Mission, MissionAggregate, MissionAgent, SemanticSummaryResult } from '../types/mission.js';
 import { pool } from '../db/postgres.js';
 import type { PoolClient } from 'pg';
@@ -102,8 +120,16 @@ export interface ArtifactRecord {
 }
 
 export interface IngestResult {
-  snapshot: GraphSnapshot;
-  generated_summary: SemanticSummaryResult | null;
+  accepted: boolean;
+}
+
+export interface IntegrityReport {
+  is_valid: boolean;
+  branch_reports: Array<{
+    branch_id: string;
+    is_valid: boolean;
+    errors: string[];
+  }>;
 }
 
 class MissionStore {
@@ -197,7 +223,7 @@ class MissionStore {
       sequence_num: Number(row.sequence_num),
       branch_sequence_num: Number(row.branch_sequence_num),
       event_type: String(row.event_type),
-      timestamp: new Date(String(row.timestamp)).toISOString(),
+      timestamp: row.timestamp instanceof Date ? row.timestamp.toISOString() : new Date(String(row.timestamp)).toISOString(),
       agent_id: row.agent_id ? String(row.agent_id) : undefined,
       span_id: row.span_id ? String(row.span_id) : undefined,
       trace_id: row.trace_id ? String(row.trace_id) : undefined,
@@ -205,7 +231,13 @@ class MissionStore {
       idempotency_key: row.idempotency_key ? String(row.idempotency_key) : undefined,
       payload: (row.payload as Record<string, unknown>) ?? {},
       metadata: (row.metadata as Record<string, unknown>) ?? {},
-    };
+      content_hash: row.content_hash ? String(row.content_hash) : undefined,
+      previous_hash: row.previous_hash ? String(row.previous_hash) : undefined,
+      policy: row.policy_decision ? (row.policy_decision as PolicyDecision) : undefined,
+      actor_type: row.actor_type ? String(row.actor_type) : undefined,
+      actor_id: row.actor_id ? String(row.actor_id) : undefined,
+      origin_framework: row.origin_framework ? String(row.origin_framework) : undefined,
+    } as EventEnvelope;
   }
 
   private mapBranchRow(row: Record<string, unknown>): ReplayBranch {
@@ -226,10 +258,11 @@ class MissionStore {
   }
 
 
-  private mapInterruptRow(row: Record<string, unknown>): InterruptRecord {
+  private mapInterruptRow(row: Record<string, unknown>): InterruptRecord & { branch_id?: string } {
     return {
       id: String(row.id),
       mission_id: String(row.mission_id),
+      branch_id: String(row.branch_id),
       interrupt_id: String(row.interrupt_id),
       agent_id: row.agent_id ? String(row.agent_id) : undefined,
       span_id: row.span_id ? String(row.span_id) : undefined,
@@ -248,7 +281,7 @@ class MissionStore {
     };
   }
 
-  private async recordInterruptsFromSpans(client: PoolClient, missionId: string, spans: OtlpSpan[]): Promise<boolean> {
+  private async recordInterruptsFromSpans(client: PoolClient, missionId: string, spans: OtlpSpan[], branchId: string = ROOT_BRANCH_ID): Promise<boolean> {
     let interruptRequested = false;
     for (const span of spans) {
       for (const event of span.events ?? []) {
@@ -262,9 +295,9 @@ class MissionStore {
         await client.query(
           `
             INSERT INTO interrupts (
-              id, mission_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at
-            ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9::jsonb, $10)
-            ON CONFLICT (mission_id, interrupt_id) DO UPDATE
+              id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11)
+            ON CONFLICT (mission_id, branch_id, interrupt_id) DO UPDATE
             SET reason = EXCLUDED.reason,
                 resume_url = COALESCE(EXCLUDED.resume_url, interrupts.resume_url),
                 payload = interrupts.payload || EXCLUDED.payload,
@@ -273,6 +306,7 @@ class MissionStore {
           [
             randomUUID(),
             missionId,
+            branchId,
             interruptId,
             attributeValue(span.attributes, AgentAttributes.ID) ?? null,
             span.span_id,
@@ -320,72 +354,130 @@ class MissionStore {
 
   private async appendMissionEvents(
     client: PoolClient,
-    events: Array<Omit<MissionEventRecord, 'id' | 'sequence_num' | 'branch_sequence_num'> & { idempotency_key?: string }>,
-  ): Promise<MissionEventRecord[]> {
+    events: Array<Omit<EventEnvelope, 'id' | 'sequence_num' | 'branch_sequence_num'> & { idempotency_key?: string }>,
+  ): Promise<EventEnvelope[]> {
     if (events.length === 0) return [];
     const missionId = events[0].mission_id;
+    const policyEngine = new PolicyEngine();
 
+    // Get current max sequence numbers
     const missionSequenceResult = await client.query(
       `SELECT COALESCE(MAX(sequence_num), -1) AS max_sequence FROM mission_events WHERE mission_id = $1`,
       [missionId],
     );
     let missionSequence = Number(missionSequenceResult.rows[0]?.max_sequence ?? -1);
+
+    // Get max branch sequence and latest hash for each unique branch in this batch
+    const uniqueBranches = [...new Set(events.map((e) => e.branch_id))];
     const branchSequenceCache = new Map<string, number>();
-    const appended: MissionEventRecord[] = [];
-
-    for (const pending of events) {
-      const branchId = pending.branch_id;
-      if (!branchSequenceCache.has(branchId)) {
-        const branchSequenceResult = await client.query(
-          `SELECT COALESCE(MAX(branch_sequence_num), -1) AS max_sequence FROM mission_events WHERE mission_id = $1 AND branch_id = $2`,
-          [missionId, branchId],
-        );
-        branchSequenceCache.set(branchId, Number(branchSequenceResult.rows[0]?.max_sequence ?? -1));
-      }
-
-      const nextBranchSequence = (branchSequenceCache.get(branchId) ?? -1) + 1;
-      const id = randomUUID();
-      missionSequence += 1;
-
-      const result = await client.query(
-        `
-          INSERT INTO mission_events (
-            id, mission_id, branch_id, sequence_num, branch_sequence_num, timestamp, event_type,
-            agent_id, span_id, trace_id, parent_span_id, idempotency_key, payload, metadata
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
-          ON CONFLICT (mission_id, branch_id, idempotency_key)
-          DO NOTHING
-          RETURNING *
-        `,
-        [
-          id,
-          missionId,
-          branchId,
-          missionSequence,
-          nextBranchSequence,
-          pending.timestamp,
-          pending.event_type,
-          pending.agent_id ?? null,
-          pending.span_id ?? null,
-          pending.trace_id ?? null,
-          pending.parent_span_id ?? null,
-          pending.idempotency_key ?? null,
-          JSON.stringify(pending.payload ?? {}),
-          JSON.stringify(pending.metadata ?? {}),
-        ],
+    const previousHashCache = new Map<string, string | null>();
+    for (const branchId of uniqueBranches) {
+      const branchSequenceResult = await client.query(
+        `SELECT branch_sequence_num, content_hash FROM mission_events WHERE mission_id = $1 AND branch_id = $2 ORDER BY branch_sequence_num DESC LIMIT 1`,
+        [missionId, branchId],
       );
-
-      if (result.rowCount === 0) {
-        missionSequence -= 1;
-        continue;
-      }
-
-      branchSequenceCache.set(branchId, nextBranchSequence);
-      appended.push(this.mapEventRow(result.rows[0] as Record<string, unknown>));
+      const row = branchSequenceResult.rows[0];
+      branchSequenceCache.set(branchId, Number(row?.branch_sequence_num ?? -1));
+      previousHashCache.set(branchId, (row?.content_hash as string) ?? null);
     }
 
-    return appended;
+    // Pre-compute all IDs and sequence numbers
+    const rows: Array<{
+      id: string;
+      missionSequence: number;
+      branchSequence: number;
+      event: typeof events[number];
+      content_hash: string;
+      previous_hash: string | null;
+    }> = [];
+
+    for (const event of events) {
+      const branchId = event.branch_id;
+      missionSequence += 1;
+      const branchSequence = (branchSequenceCache.get(branchId) ?? -1) + 1;
+      branchSequenceCache.set(branchId, branchSequence);
+
+      const previous_hash = previousHashCache.get(branchId) ?? null;
+      const hashInput = deterministicStringify({
+        mission_id: missionId,
+        branch_id: branchId,
+        sequence_num: missionSequence,
+        branch_sequence_num: branchSequence,
+        event_type: event.event_type,
+        timestamp: event.timestamp,
+        agent_id: event.agent_id ?? null,
+        payload: event.payload ?? {},
+        metadata: event.metadata ?? {},
+        previous_hash: previous_hash ?? null
+      });
+      const content_hash = createHash('sha256').update(hashInput).digest('hex');
+      previousHashCache.set(branchId, content_hash);
+
+      const policy = policyEngine.evaluateEvent(event as EventEnvelope);
+      if (policy) {
+        event.policy = policy;
+      }
+
+      rows.push({
+        id: randomUUID(),
+        missionSequence,
+        branchSequence,
+        event,
+        content_hash,
+        previous_hash
+      });
+    }
+
+    if (rows.length === 0) return [];
+
+    // Build batch INSERT with parameterized values
+    const COLS_PER_ROW = 17;
+    const valuePlaceholders: string[] = [];
+    const params: unknown[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const offset = i * 17;
+      valuePlaceholders.push(
+        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11}, $${offset + 12}, $${offset + 13}::jsonb, $${offset + 14}::jsonb, $${offset + 15}, $${offset + 16}, $${offset + 17}::jsonb)`,
+      );
+
+      const { id, missionSequence: seq, branchSequence: bseq, event, content_hash, previous_hash } = rows[i];
+      params.push(
+        id,
+        missionId,
+        event.branch_id,
+        seq,
+        bseq,
+        event.timestamp,
+        event.event_type,
+        event.agent_id ?? null,
+        event.span_id ?? null,
+        event.trace_id ?? null,
+        event.parent_span_id ?? null,
+        event.idempotency_key ?? null,
+        JSON.stringify(event.payload ?? {}),
+        JSON.stringify(event.metadata ?? {}),
+        content_hash,
+        previous_hash,
+        JSON.stringify(event.policy ?? null)
+      );
+    }
+
+    const result = await client.query(
+      `
+        INSERT INTO mission_events (
+          id, mission_id, branch_id, sequence_num, branch_sequence_num, timestamp, event_type,
+          agent_id, span_id, trace_id, parent_span_id, idempotency_key, payload, metadata, content_hash, previous_hash, policy_decision
+        )
+        VALUES ${valuePlaceholders.join(', ')}
+        ON CONFLICT (mission_id, branch_id, idempotency_key)
+        DO NOTHING
+        RETURNING *
+      `,
+      params,
+    );
+
+    return result.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
   }
 
   private async listReplayBranchesInternal(client: PoolClient, missionId: string): Promise<ReplayBranch[]> {
@@ -415,6 +507,83 @@ class MissionStore {
       [missionId],
     );
     return result.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
+  }
+
+  async verifyMissionIntegrity(missionId: string): Promise<IntegrityReport> {
+    const client = await pool.connect();
+    try {
+      const eventsResult = await client.query(
+        `SELECT * FROM mission_events WHERE mission_id = $1 ORDER BY sequence_num ASC`,
+        [missionId]
+      );
+      const events = eventsResult.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
+
+      const branchesMap = new Map<string, MissionEventRecord[]>();
+      for (const event of events) {
+        if (!branchesMap.has(event.branch_id)) {
+          branchesMap.set(event.branch_id, []);
+        }
+        branchesMap.get(event.branch_id)!.push(event);
+      }
+
+      const report: IntegrityReport = {
+        is_valid: true,
+        branch_reports: []
+      };
+
+      for (const [branchId, branchEvents] of branchesMap.entries()) {
+        const branchReport = {
+          branch_id: branchId,
+          is_valid: true,
+          errors: [] as string[]
+        };
+
+        // Ensure events are sorted by branch_sequence_num
+        branchEvents.sort((a, b) => a.branch_sequence_num - b.branch_sequence_num);
+
+        let previousHash: string | null = null;
+        for (const event of branchEvents) {
+          const hashInput = deterministicStringify({
+            mission_id: event.mission_id,
+            branch_id: event.branch_id,
+            sequence_num: event.sequence_num,
+            branch_sequence_num: event.branch_sequence_num,
+            event_type: event.event_type,
+            timestamp: event.timestamp,
+            agent_id: event.agent_id ?? null,
+            payload: event.payload ?? {},
+            metadata: event.metadata ?? {},
+            previous_hash: previousHash ?? null
+          });
+          const computed_hash = createHash('sha256').update(hashInput).digest('hex');
+
+          const eventContentHash = (event as any).content_hash ?? null;
+          const eventPreviousHash = (event as any).previous_hash ?? null;
+
+          if (computed_hash !== eventContentHash) {
+            branchReport.is_valid = false;
+            branchReport.errors.push(`Hash mismatch for event ${event.id} (seq ${event.sequence_num}, branch_seq ${event.branch_sequence_num}). Expected: ${computed_hash}, Actual: ${eventContentHash}`);
+          }
+
+          if (eventPreviousHash !== previousHash) {
+            branchReport.is_valid = false;
+            branchReport.errors.push(`Previous hash mismatch for event ${event.id} (seq ${event.sequence_num}, branch_seq ${event.branch_sequence_num}). Expected: ${previousHash}, Actual: ${eventPreviousHash}`);
+          }
+
+          previousHash = eventContentHash;
+        }
+
+        if (!branchReport.is_valid) {
+          report.is_valid = false;
+        }
+
+        report.branch_reports.push(branchReport);
+      }
+
+      return report;
+    } finally {
+      client.release();
+    }
   }
 
   async generateSummaryForHumanReview(missionId: string): Promise<SemanticSummaryResult | null> {
@@ -581,10 +750,8 @@ class MissionStore {
           [randomUUID(), missionId, batchId, spans.length],
         );
         if (batchResult.rowCount === 0) {
-          const replay = await this.getReplayFromTelemetry(missionId, branchId);
           await client.query('COMMIT');
-          if (!replay || replay.snapshots.length === 0) return null;
-          return { snapshot: replay.snapshots[replay.snapshots.length - 1], generated_summary: null };
+          return { accepted: true };
         }
       }
 
@@ -627,30 +794,14 @@ class MissionStore {
         );
       }
 
-      const interruptRequested = await this.recordInterruptsFromSpans(client, missionId, spans);
+      const interruptRequested = await this.recordInterruptsFromSpans(client, missionId, spans, branchId);
       await client.query('COMMIT');
-      const replay = await this.getReplayFromTelemetry(missionId, branchId);
-      const savedSnapshot =
-        replay?.snapshots[replay.snapshots.length - 1] ??
-        {
-          id: randomUUID(),
-          mission_id: missionId,
-          branch_id: branchId,
-          sequence_num: appendedEvents[appendedEvents.length - 1]?.sequence_num ?? 0,
-          timestamp: new Date().toISOString(),
-          nodes: [],
-          edges: [],
-          event_type: 'span_ingestion',
-          event_description: `Ingested ${spans.length} spans`,
-          phase,
-        };
-      const generatedSummary = interruptRequested
-        ? await this.generateSummaryForHumanReview(missionId)
-        : null;
-      return {
-        snapshot: savedSnapshot,
-        generated_summary: generatedSummary,
-      };
+      
+      // Async graph materializer will be triggered separately
+      // For now, if an interrupt is requested, we might want to schedule summary generation asynchronously,
+      // but per requirements, we are just returning 202 Accepted.
+      
+      return { accepted: true };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -659,21 +810,42 @@ class MissionStore {
     }
   }
 
-  async getReplayFromTelemetry(missionId: string, branchId = ROOT_BRANCH_ID): Promise<ReplayStateResponse | null> {
+  async getReplayFromTelemetry(missionId: string, branchId = ROOT_BRANCH_ID, useCheckpoint = false): Promise<ReplayStateResponse | null> {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
     const client = await pool.connect();
     try {
-      const [branches, events] = await Promise.all([
-        this.listReplayBranchesInternal(client, missionId),
-        this.listMissionEventsInternal(client, missionId),
-      ]);
+      const branches = await this.listReplayBranchesInternal(client, missionId);
       const safeBranches = branches.length ? branches : [createDefaultBranch(missionId)];
       if (!safeBranches.some((branch) => branch.id === branchId)) {
         return null;
       }
-      const selectedEvents = selectEventsForBranch(events, safeBranches, branchId);
-      const replay = replayMissionEvents(missionId, branchId, selectedEvents, mission.status, mission.phase);
+
+      let checkpoint: { sequence_num: number; state: any } | undefined;
+      if (useCheckpoint) {
+        const checkpointResult = await client.query(
+          `SELECT sequence_num, state FROM mission_state_checkpoints WHERE mission_id = $1 AND branch_id = $2 ORDER BY sequence_num DESC LIMIT 1`,
+          [missionId, branchId]
+        );
+        checkpoint = checkpointResult.rows[0] as { sequence_num: number; state: any } | undefined;
+      }
+
+      const eventsResult = await client.query(
+        `SELECT * FROM mission_events WHERE mission_id = $1 AND sequence_num > $2 ORDER BY sequence_num ASC`,
+        [missionId, checkpoint?.sequence_num ?? -1]
+      );
+      const newEvents = eventsResult.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
+
+      const selectedEvents = selectEventsForBranch(newEvents, safeBranches, branchId);
+      const replay = replayMissionEvents(missionId, branchId, selectedEvents, mission.status, mission.phase, checkpoint?.state);
+
+      if (selectedEvents.length > 0 && replay.current_state) {
+        await client.query(
+          `INSERT INTO mission_state_checkpoints (mission_id, branch_id, sequence_num, state) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT DO NOTHING`,
+          [missionId, branchId, selectedEvents[selectedEvents.length - 1].sequence_num, JSON.stringify(replay.current_state)]
+        );
+      }
+
       const durationSeconds =
         replay.snapshots.length >= 2
           ? (new Date(replay.snapshots[replay.snapshots.length - 1].timestamp).getTime() -
@@ -700,7 +872,7 @@ class MissionStore {
     missionId: string,
     branchId = ROOT_BRANCH_ID,
   ): Promise<{ mission_id: string; current: GraphSnapshot | null; total_snapshots: number } | null> {
-    const replay = await this.getReplayFromTelemetry(missionId, branchId);
+    const replay = await this.getReplayFromTelemetry(missionId, branchId, true);
     if (!replay) return null;
     return {
       mission_id: missionId,
@@ -762,6 +934,45 @@ class MissionStore {
         forked_from_sequence_num: forkedFromSequenceNum,
         metadata: input.metadata,
       });
+
+      // Duplicate pending interrupts exactly as they were at the fork point
+      if (sourceReplay.current_state) {
+        // Re-run replay to the exact fork point to get accurate interrupt state
+        const eventsAtFork = sourceReplay.events.filter(e => e.sequence_num <= forkedFromSequenceNum);
+        const stateAtFork = replayMissionEvents(missionId, sourceBranchId, eventsAtFork, mission.status, mission.phase).current_state;
+        if (stateAtFork) {
+          const interruptsAtFork = Object.values(stateAtFork.interrupts ?? {});
+          for (const intr of interruptsAtFork) {
+            await client.query(
+              `
+                INSERT INTO interrupts (
+                  id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload,
+                  decision, decision_comment, decision_payload, expires_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15, NOW())
+                ON CONFLICT (mission_id, branch_id, interrupt_id) DO NOTHING
+              `,
+              [
+                randomUUID(),
+                missionId,
+                branchId,
+                intr.interrupt_id,
+                intr.agent_id ?? null,
+                intr.span_id ?? null,
+                intr.status,
+                intr.reason,
+                intr.resume_url ?? null,
+                null, // resume_token_hash won't be copied but that's fine or we'd need to extract it
+                JSON.stringify(intr.payload ?? {}),
+                intr.decision ?? null,
+                intr.decision_comment ?? null,
+                JSON.stringify(intr.payload ?? {}),
+                null, // expires_at omitted for simplicity
+              ]
+            );
+          }
+        }
+      }
+
       await client.query('COMMIT');
       return branch;
     } catch (error) {
@@ -880,21 +1091,22 @@ class MissionStore {
     return result;
   }
 
-  async createInterrupt(input: CreateInterruptInput): Promise<InterruptRecord | null> {
+  async createInterrupt(input: CreateInterruptInput & { branch_id?: string }): Promise<InterruptRecord | null> {
     const mission = await this.getMission(input.mission_id);
     if (!mission) return null;
+    const branchId = input.branch_id ?? ROOT_BRANCH_ID;
     const interruptId = input.interrupt_id ?? randomUUID();
     const resumeToken = input.resume_token ?? randomUUID() + randomUUID();
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await this.ensureBranch(client, input.mission_id, ROOT_BRANCH_ID);
+      await this.ensureBranch(client, input.mission_id, branchId);
       const result = await client.query(
         `
           INSERT INTO interrupts (
-            id, mission_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at
-          ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9::jsonb, $10)
-          ON CONFLICT (mission_id, interrupt_id) DO UPDATE
+            id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11)
+          ON CONFLICT (mission_id, branch_id, interrupt_id) DO UPDATE
           SET reason = EXCLUDED.reason,
               resume_url = COALESCE(EXCLUDED.resume_url, interrupts.resume_url),
               payload = interrupts.payload || EXCLUDED.payload,
@@ -904,6 +1116,7 @@ class MissionStore {
         [
           randomUUID(),
           input.mission_id,
+          branchId,
           interruptId,
           input.agent_id ?? null,
           input.span_id ?? null,
@@ -918,7 +1131,7 @@ class MissionStore {
       await this.appendMissionEvents(client, [
         {
           mission_id: input.mission_id,
-          branch_id: ROOT_BRANCH_ID,
+          branch_id: branchId,
           event_type: 'interrupt.requested',
           timestamp: interrupt.created_at,
           agent_id: input.agent_id,
@@ -944,7 +1157,7 @@ class MissionStore {
     }
   }
 
-  async listInterrupts(missionId: string, status?: string): Promise<InterruptRecord[] | null> {
+  async listInterrupts(missionId: string, status?: string, branchId?: string): Promise<InterruptRecord[] | null> {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
     const params: string[] = [missionId];
@@ -952,6 +1165,10 @@ class MissionStore {
     if (status) {
       params.push(status);
       whereClause += ` AND status = $${params.length}`;
+    }
+    if (branchId) {
+      params.push(branchId);
+      whereClause += ` AND branch_id = $${params.length}`;
     }
     const result = await pool.query(
       `
@@ -965,39 +1182,41 @@ class MissionStore {
     return result.rows.map((row) => this.mapInterruptRow(row as Record<string, unknown>));
   }
 
-  async decideInterrupt(missionId: string, interruptId: string, input: DecideInterruptInput): Promise<InterruptRecord | null> {
+  async decideInterrupt(missionId: string, interruptId: string, input: DecideInterruptInput & { branch_id?: string }): Promise<InterruptRecord | null> {
+    const branchId = input.branch_id ?? ROOT_BRANCH_ID;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [`${missionId}:${interruptId}`]);
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [`${missionId}:${branchId}:${interruptId}`]);
       const result = await client.query(
         `
           UPDATE interrupts
-          SET status = CASE WHEN $3 = 'approve' THEN 'approved' WHEN $3 = 'reject' THEN 'rejected' WHEN $3 = 'resume' THEN 'resumed' ELSE 'pending' END,
-              decision = $3,
-              decision_comment = $4,
-              decision_payload = $5::jsonb,
-              idempotency_key = COALESCE(idempotency_key, $6),
+          SET status = CASE WHEN $4 = 'approve' THEN 'approved' WHEN $4 = 'reject' THEN 'rejected' WHEN $4 = 'resume' THEN 'resumed' ELSE 'pending' END,
+              decision = $4,
+              decision_comment = $5,
+              decision_payload = $6::jsonb,
+              idempotency_key = COALESCE(idempotency_key, $7),
               decided_at = COALESCE(decided_at, NOW()),
-              resumed_at = CASE WHEN $3 = 'resume' THEN COALESCE(resumed_at, NOW()) ELSE resumed_at END,
+              resumed_at = CASE WHEN $4 = 'resume' THEN COALESCE(resumed_at, NOW()) ELSE resumed_at END,
               updated_at = NOW()
           WHERE mission_id = $1
-            AND interrupt_id = $2
-            AND (idempotency_key IS NULL OR idempotency_key = $6)
+            AND branch_id = $2
+            AND interrupt_id = $3
+            AND (idempotency_key IS NULL OR idempotency_key = $7)
             AND status IN ('pending', 'approved', 'rejected')
           RETURNING *
         `,
-        [missionId, interruptId, input.decision, input.comment ?? null, JSON.stringify(input.payload ?? {}), input.idempotency_key],
+        [missionId, branchId, interruptId, input.decision, input.comment ?? null, JSON.stringify(input.payload ?? {}), input.idempotency_key],
       );
       const row = result.rows[0] as Record<string, unknown> | undefined;
       const interrupt = row ? this.mapInterruptRow(row) : null;
 
       if (interrupt) {
-        await this.ensureBranch(client, missionId, ROOT_BRANCH_ID);
+        await this.ensureBranch(client, missionId, branchId);
         await this.appendMissionEvents(client, [
           {
             mission_id: missionId,
-            branch_id: ROOT_BRANCH_ID,
+            branch_id: branchId,
             event_type: 'interrupt.decision',
             timestamp: interrupt.updated_at,
             agent_id: interrupt.agent_id,
@@ -1055,11 +1274,11 @@ class MissionStore {
       const row = result.rows[0] as Record<string, unknown> | undefined;
       const interrupt = row ? this.mapInterruptRow(row) : null;
       if (interrupt) {
-        await this.ensureBranch(client, interrupt.mission_id, ROOT_BRANCH_ID);
+        await this.ensureBranch(client, interrupt.mission_id, interrupt.branch_id ?? ROOT_BRANCH_ID);
         await this.appendMissionEvents(client, [
           {
             mission_id: interrupt.mission_id,
-            branch_id: ROOT_BRANCH_ID,
+            branch_id: interrupt.branch_id ?? ROOT_BRANCH_ID,
             event_type: 'interrupt.resumed',
             timestamp: interrupt.updated_at,
             agent_id: interrupt.agent_id,

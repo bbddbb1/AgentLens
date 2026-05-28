@@ -243,7 +243,7 @@ describe('GET /api/v1/missions/:missionId/interrupts', () => {
     const res = await request(app)
       .get('/api/v1/missions/m1/interrupts?status=pending');
     expect(res.status).toBe(200);
-    expect(mockStore.listInterrupts).toHaveBeenCalledWith('m1', 'pending');
+    expect(mockStore.listInterrupts).toHaveBeenCalledWith('m1', 'pending', undefined);
   });
 });
 

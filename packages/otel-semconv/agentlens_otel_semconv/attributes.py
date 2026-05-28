@@ -152,3 +152,67 @@ class MissionAttributes:
 
     VERSION = "mission.version"
     """Version or revision number of the mission execution."""
+
+
+class LLMAttributes:
+    """Attributes describing an LLM call within an agent span."""
+
+    # ─── Model Identity ───
+    MODEL_PROVIDER = "gen_ai.system"
+    """LLM provider name (openai, anthropic, google, etc.)."""
+
+    MODEL_NAME = "gen_ai.request.model"
+    """Model name as requested (gpt-4, claude-3-opus, etc.)."""
+
+    MODEL_VERSION = "gen_ai.model.version"
+    """Specific model version string."""
+
+    # ─── Prompt / Completion ───
+    PROMPT = "gen_ai.prompt"
+    """Full prompt text sent to the LLM."""
+
+    COMPLETION = "gen_ai.completion"
+    """Full completion text returned by the LLM."""
+
+    # ─── Token Usage ───
+    TOKENS_INPUT = "gen_ai.usage.input_tokens"
+    """Number of input tokens."""
+
+    TOKENS_OUTPUT = "gen_ai.usage.output_tokens"
+    """Number of output tokens."""
+
+    TOKENS_TOTAL = "gen_ai.usage.total_tokens"
+    """Total tokens used."""
+
+    # ─── Request Parameters ───
+    TEMPERATURE = "gen_ai.request.temperature"
+    """Temperature parameter."""
+
+    MAX_TOKENS = "gen_ai.request.max_tokens"
+    """Max tokens parameter."""
+
+    # ─── Response Metadata ───
+    STOP_REASON = "gen_ai.response.finish_reason"
+    """Why generation stopped (stop, length, tool_use, etc.)."""
+
+    LATENCY_MS = "gen_ai.latency_ms"
+    """LLM call latency in milliseconds."""
+
+
+class ErrorAttributes:
+    """Attributes describing an error within an agent span."""
+
+    SOURCE = "error.source"
+    """Origin of the error (model, tool, human, policy, system)."""
+
+    CAUSE = "error.cause"
+    """Root cause classification (hallucination, prompt_injection, tool_failure, timeout, permission_denied, validation_error)."""
+
+    SEVERITY = "error.severity"
+    """Severity level (low, medium, high, critical)."""
+
+    RECOVERY_ACTION = "error.recovery.action"
+    """What recovery action was taken (retry, fallback, escalate, abort)."""
+
+    ORIGINAL_ERROR = "error.original"
+    """Original error message or stack trace."""

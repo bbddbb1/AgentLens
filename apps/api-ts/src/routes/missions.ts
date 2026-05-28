@@ -110,6 +110,14 @@ missionsRouter.delete('/api/v1/missions/:missionId', async (req, res) => {
   return res.status(204).send();
 });
 
+missionsRouter.get('/api/v1/missions/:missionId/audit/verify', async (req, res) => {
+  const mission = await missionStore.getMission(req.params.missionId);
+  if (!mission) return res.status(404).json({ detail: 'Mission not found' });
+  
+  const report = await missionStore.verifyMissionIntegrity(req.params.missionId);
+  return res.json(report);
+});
+
 missionsRouter.post('/api/v1/ingest/otlp', async (req, res) => {
   const parsed = ingestSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -124,14 +132,8 @@ missionsRouter.post('/api/v1/ingest/otlp', async (req, res) => {
     parsed.data.batch_id,
   );
   if (!ingestResult) return res.status(400).json({ detail: 'No spans accepted' });
-  const { snapshot, generated_summary } = ingestResult;
 
-  await publishMissionEvent(snapshot.mission_id, 'graph.snapshot.created', { snapshot });
-  if (generated_summary) {
-    await publishMissionEvent(snapshot.mission_id, 'summary.generated', { summary: generated_summary });
-  }
-
-  return res.json({ accepted: parsed.data.spans.length, mission_id: snapshot.mission_id, snapshot_sequence: snapshot.sequence_num });
+  return res.status(202).json({ accepted: parsed.data.spans.length, mission_id: parsed.data.mission_id });
 });
 
 
@@ -150,12 +152,8 @@ missionsRouter.post('/v1/traces', async (req, res) => {
     parsed.data.batch_id,
   );
   if (!ingestResult) return res.status(400).json({ partialSuccess: { rejectedSpans: parsed.data.spans.length, errorMessage: 'No spans accepted' } });
-  const { snapshot, generated_summary } = ingestResult;
-  await publishMissionEvent(snapshot.mission_id, 'graph.snapshot.created', { snapshot });
-  if (generated_summary) {
-    await publishMissionEvent(snapshot.mission_id, 'summary.generated', { summary: generated_summary });
-  }
-  return res.json({ partialSuccess: { rejectedSpans: 0 } });
+
+  return res.status(202).json({ partialSuccess: { rejectedSpans: 0 } });
 });
 missionsRouter.get('/api/v1/missions/:missionId/graph', async (req, res) => {
   const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;

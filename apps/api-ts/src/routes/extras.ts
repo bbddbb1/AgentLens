@@ -296,7 +296,9 @@ extrasRouter.post('/api/v1/interrupts', async (req, res) => {
       return res.status(400).json({ detail: parsed.error.flatten() });
     }
 
-    const interrupt = await missionStore.createInterrupt(parsed.data);
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    const input = { ...parsed.data, branch_id: branchId };
+    const interrupt = await missionStore.createInterrupt(input);
     if (!interrupt) return res.status(404).json({ detail: 'Mission not found' });
     const summary = await missionStore.generateSummaryForHumanReview(interrupt.mission_id);
     if (summary) {
@@ -312,7 +314,8 @@ extrasRouter.post('/api/v1/interrupts', async (req, res) => {
 extrasRouter.get('/api/v1/missions/:missionId/interrupts', async (req, res) => {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    const interrupts = await missionStore.listInterrupts(req.params.missionId, status);
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    const interrupts = await missionStore.listInterrupts(req.params.missionId, status, branchId);
     if (!interrupts) return res.status(404).json({ detail: 'Mission not found' });
     return res.json({ interrupts });
   } catch (error) {
@@ -327,7 +330,9 @@ extrasRouter.post('/api/v1/missions/:missionId/interrupts/:interruptId/decision'
       return res.status(400).json({ detail: parsed.error.flatten() });
     }
 
-    const interrupt = await missionStore.decideInterrupt(req.params.missionId, req.params.interruptId, parsed.data);
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    const input = { ...parsed.data, branch_id: branchId };
+    const interrupt = await missionStore.decideInterrupt(req.params.missionId, req.params.interruptId, input);
     if (!interrupt) return res.status(404).json({ detail: 'Interrupt not found or already finalized' });
     await publishMissionEvent(req.params.missionId, 'interrupt.decided', { interrupt });
     return res.json(interrupt);

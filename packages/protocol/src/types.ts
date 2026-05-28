@@ -219,3 +219,91 @@ export interface ReplayStateResponse {
   snapshots: GraphSnapshot[];
   current_state: RuntimeState | null;
 }
+
+/** Actor types for event attribution — identifies WHO caused an event. */
+export type ActorType = 'agent' | 'tool' | 'human' | 'system' | 'policy';
+
+/** Error source classification for root-cause attribution. */
+export type ErrorSource = 'model' | 'tool' | 'human' | 'policy' | 'system';
+
+/** Error cause classification for forensic analysis. */
+export type ErrorCause =
+  | 'hallucination'
+  | 'prompt_injection'
+  | 'tool_failure'
+  | 'timeout'
+  | 'permission_denied'
+  | 'validation_error'
+  | 'unknown';
+
+/** Causal context linking an event to its triggers and dependencies. */
+export interface CausalContext {
+  parent_span_id?: string;
+  tool_call_id?: string;
+  decision_for_event_id?: string;
+  triggered_by_event_id?: string;
+}
+
+/** LLM provenance metadata recorded alongside an event. */
+export interface ModelProvenance {
+  provider?: string;
+  model_name?: string;
+  model_version?: string;
+  tokens_input?: number;
+  tokens_output?: number;
+  temperature?: number;
+  stop_reason?: string;
+}
+
+/** Error attribution metadata. */
+export interface ErrorAttribution {
+  source?: ErrorSource;
+  cause?: ErrorCause;
+  severity?: 'low' | 'medium' | 'high' | 'critical';
+  recovery_action?: string;
+  original_error?: string;
+}
+
+/** Policy decision metadata when a governance rule applies. */
+export interface PolicyDecision {
+  rule_id?: string;
+  decision?: 'allow' | 'deny' | 'require_review' | 'redact';
+  reason?: string;
+}
+
+/**
+ * EventEnvelope — the canonical event record for the AgentLens control plane.
+ *
+ * This extends MissionEventRecord with richer attribution, causal context,
+ * provenance, and cryptographic integrity fields. It is the target schema
+ * for the immutable event ledger.
+ *
+ * During migration, events may have nullable envelope fields. The system
+ * must tolerate partial envelopes from legacy ingestion paths.
+ */
+export interface EventEnvelope extends MissionEventRecord {
+  /** Actor attribution — WHO caused this event. */
+  actor_type?: ActorType;
+  actor_id?: string;
+
+  /** Causal context — WHY this event happened. */
+  causal?: CausalContext;
+
+  /** Origin framework that produced the source telemetry. */
+  origin_framework?: string;
+
+  /** LLM model provenance — WHICH model produced the decision. */
+  model?: ModelProvenance;
+
+  /** Error attribution — WHAT went wrong and WHY. */
+  error?: ErrorAttribution;
+
+  /** Policy decision — governance rule evaluation. */
+  policy?: PolicyDecision;
+
+  /** SHA-256 hash of (payload + metadata + previous_hash) for tamper evidence. */
+  content_hash?: string;
+
+  /** Content hash of the previous event in this branch for hash-chain integrity. */
+  previous_hash?: string;
+}

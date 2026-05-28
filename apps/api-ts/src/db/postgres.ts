@@ -120,6 +120,9 @@ export async function initializeDatabase(): Promise<void> {
       mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
       batch_id VARCHAR(255) NOT NULL,
       span_count INTEGER NOT NULL,
+      mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+      batch_id VARCHAR(255) NOT NULL,
+      span_count INTEGER NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (mission_id, batch_id)
     )
@@ -129,6 +132,7 @@ export async function initializeDatabase(): Promise<void> {
     CREATE TABLE IF NOT EXISTS interrupts (
       id UUID PRIMARY KEY,
       mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+      branch_id VARCHAR(255) NOT NULL DEFAULT 'main',
       interrupt_id VARCHAR(255) NOT NULL,
       agent_id VARCHAR(255) NULL,
       span_id VARCHAR(64) NULL,
@@ -146,10 +150,30 @@ export async function initializeDatabase(): Promise<void> {
       expires_at TIMESTAMPTZ NULL,
       decided_at TIMESTAMPTZ NULL,
       resumed_at TIMESTAMPTZ NULL,
-      UNIQUE (mission_id, interrupt_id),
-      UNIQUE (mission_id, idempotency_key)
+      UNIQUE (mission_id, branch_id, interrupt_id),
+      UNIQUE (mission_id, branch_id, idempotency_key)
     )
   `);
+
+  await pool.query(`
+    ALTER TABLE interrupts DROP CONSTRAINT IF EXISTS interrupts_mission_id_interrupt_id_key;
+  `);
+  
+  await pool.query(`
+    ALTER TABLE interrupts DROP CONSTRAINT IF EXISTS interrupts_mission_id_idempotency_key_key;
+  `);
+
+  await pool.query(`
+    ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS branch_id VARCHAR(255) NOT NULL DEFAULT 'main';
+  `);
+
+  await pool.query(`
+    ALTER TABLE interrupts ADD CONSTRAINT interrupts_branch_id_unique UNIQUE (mission_id, branch_id, interrupt_id);
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE interrupts ADD CONSTRAINT interrupts_branch_id_idempotency_unique UNIQUE (mission_id, branch_id, idempotency_key);
+  `).catch(() => {});
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_interrupts_pending
@@ -199,6 +223,24 @@ export async function initializeDatabase(): Promise<void> {
   `);
 
   await pool.query(`
+    ALTER TABLE mission_events
+    ADD COLUMN IF NOT EXISTS actor_type VARCHAR(50) NULL,
+    ADD COLUMN IF NOT EXISTS actor_id VARCHAR(255) NULL,
+    ADD COLUMN IF NOT EXISTS causal JSONB NULL,
+    ADD COLUMN IF NOT EXISTS origin_framework VARCHAR(100) NULL,
+    ADD COLUMN IF NOT EXISTS model JSONB NULL,
+    ADD COLUMN IF NOT EXISTS error_attribution JSONB NULL,
+    ADD COLUMN IF NOT EXISTS policy_decision JSONB NULL,
+    ADD COLUMN IF NOT EXISTS content_hash VARCHAR(128) NULL,
+    ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(128) NULL
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_mission_events_content_hash
+    ON mission_events (content_hash) WHERE content_hash IS NOT NULL
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS mission_artifacts (
       id UUID PRIMARY KEY,
       mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
@@ -224,6 +266,17 @@ export async function initializeDatabase(): Promise<void> {
       event_description TEXT NULL,
       phase VARCHAR(50) NULL,
       UNIQUE (mission_id, sequence_num)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mission_state_checkpoints (
+      mission_id UUID NOT NULL,
+      branch_id VARCHAR(255) NOT NULL,
+      sequence_num INT NOT NULL,
+      state JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (mission_id, branch_id, sequence_num)
     )
   `);
 }

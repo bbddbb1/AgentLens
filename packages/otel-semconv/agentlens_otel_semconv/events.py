@@ -48,6 +48,13 @@ class AgentEvents:
     INTERRUPT_RESUMED = "agent.interrupt.resumed"
     HUMAN_DECISION = "agent.human.decision"
 
+    # ─── LLM Interactions ───
+    LLM_CALL = "gen_ai.call"
+    LLM_RESPONSE = "gen_ai.response"
+    LLM_ERROR = "gen_ai.error"
+    LLM_STREAMING_START = "gen_ai.streaming.start"
+    LLM_STREAMING_END = "gen_ai.streaming.end"
+
     MISSION_STARTED = "mission.started"
     MISSION_PHASE_CHANGED = "mission.phase.changed"
     MISSION_COMPLETED = "mission.completed"

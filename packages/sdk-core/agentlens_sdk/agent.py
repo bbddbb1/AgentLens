@@ -10,7 +10,7 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace import Span, StatusCode, Tracer
 
-from agentlens_otel_semconv.attributes import AgentAttributes, MissionAttributes
+from agentlens_otel_semconv.attributes import AgentAttributes, MissionAttributes, LLMAttributes
 from agentlens_otel_semconv.events import AgentEvents
 from agentlens_otel_semconv.frameworks import normalize_framework_name
 from agentlens_otel_semconv.span_kinds import AgentSpanKind
@@ -146,6 +146,56 @@ class AgentInstrumentor:
                 attrs[AgentAttributes.TOOL_OUTPUT] = str(tool_output)[:1000]
 
             self._span.add_event(AgentEvents.TOOL_CALL, attrs)
+
+    def record_llm_call(
+        self,
+        model: str,
+        prompt: str | None = None,
+        completion: str | None = None,
+        *,
+        provider: str | None = None,
+        model_version: str | None = None,
+        tokens_input: int | None = None,
+        tokens_output: int | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        stop_reason: str | None = None,
+        latency_ms: float | None = None,
+        max_prompt_length: int = 10000,
+        max_completion_length: int = 10000,
+    ):
+        """Record an LLM call with full provenance for governance and debugging.
+
+        Unlike tool I/O which is truncated at 1KB, LLM traces preserve up to
+        10KB of prompt/completion by default to support forensic analysis of
+        hallucinations, prompt injection, and decision attribution.
+        """
+        if self._span:
+            attrs: dict[str, str] = {
+                LLMAttributes.MODEL_NAME: model,
+            }
+            if provider is not None:
+                attrs[LLMAttributes.MODEL_PROVIDER] = provider
+            if model_version is not None:
+                attrs[LLMAttributes.MODEL_VERSION] = model_version
+            if prompt is not None:
+                attrs[LLMAttributes.PROMPT] = prompt[:max_prompt_length]
+            if completion is not None:
+                attrs[LLMAttributes.COMPLETION] = completion[:max_completion_length]
+            if tokens_input is not None:
+                attrs[LLMAttributes.TOKENS_INPUT] = str(tokens_input)
+            if tokens_output is not None:
+                attrs[LLMAttributes.TOKENS_OUTPUT] = str(tokens_output)
+            if temperature is not None:
+                attrs[LLMAttributes.TEMPERATURE] = str(temperature)
+            if max_tokens is not None:
+                attrs[LLMAttributes.MAX_TOKENS] = str(max_tokens)
+            if stop_reason is not None:
+                attrs[LLMAttributes.STOP_REASON] = stop_reason
+            if latency_ms is not None:
+                attrs[LLMAttributes.LATENCY_MS] = str(latency_ms)
+
+            self._span.add_event(AgentEvents.LLM_CALL, attrs)
 
     def record_memory_write(self, key: str, value: Any = None):
         """Record a write to shared memory."""

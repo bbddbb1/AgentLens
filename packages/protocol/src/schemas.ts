@@ -117,6 +117,75 @@ export const CreateReplayBranchSchema = z.object({
 
 export const KnownAgentEventNames = new Set<string>(Object.values(AgentEvents));
 
+// ─── EventEnvelope Schemas ───
+
+export const ActorTypeSchema = z.enum(['agent', 'tool', 'human', 'system', 'policy']);
+export const ErrorSourceSchema = z.enum(['model', 'tool', 'human', 'policy', 'system']);
+export const ErrorCauseSchema = z.enum([
+  'hallucination', 'prompt_injection', 'tool_failure',
+  'timeout', 'permission_denied', 'validation_error', 'unknown',
+]);
+export const ErrorSeveritySchema = z.enum(['low', 'medium', 'high', 'critical']);
+export const PolicyDecisionTypeSchema = z.enum(['allow', 'deny', 'require_review', 'redact']);
+
+export const CausalContextSchema = z.object({
+  parent_span_id: z.string().optional(),
+  tool_call_id: z.string().optional(),
+  decision_for_event_id: z.string().optional(),
+  triggered_by_event_id: z.string().optional(),
+}).optional();
+
+export const ModelProvenanceSchema = z.object({
+  provider: z.string().optional(),
+  model_name: z.string().optional(),
+  model_version: z.string().optional(),
+  tokens_input: z.number().int().nonnegative().optional(),
+  tokens_output: z.number().int().nonnegative().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  stop_reason: z.string().optional(),
+}).optional();
+
+export const ErrorAttributionSchema = z.object({
+  source: ErrorSourceSchema.optional(),
+  cause: ErrorCauseSchema.optional(),
+  severity: ErrorSeveritySchema.optional(),
+  recovery_action: z.string().optional(),
+  original_error: z.string().optional(),
+}).optional();
+
+export const PolicyDecisionSchema = z.object({
+  rule_id: z.string().optional(),
+  decision: PolicyDecisionTypeSchema.optional(),
+  reason: z.string().optional(),
+}).optional();
+
+export const EventEnvelopeSchema = z.object({
+  id: z.string().uuid(),
+  mission_id: z.string().min(1),
+  branch_id: z.string().min(1),
+  sequence_num: z.number().int().nonnegative(),
+  branch_sequence_num: z.number().int().nonnegative(),
+  event_type: z.string().min(1),
+  timestamp: z.string(),
+  agent_id: z.string().optional(),
+  span_id: z.string().optional(),
+  trace_id: z.string().optional(),
+  parent_span_id: z.string().optional(),
+  idempotency_key: z.string().optional(),
+  payload: z.record(z.string(), z.unknown()),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  // EventEnvelope extensions
+  actor_type: ActorTypeSchema.optional(),
+  actor_id: z.string().optional(),
+  causal: CausalContextSchema,
+  origin_framework: z.string().optional(),
+  model: ModelProvenanceSchema,
+  error: ErrorAttributionSchema,
+  policy: PolicyDecisionSchema,
+  content_hash: z.string().optional(),
+  previous_hash: z.string().optional(),
+});
+
 export type AttributeValue = z.infer<typeof AttributeValueSchema>;
 export type AttributeMap = z.infer<typeof AttributeMapSchema>;
 export type OtelEvent = z.infer<typeof OtelEventSchema>;
@@ -131,3 +200,5 @@ export type CreateInterruptInput = z.infer<typeof CreateInterruptSchema>;
 export type DecideInterruptInput = z.infer<typeof DecideInterruptSchema>;
 export type ResumeInterruptInput = z.infer<typeof ResumeInterruptSchema>;
 export type CreateReplayBranchInput = z.infer<typeof CreateReplayBranchSchema>;
+export type PolicyDecisionType = z.infer<typeof PolicyDecisionTypeSchema>;
+export type ErrorSeverity = z.infer<typeof ErrorSeveritySchema>;
