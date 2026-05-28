@@ -34,6 +34,16 @@
   --color-error: #f87171;
   --color-info: #60a5fa;
 
+  /* Agent Colors */
+  --color-agent-0: #818cf8;
+  --color-agent-1: #f472b6;
+  --color-agent-2: #34d399;
+  --color-agent-3: #fbbf24;
+  --color-agent-4: #67e8f9;
+  --color-agent-5: #a78bfa;
+  --color-agent-6: #fb923c;
+  --color-agent-7: #4ade80;
+
   /* Node type colors */
   --color-node-agent: #818cf8;
   --color-node-human: #f0abfc;
@@ -226,3 +236,21 @@ html, body {
 .animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
 .animate-slide-in-right { animation: slide-in-right 0.3s ease-out; }
 .animate-fade-in-up { animation: fade-in-up 0.3s ease-out; }
+
+@keyframes node-pulse {
+  0% { box-shadow: 0 0 0 0 var(--pulse-color, rgba(129, 140, 248, 0.4)); }
+  70% { box-shadow: 0 0 0 6px var(--pulse-color-transparent, rgba(129, 140, 248, 0)); }
+  100% { box-shadow: 0 0 0 0 var(--pulse-color-transparent, rgba(129, 140, 248, 0)); }
+}
+
+@keyframes flow-particle {
+  0% { offset-distance: 0%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+
+.panel-transition {
+  transition: flex-basis 0.3s ease-in-out, width 0.3s ease-in-out;
+}
+

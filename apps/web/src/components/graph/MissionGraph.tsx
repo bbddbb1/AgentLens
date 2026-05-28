@@ -25,11 +25,17 @@ import { useReviewStore } from '@/stores/reviewStore';
 import { AgentNode } from './AgentNode';
 import { TaskNode } from './TaskNode';
 import { ToolNode } from './ToolNode';
+import { AnimatedEdge } from './AnimatedEdge';
+import { GraphLegend } from './GraphLegend';
 
 const nodeTypes = {
   agentNode: AgentNode,
   taskNode: TaskNode,
   toolNode: ToolNode,
+};
+
+const edgeTypes = {
+  animatedEdge: AnimatedEdge,
 };
 
 const minimapNodeColor = (node: Node) => {
@@ -79,6 +85,7 @@ function MissionGraphInner() {
       onNodeClick={onNodeClick}
       onPaneClick={onPaneClick}
       nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
       fitView
       fitViewOptions={{ padding: 0.3 }}
       minZoom={0.1}
@@ -105,6 +112,7 @@ function MissionGraphInner() {
         position="bottom-right"
         style={{ width: 140, height: 90 }}
       />
+      <GraphLegend />
     </ReactFlow>
   );
 }

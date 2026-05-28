@@ -23,6 +23,8 @@ function TaskNodeComponent({ data, selected }: NodeProps) {
   const label = String(nodeData.label ?? 'Task');
   const status = String(nodeData.status ?? 'idle');
   const summary = typeof nodeData.summary === 'string' ? nodeData.summary : undefined;
+  const metadata = (nodeData.metadata as Record<string, unknown>) || {};
+  const progress = typeof metadata.progress === 'number' ? metadata.progress : undefined;
   const color = '#67e8f9';
 
   return (
@@ -60,6 +62,17 @@ function TaskNodeComponent({ data, selected }: NodeProps) {
           )}
         </div>
       </div>
+
+      {progress !== undefined && (
+        <div className="mt-2 h-1 w-full rounded-full bg-[rgba(255,255,255,0.06)] overflow-hidden">
+          <motion.div 
+            initial={{ width: 0 }}
+            animate={{ width: `${progress}%` }}
+            transition={{ duration: 0.5 }}
+            className="h-full bg-[#67e8f9] rounded-full" 
+          />
+        </div>
+      )}
 
       <Handle
         type="source"

@@ -252,17 +252,7 @@ export function ReviewPanel() {
     }
   };
 
-  if (!isCommentPanelOpen) {
-    return (
-      <button
-        type="button"
-        onClick={() => setCommentPanelOpen(true)}
-        className="fixed right-4 top-20 p-2 rounded-xl glass hover:bg-[rgba(255,255,255,0.06)] transition-colors z-50"
-      >
-        <MessageSquare size={18} className="text-[#9498b0]" />
-      </button>
-    );
-  }
+  // Floating toggle button removed since it's now in RightSidebar
 
   const pendingInterrupts = interrupts.filter((interrupt) => interrupt.status === 'pending');
   const recentDecisions = interrupts
@@ -281,23 +271,7 @@ export function ReviewPanel() {
   ];
 
   return (
-    <motion.div
-      initial={{ x: 300, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      exit={{ x: 300, opacity: 0 }}
-      transition={{ duration: 0.3, ease: 'easeOut' }}
-      className="w-[340px] h-full flex flex-col bg-[#12131a] border-l border-[rgba(255,255,255,0.05)]"
-    >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.05)]">
-        <h3 className="text-[13px] font-semibold text-[#e8eaf0]">Review</h3>
-        <button
-          type="button"
-          onClick={() => setCommentPanelOpen(false)}
-          className="p-1 rounded-md text-[#5d6180] hover:text-[#e8eaf0] hover:bg-[rgba(255,255,255,0.05)]"
-        >
-          <X size={14} />
-        </button>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
 
       <div className="flex border-b border-[rgba(255,255,255,0.05)]">
         {tabs.map((tab) => (
@@ -672,6 +646,6 @@ export function ReviewPanel() {
           </div>
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }

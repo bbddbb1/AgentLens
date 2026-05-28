@@ -292,7 +292,7 @@ export default function DashboardPage() {
                             </div>
                             <div className="flex items-center gap-1.5">
                               <Clock size={11} />
-                              <span>{new Date(mission.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              <span suppressHydrationWarning>{new Date(mission.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                             </div>
                             <DriftBadge score={typeof mission.metadata.drift_score === 'number' ? mission.metadata.drift_score : 0} />
                           </div>

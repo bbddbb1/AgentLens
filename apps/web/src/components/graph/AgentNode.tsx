@@ -5,11 +5,12 @@
  * Renders agents with role-based icons, status indicators, and confidence bars.
  */
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { motion } from 'framer-motion';
-import { Bot, User, Shield, Brain, Search, Pencil, Wrench, Zap } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Bot, User, Shield, Brain, Search, Pencil, Wrench, Zap, ChevronDown, ChevronUp, Bell } from 'lucide-react';
 import { Tooltip } from '@/components/common/Tooltip';
+import { getAgentColor } from '@/lib/agentColors';
 
 const roleIcons: Record<string, React.ReactNode> = {
   planner: <Brain size={16} />,
@@ -45,8 +46,14 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
   const team = typeof nodeData.team === 'string' ? nodeData.team : undefined;
   const confidence = typeof nodeData.confidence === 'number' ? nodeData.confidence : undefined;
   const summary = typeof nodeData.summary === 'string' ? nodeData.summary : undefined;
+  const agentId = typeof nodeData.agentId === 'string' ? nodeData.agentId : '';
+  const metadata = (nodeData.metadata as Record<string, unknown>) || {};
+  const hasPendingInterrupt = metadata.hasPendingInterrupt === true;
 
-  const color = nodeTypeColors[nodeType] || '#818cf8';
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Use deterministic color for agent type, otherwise fallback to standard colors
+  const color = nodeType === 'agent' ? getAgentColor(agentId) : (nodeTypeColors[nodeType] || '#818cf8');
   const statusColor = statusColors[status] || '#5d6180';
   const Icon = nodeType === 'human' ? <User size={16} /> : (roleIcons[role] || <Bot size={16} />);
 
@@ -58,9 +65,18 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
       style={{
         borderColor: selected ? color : 'rgba(255,255,255,0.08)',
         boxShadow: selected ? `0 0 24px ${color}33` : '0 4px 16px rgba(0,0,0,0.3)',
-      }}
-      className="relative rounded-xl border bg-[#1a1b25] px-4 py-3 min-w-[180px] max-w-[220px] transition-all duration-200 hover:border-[rgba(255,255,255,0.12)]"
+        '--pulse-color': `${color}66`,
+        '--pulse-color-transparent': `${color}00`,
+      } as React.CSSProperties}
+      className={`relative rounded-xl border bg-[#1a1b25] px-4 py-3 min-w-[180px] max-w-[220px] transition-all duration-200 hover:border-[rgba(255,255,255,0.12)] ${status === 'active' ? 'animate-[node-pulse_2s_ease-in-out_infinite]' : ''}`}
     >
+      {/* Interrupt Badge */}
+      {hasPendingInterrupt && (
+        <div className="absolute -top-2 -right-2 z-10 flex items-center justify-center w-6 h-6 rounded-full bg-[#fbbf24] text-[#78350f] shadow-[0_4px_12px_rgba(251,191,36,0.4)] animate-bounce">
+          <Bell size={12} fill="currentColor" />
+        </div>
+      )}
+
       {/* Target handle (top) */}
       <Handle
         type="target"
@@ -130,13 +146,32 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
         </div>
       )}
 
-      {/* Summary (semantic zoom - shown when enough space) */}
+      {/* Summary (Inner Monologue toggle) */}
       {summary && (
-        <Tooltip content={summary} side="right">
-          <div className="mt-2 text-[10px] text-[#5d6180] line-clamp-2 leading-relaxed">
-            {summary}
-          </div>
-        </Tooltip>
+        <div className="mt-2 border-t border-[rgba(255,255,255,0.05)] pt-2">
+          <button 
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="flex items-center justify-between w-full text-[10px] text-[#9498b0] hover:text-[#e8eaf0] transition-colors"
+          >
+            <span>Inner Monologue</span>
+            {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          </button>
+          
+          <AnimatePresence>
+            {isExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-2 p-2 rounded bg-[rgba(255,255,255,0.03)] text-[10px] text-[#cfd3e6] leading-relaxed break-words">
+                  {summary}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       )}
 
       {/* Source handle (bottom) */}

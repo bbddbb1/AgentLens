@@ -26,6 +26,9 @@ import { BranchExplorer } from '@/components/replay/BranchExplorer';
 import { ReplayControls } from '@/components/replay/ReplayControls';
 import { ReviewPanel } from '@/components/review/ReviewPanel';
 import { MissionTimeline } from '@/components/timeline/MissionTimeline';
+import { WorkspaceShell } from '@/components/layout/WorkspaceShell';
+import { StatusBar } from '@/components/layout/StatusBar';
+import { useLayoutStore } from '@/stores/layoutStore';
 import { api } from '@/lib/api';
 import { useGraphStore, type GraphSnapshot } from '@/stores/graphStore';
 import type { Mission } from '@/stores/missionStore';
@@ -360,7 +363,7 @@ export default function MissionWorkspacePage() {
   const currentState = useReplayStore((state) => state.currentState);
   const setReplayData = useReplayStore((state) => state.setReplayData);
   const setCurrentFrame = useReplayStore((state) => state.setCurrentFrame);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const { isGraphFullscreen, setIsGraphFullscreen } = useLayoutStore();
   const [isBranchExplorerCollapsed, setIsBranchExplorerCollapsed] = useState(false);
   const [mission, setMission] = useState<Mission | null>(null);
   const [missionLoadError, setMissionLoadError] = useState<string | null>(null);
@@ -368,12 +371,30 @@ export default function MissionWorkspacePage() {
   const missionId = Array.isArray(params?.id) ? params.id[0] : params?.id ?? 'demo-mission';
 
   const syncReplayToGraph = useCallback((replay: ReplayStateResponse) => {
-    setSnapshots(replay.snapshots);
+    // Inject pending interrupt flags into snapshots so nodes can render badges
+    const interruptsByAgent = new Map(
+      Object.values(replay.current_state?.interrupts ?? {})
+        .filter(i => i.status === 'pending' && i.agent_id)
+        .map(i => [i.agent_id, true])
+    );
+    
+    const enrichedSnapshots = replay.snapshots.map(snap => ({
+      ...snap,
+      nodes: snap.nodes.map(node => ({
+        ...node,
+        metadata: {
+          ...node.metadata,
+          hasPendingInterrupt: node.agent_id ? interruptsByAgent.has(node.agent_id) : false
+        }
+      }))
+    }));
+
+    setSnapshots(enrichedSnapshots);
     setReplayData(replay);
-    if (replay.snapshots.length > 0) {
-      const nextFrame = Math.max(0, Math.min(currentFrame, replay.snapshots.length - 1));
+    if (enrichedSnapshots.length > 0) {
+      const nextFrame = Math.max(0, Math.min(currentFrame, enrichedSnapshots.length - 1));
       setCurrentFrame(nextFrame);
-      applySnapshot(replay.snapshots[nextFrame]);
+      applySnapshot(enrichedSnapshots[nextFrame]);
     }
   }, [applySnapshot, currentFrame, setCurrentFrame, setReplayData, setSnapshots]);
 
@@ -492,83 +513,80 @@ export default function MissionWorkspacePage() {
             Export
           </button>
           <button
-            onClick={() => setIsFullscreen((value) => !value)}
+            onClick={() => setIsGraphFullscreen(!isGraphFullscreen)}
             className="p-1.5 rounded-lg text-[#5d6180] hover:text-[#e8eaf0] hover:bg-[rgba(255,255,255,0.04)] transition-colors"
           >
-            {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            {isGraphFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
         </div>
       </header>
 
-      <div className="flex-1 flex overflow-hidden">
-        {!isFullscreen && <MissionTimeline />}
+      <WorkspaceShell
+        leftPanel={<MissionTimeline />}
+        centerPanel={
+          <div className="flex-1 relative overflow-hidden">
+            <MissionGraph />
 
-        <div className="flex-1 relative overflow-hidden">
-          <MissionGraph />
-
-          {showMissionError && (
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(10,11,16,0.72)] backdrop-blur-sm p-6">
-              <div className="max-w-md rounded-2xl border border-[rgba(248,113,113,0.18)] bg-[rgba(36,17,20,0.92)] px-5 py-4 text-center shadow-[0_24px_64px_rgba(0,0,0,0.4)]">
-                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[rgba(248,113,113,0.12)] text-[#f87171]">
-                  <XCircle size={18} />
+            {showMissionError && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(10,11,16,0.72)] backdrop-blur-sm p-6">
+                <div className="max-w-md rounded-2xl border border-[rgba(248,113,113,0.18)] bg-[rgba(36,17,20,0.92)] px-5 py-4 text-center shadow-[0_24px_64px_rgba(0,0,0,0.4)]">
+                  <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[rgba(248,113,113,0.12)] text-[#f87171]">
+                    <XCircle size={18} />
+                  </div>
+                  <h2 className="text-[14px] font-semibold text-[#f3d0d0]">Mission unavailable</h2>
+                  <p className="mt-2 text-[12px] leading-relaxed text-[#d8b4b4]">{missionLoadError}</p>
                 </div>
-                <h2 className="text-[14px] font-semibold text-[#f3d0d0]">Mission unavailable</h2>
-                <p className="mt-2 text-[12px] leading-relaxed text-[#d8b4b4]">{missionLoadError}</p>
               </div>
-            </div>
-          )}
+            )}
 
-          <div className="absolute top-3 left-3 right-3 z-10 flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
-                <Users size={12} className="text-[#818cf8]" />
-                <span className="text-[#9498b0]">{Object.keys(currentState?.agents ?? {}).length} agents</span>
+            <div className="absolute top-3 left-3 right-3 z-10 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
+                  <Users size={12} className="text-[#818cf8]" />
+                  <span className="text-[#9498b0]">{Object.keys(currentState?.agents ?? {}).length} agents</span>
+                </div>
+                <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
+                  <GitBranch size={12} className="text-[#67e8f9]" />
+                  <span className="text-[#9498b0]">{branches.length} branches</span>
+                </div>
+                <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
+                  <Shield size={12} className="text-[#34d399]" />
+                  <span className="text-[#9498b0]">{pendingInterrupts} pending interrupts</span>
+                </div>
+                <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
+                  <Loader2 size={12} className={activeAgents > 0 ? 'text-[#fbbf24] animate-spin' : 'text-[#5d6180]'} />
+                  <span className="text-[#9498b0]">{activeAgents} active agents</span>
+                </div>
               </div>
-              <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
-                <GitBranch size={12} className="text-[#67e8f9]" />
-                <span className="text-[#9498b0]">{branches.length} branches</span>
-              </div>
-              <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
-                <Shield size={12} className="text-[#34d399]" />
-                <span className="text-[#9498b0]">{pendingInterrupts} pending interrupts</span>
-              </div>
-              <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
-                <Loader2 size={12} className={activeAgents > 0 ? 'text-[#fbbf24] animate-spin' : 'text-[#5d6180]'} />
-                <span className="text-[#9498b0]">{activeAgents} active agents</span>
-              </div>
+
+              <BranchExplorer
+                missionId={missionId}
+                isCollapsed={isBranchExplorerCollapsed}
+                onToggleCollapsed={() => setIsBranchExplorerCollapsed((value) => !value)}
+                onBranchChange={async (branchId) => {
+                  await loadReplay(branchId);
+                }}
+              />
             </div>
 
-            <BranchExplorer
-              missionId={missionId}
-              isCollapsed={isBranchExplorerCollapsed}
-              onToggleCollapsed={() => setIsBranchExplorerCollapsed((value) => !value)}
-              onBranchChange={async (branchId) => {
-                await loadReplay(branchId);
-              }}
-            />
+            {currentSnapshot && (
+              <div className="absolute bottom-4 left-4 z-10 max-w-sm rounded-2xl border border-[rgba(255,255,255,0.06)] bg-[rgba(10,11,16,0.82)] px-4 py-3 shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-[#7b819f]">
+                  Current Event
+                </div>
+                <div className="mt-1 text-[13px] font-medium text-[#eef1fa]">
+                  {currentSnapshot.event_description ?? currentSnapshot.event_type ?? 'Replay frame'}
+                </div>
+                <div className="mt-2 text-[11px] text-[#8f95b2]">
+                  {new Date(currentSnapshot.timestamp).toLocaleString()} • phase {currentSnapshot.phase ?? currentState?.phase ?? 'executing'}
+                </div>
+              </div>
+            )}
           </div>
-
-          {currentSnapshot && (
-            <div className="absolute bottom-4 left-4 z-10 max-w-sm rounded-2xl border border-[rgba(255,255,255,0.06)] bg-[rgba(10,11,16,0.82)] px-4 py-3 shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-[#7b819f]">
-                Current Event
-              </div>
-              <div className="mt-1 text-[13px] font-medium text-[#eef1fa]">
-                {currentSnapshot.event_description ?? currentSnapshot.event_type ?? 'Replay frame'}
-              </div>
-              <div className="mt-2 text-[11px] text-[#8f95b2]">
-                {new Date(currentSnapshot.timestamp).toLocaleString()} • phase {currentSnapshot.phase ?? currentState?.phase ?? 'executing'}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {!isFullscreen && <ReviewPanel />}
-      </div>
-
-      <div className="border-t border-[rgba(255,255,255,0.05)] px-4 py-2 bg-[rgba(10,11,16,0.9)] backdrop-blur-xl">
-        <ReplayControls />
-      </div>
+        }
+        rightPanel={<ReviewPanel />}
+        bottomPanel={<StatusBar />}
+      />
 
       <AiAssistant
         missionId={missionId}

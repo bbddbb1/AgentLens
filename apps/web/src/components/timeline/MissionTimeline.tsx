@@ -28,36 +28,7 @@ const phaseConfig: Record<string, { icon: React.ReactNode; color: string; label:
   failed: { icon: <XCircle size={12} />, color: '#f87171', label: 'Failed' },
 };
 
-function eventTone(eventType: string): string {
-  if (eventType.includes('interrupt')) return 'text-[#fbbf24]';
-  if (eventType.includes('failed') || eventType.includes('rejected')) return 'text-[#f87171]';
-  if (eventType.includes('review')) return 'text-[#34d399]';
-  if (eventType.includes('delegation') || eventType.includes('handoff')) return 'text-[#818cf8]';
-  return 'text-[#67e8f9]';
-}
-
-function humanizeEvent(eventType: string): string {
-  return eventType.replace(/[._]/g, ' ');
-}
-
-function eventIconConfig(eventType: string): { icon: React.ReactNode; color: string; bg: string } {
-  if (eventType.includes('delegation') || eventType.includes('handoff')) {
-    return { icon: <GitCommit size={12} />, color: 'text-[#818cf8]', bg: 'bg-[rgba(129,140,248,0.16)]' };
-  }
-  if (eventType.includes('review') || eventType.includes('approved')) {
-    return { icon: <CheckCircle2 size={12} />, color: 'text-[#34d399]', bg: 'bg-[rgba(52,211,153,0.16)]' };
-  }
-  if (eventType.includes('artifact')) {
-    return { icon: <FileText size={12} />, color: 'text-[#fbbf24]', bg: 'bg-[rgba(251,191,36,0.16)]' };
-  }
-  if (eventType.includes('failed') || eventType.includes('rejected')) {
-    return { icon: <XCircle size={12} />, color: 'text-[#f87171]', bg: 'bg-[rgba(248,113,113,0.16)]' };
-  }
-  if (eventType.includes('interrupt')) {
-    return { icon: <AlertTriangle size={12} />, color: 'text-[#fbbf24]', bg: 'bg-[rgba(251,191,36,0.16)]' };
-  }
-  return { icon: <GitBranch size={12} />, color: 'text-[#67e8f9]', bg: 'bg-[rgba(103,232,249,0.16)]' };
-}
+import { TimelineEventCard } from './TimelineEventCard';
 
 export function MissionTimeline() {
   const { snapshots, selectedNodeId } = useGraphStore();
@@ -85,7 +56,7 @@ export function MissionTimeline() {
   const filteredEvents = useMemo(() => {
     if (!selectedNodeId) return events;
     return events.filter((event) => {
-      const payload = event.payload as Record<string, unknown>;
+      const payload = (event.payload || {}) as Record<string, unknown>;
       return (
         event.agent_id === selectedNodeId ||
         event.span_id === selectedNodeId ||
@@ -104,16 +75,30 @@ export function MissionTimeline() {
   };
 
   return (
-    <div className="w-[280px] h-full flex flex-col bg-[#12131a] border-r border-[rgba(255,255,255,0.05)]">
+    <div className="w-full h-full flex flex-col bg-[#12131a]">
       <div className="px-4 py-3 border-b border-[rgba(255,255,255,0.05)]">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-[13px] font-semibold text-[#e8eaf0] flex items-center gap-2">
             <Clock size={14} className="text-[#818cf8]" />
             Event Timeline
           </h3>
-          <span className="rounded-full bg-[rgba(255,255,255,0.05)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-[#7c83a3]">
-            {currentBranchId ?? 'main'}
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (events.length > 0) {
+                  const latestSnapshotIdx = Math.max(0, snapshots.length - 1);
+                  handleFrameSelect(latestSnapshotIdx);
+                }
+              }}
+              className="px-2 py-0.5 rounded border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.05)] text-[9px] uppercase tracking-wider text-[#9498b0] transition-colors"
+              title="Jump to latest"
+            >
+              Latest
+            </button>
+            <span className="rounded-full bg-[rgba(255,255,255,0.05)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-[#7c83a3]">
+              {currentBranchId ?? 'main'}
+            </span>
+          </div>
         </div>
         <p className="mt-1 text-[10px] leading-relaxed text-[#5d6180]">
           {selectedNodeId ? `Filtered to ${selectedNodeId}` : 'Replaying reducer-driven mission events'}
@@ -152,53 +137,19 @@ export function MissionTimeline() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3">
-        <div className="space-y-2">
+      <div className="flex-1 overflow-y-auto">
+        <div className="px-4 py-3 space-y-2">
           {filteredEvents.length > 0 ? filteredEvents.map((event) => {
             const snapshotIndex = snapshots.findIndex((snapshot) => snapshot.source_event_id === event.id);
             const isCurrent = snapshotIndex === currentFrame;
-            const iconConfig = eventIconConfig(event.event_type);
             return (
-              <button
-                type="button"
+              <TimelineEventCard
                 key={event.id}
-                onClick={() => handleFrameSelect(snapshotIndex >= 0 ? snapshotIndex : currentFrame)}
-                className={`w-full rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                  isCurrent
-                    ? 'border-[rgba(103,232,249,0.2)] border-l-[3px] border-l-[#67e8f9] bg-[rgba(103,232,249,0.08)]'
-                    : 'border-[rgba(255,255,255,0.04)] bg-[rgba(255,255,255,0.015)] hover:bg-[rgba(255,255,255,0.04)]'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 flex-1 items-start gap-2">
-                    <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${iconConfig.bg} ${iconConfig.color}`}>
-                      {iconConfig.icon}
-                    </div>
-                    <div className="min-w-0">
-                      <div className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${eventTone(event.event_type)}`}>
-                        {humanizeEvent(event.event_type)}
-                      </div>
-                      <div className="mt-1 text-[12px] leading-snug text-[#d7dbeb]">
-                        {snapshots[snapshotIndex]?.event_description ?? humanizeEvent(event.event_type)}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-[9px] text-[#7c83a3] whitespace-nowrap">
-                    {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center gap-2 text-[10px] text-[#7b819f]">
-                  <span className="rounded-full bg-[rgba(255,255,255,0.05)] px-2 py-0.5 text-[9px] text-[#7c83a3]">
-                    #{event.sequence_num}
-                  </span>
-                  {event.agent_id && (
-                    <>
-                      <Bot size={10} />
-                      <span>{event.agent_id}</span>
-                    </>
-                  )}
-                </div>
-              </button>
+                event={event}
+                isCurrent={isCurrent}
+                onSelect={() => handleFrameSelect(snapshotIndex >= 0 ? snapshotIndex : currentFrame)}
+                description={snapshots[snapshotIndex]?.event_description}
+              />
             );
           }) : (
             <div className="flex flex-col items-center py-10 text-center">

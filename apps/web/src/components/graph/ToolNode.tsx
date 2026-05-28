@@ -19,6 +19,8 @@ function ToolNodeComponent({ data, selected }: NodeProps) {
   const nodeData = data as Record<string, unknown>;
   const label = String(nodeData.label ?? 'Tool');
   const nodeType = String(nodeData.nodeType ?? 'tool');
+  const metadata = (nodeData.metadata as Record<string, unknown>) || {};
+  const invocationCount = typeof metadata.invocationCount === 'number' ? metadata.invocationCount : undefined;
   const color = nodeType === 'memory' ? '#34d399' : nodeType === 'artifact' ? '#fb923c' : '#fbbf24';
   const Icon = toolIcons[nodeType] || <Wrench size={14} />;
 
@@ -42,7 +44,12 @@ function ToolNodeComponent({ data, selected }: NodeProps) {
 
       <div className="flex items-center gap-2">
         <div style={{ color }}>{Icon}</div>
-        <span className="text-[11px] text-[#9498b0] font-medium truncate">{label}</span>
+        <span className="text-[11px] text-[#9498b0] font-medium truncate flex-1">{label}</span>
+        {invocationCount !== undefined && invocationCount > 0 && (
+          <div className="px-1.5 py-0.5 rounded-full bg-[rgba(255,255,255,0.06)] text-[9px] text-[#cfd3e6] font-semibold">
+            {invocationCount}
+          </div>
+        )}
       </div>
 
       <Handle

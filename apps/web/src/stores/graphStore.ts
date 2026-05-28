@@ -14,6 +14,8 @@ interface GraphStore {
   snapshots: GraphSnapshot[];
   currentSnapshotIndex: number;
   selectedNodeId: string | null;
+  activeNodeId: string | null;
+  hoveredNodeId: string | null;
   zoomLevel: number;
 
   setNodes: (nodes: Node[]) => void;
@@ -21,6 +23,8 @@ interface GraphStore {
   setSnapshots: (snapshots: GraphSnapshot[]) => void;
   setCurrentSnapshotIndex: (index: number) => void;
   setSelectedNodeId: (id: string | null) => void;
+  setActiveNodeId: (id: string | null) => void;
+  setHoveredNodeId: (id: string | null) => void;
   setZoomLevel: (level: number) => void;
 
   applySnapshot: (snapshot: GraphSnapshot) => void;
@@ -43,17 +47,17 @@ function mapNodeType(type: string): string {
 // Map edge types to visual styles
 function mapEdgeStyle(type: string): Partial<Edge> {
   const styles: Record<string, Partial<Edge>> = {
-    delegation: { type: 'smoothstep', style: { stroke: '#818cf8', strokeWidth: 2 } },
-    critique: { type: 'smoothstep', style: { stroke: '#f87171', strokeWidth: 2, strokeDasharray: '5,5' } },
-    review: { type: 'smoothstep', style: { stroke: '#34d399', strokeWidth: 2 } },
-    escalation: { type: 'smoothstep', style: { stroke: '#fbbf24', strokeWidth: 2.5 }, animated: true },
-    dependency: { type: 'smoothstep', style: { stroke: '#5d6180', strokeWidth: 1.5 } },
-    data_flow: { type: 'smoothstep', style: { stroke: '#60a5fa', strokeWidth: 1.5, strokeDasharray: '3,3' } },
-    uses: { type: 'smoothstep', style: { stroke: '#fbbf24', strokeWidth: 1.5 } },
-    approval: { type: 'smoothstep', style: { stroke: '#34d399', strokeWidth: 2 } },
-    produces: { type: 'smoothstep', style: { stroke: '#fb923c', strokeWidth: 1.75 } },
+    delegation: { type: 'animatedEdge', style: { stroke: '#818cf8', strokeWidth: 2 } },
+    critique: { type: 'animatedEdge', style: { stroke: '#f87171', strokeWidth: 2, strokeDasharray: '5,5' } },
+    review: { type: 'animatedEdge', style: { stroke: '#34d399', strokeWidth: 2 } },
+    escalation: { type: 'animatedEdge', style: { stroke: '#fbbf24', strokeWidth: 2.5 }, animated: true },
+    dependency: { type: 'animatedEdge', style: { stroke: '#5d6180', strokeWidth: 1.5 } },
+    data_flow: { type: 'animatedEdge', style: { stroke: '#60a5fa', strokeWidth: 1.5, strokeDasharray: '3,3' } },
+    uses: { type: 'animatedEdge', style: { stroke: '#fbbf24', strokeWidth: 1.5 } },
+    approval: { type: 'animatedEdge', style: { stroke: '#34d399', strokeWidth: 2 } },
+    produces: { type: 'animatedEdge', style: { stroke: '#fb923c', strokeWidth: 1.75 } },
   };
-  return styles[type] || { type: 'smoothstep', style: { stroke: '#5d6180', strokeWidth: 1 } };
+  return styles[type] || { type: 'animatedEdge', style: { stroke: '#5d6180', strokeWidth: 1 } };
 }
 
 function graphNodesToFlowNodes(graphNodes: GraphNode[]): Node[] {
@@ -70,6 +74,8 @@ function graphNodesToFlowNodes(graphNodes: GraphNode[]): Node[] {
       confidence: gn.confidence,
       summary: gn.summary,
       metadata: gn.metadata,
+      agentId: gn.agent_id,
+      hasPendingInterrupt: false, // Will be set during replay sync
     },
   }));
 }
@@ -92,6 +98,8 @@ export const useGraphStore = create<GraphStore>((set) => ({
   snapshots: [],
   currentSnapshotIndex: 0,
   selectedNodeId: null,
+  activeNodeId: null,
+  hoveredNodeId: null,
   zoomLevel: 1,
 
   setNodes: (nodes) => set({ nodes }),
@@ -99,6 +107,8 @@ export const useGraphStore = create<GraphStore>((set) => ({
   setSnapshots: (snapshots) => set({ snapshots }),
   setCurrentSnapshotIndex: (index) => set({ currentSnapshotIndex: index }),
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
+  setActiveNodeId: (id) => set({ activeNodeId: id }),
+  setHoveredNodeId: (id) => set({ hoveredNodeId: id }),
   setZoomLevel: (level) => set({ zoomLevel: level }),
 
   applySnapshot: (snapshot) =>
