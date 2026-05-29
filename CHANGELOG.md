@@ -5,6 +5,19 @@ All notable changes to AgentLens are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Web UI Layout**: Refactored the `WorkspaceShell` from a draggable `react-resizable-panels` layout to a "Fixed-Width + Click to Toggle" flexbox model.
+- **Enhanced State Inspector**: Improved `StateInspector` with dedicated `AgentStateCard`, structured `InterruptBadge` list, and integrated `WhyThisState` causality explorer.
+- **Timeline Refinement**: Enhanced the left sidebar with a `MissionTimeline` utilizing `TimelineEventCard` that supports full-width rendering and edge-flush scrollbars.
+- **Unified Components**: Migrated to premium styling with reusable components (`GlassPanel`, `AgentAvatar`, `CollapsibleSection`) and fixed UI gaps for fluid scaling inside sidebars.
+
+### Removed
+
+- Removed `react-resizable-panels` dependency.
+
 ## [0.1.0] — 2026-05-25
 
 ### Added
