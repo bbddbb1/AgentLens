@@ -166,6 +166,34 @@ class TestAgentLensOtlpJsonExporter:
 
         assert result == SpanExportResult.SUCCESS
 
+    @patch.dict("os.environ", {"AGENTLENS_SANDBOX_MODE": "1", "AGENTLENS_SANDBOX_OUTPUT_DIR": "/tmp/test_sandbox"})
+    def test_export_sandbox_mode(self):
+        import json
+        import os
+        import shutil
+        exporter = AgentLensOtlpJsonExporter(endpoint="http://localhost:8001/v1/traces")
+        span = self._make_mock_span(name="sandbox-span")
+        from opentelemetry.sdk.trace.export import SpanExportResult
+
+        with patch.object(exporter, '_client') as mock_client:
+            result = exporter.export([span])
+
+        assert result == SpanExportResult.SUCCESS
+        # verify http wasn't called
+        mock_client.post.assert_not_called()
+
+        # verify file was written
+        output_file = "/tmp/test_sandbox/telemetry.jsonl"
+        assert os.path.exists(output_file)
+        with open(output_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            assert len(lines) == 1
+            data = json.loads(lines[0])
+            assert data["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["name"] == "sandbox-span"
+        
+        # cleanup
+        shutil.rmtree("/tmp/test_sandbox")
+
     def test_export_http_failure(self):
         exporter = AgentLensOtlpJsonExporter(endpoint="http://localhost:8001/v1/traces")
         span = self._make_mock_span()

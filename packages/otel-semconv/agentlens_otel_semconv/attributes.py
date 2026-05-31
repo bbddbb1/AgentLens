@@ -129,6 +129,9 @@ class MissionAttributes:
     ID = "mission.id"
     """Unique identifier for the mission."""
 
+    BRANCH_ID = "mission.branch_id"
+    """The active execution branch ID of the mission."""
+
     OBJECTIVE = "mission.objective"
     """Human-readable objective of the mission."""
 

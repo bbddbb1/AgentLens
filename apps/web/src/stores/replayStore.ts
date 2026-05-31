@@ -27,6 +27,7 @@ interface ReplayStore {
   setReplayData: (data: Pick<ReplayStateResponse, 'branch_id' | 'branches' | 'events' | 'total_frames' | 'duration_seconds' | 'current_state'>) => void;
   nextFrame: () => void;
   prevFrame: () => void;
+  optimisticBranchCreated: (branch: ReplayBranch) => void;
   reset: () => void;
 }
 
@@ -94,6 +95,13 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
       set({ currentFrame: prevFrame, selectedEventId: events[prevFrame]?.id ?? null });
     }
   },
+
+  optimisticBranchCreated: (branch) =>
+    set((state) => ({
+      branches: [...state.branches, branch],
+      currentBranchId: branch.id,
+      isPlaying: false,
+    })),
 
   reset: () =>
     set((state) => ({

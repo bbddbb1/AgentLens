@@ -66,9 +66,12 @@ class AgentLensOtlpJsonExporter(SpanExporter):
     """
 
     def __init__(self, endpoint: str, api_key: str | None = None):
+        import os
         self.endpoint = _normalize_traces_endpoint(endpoint)
         self.api_key = api_key
         self._client = httpx.Client(timeout=10.0)
+        self.sandbox_mode = os.environ.get("AGENTLENS_SANDBOX_MODE") == "1"
+        self.sandbox_output_dir = os.environ.get("AGENTLENS_SANDBOX_OUTPUT_DIR", "/agentlens/output")
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -138,6 +141,17 @@ class AgentLensOtlpJsonExporter(SpanExporter):
                 },
                 "scopeSpans": scope_spans,
             })
+
+        if self.sandbox_mode:
+            import json
+            import os
+            try:
+                os.makedirs(self.sandbox_output_dir, exist_ok=True)
+                with open(os.path.join(self.sandbox_output_dir, "telemetry.jsonl"), "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"resourceSpans": resource_spans}) + "\n")
+                return SpanExportResult.SUCCESS
+            except Exception:
+                return SpanExportResult.FAILURE
 
         try:
             response = self._client.post(

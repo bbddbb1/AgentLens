@@ -3,8 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Bot, GitCommit, CheckCircle2, FileText, XCircle, AlertTriangle, GitBranch, ChevronDown, ChevronUp } from 'lucide-react';
 import { EventEnvelope } from '@agentlens/protocol';
 import { AgentAvatar } from '@/components/common/AgentAvatar';
+import { isEventBranchable } from '@/components/replay/BranchExplorer';
 
 export function eventTone(eventType: string): string {
+  if (eventType === 'interrupt.decision' || eventType === 'interrupt.resumed') return 'text-[#34d399]';
   if (eventType.includes('interrupt')) return 'text-[#fbbf24]';
   if (eventType.includes('failed') || eventType.includes('rejected')) return 'text-[#f87171]';
   if (eventType.includes('review')) return 'text-[#34d399]';
@@ -29,6 +31,9 @@ export function eventIconConfig(eventType: string): { icon: React.ReactNode; col
   if (eventType.includes('failed') || eventType.includes('rejected')) {
     return { icon: <XCircle size={12} />, color: 'text-[#f87171]', bg: 'bg-[rgba(248,113,113,0.16)]' };
   }
+  if (eventType === 'interrupt.decision' || eventType === 'interrupt.resumed') {
+    return { icon: <CheckCircle2 size={12} />, color: 'text-[#34d399]', bg: 'bg-[rgba(52,211,153,0.16)]' };
+  }
   if (eventType.includes('interrupt')) {
     return { icon: <AlertTriangle size={12} />, color: 'text-[#fbbf24]', bg: 'bg-[rgba(251,191,36,0.16)]' };
   }
@@ -46,6 +51,7 @@ export function TimelineEventCard({ event, isCurrent, onSelect, description }: T
   const iconConfig = eventIconConfig(event.event_type);
   const payload = (event.payload as Record<string, unknown>) || {};
   const innerMonologue = typeof payload.inner_monologue === 'string' ? payload.inner_monologue : undefined;
+  const isBranchable = isEventBranchable(event.event_type);
   
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -86,6 +92,12 @@ export function TimelineEventCard({ event, isCurrent, onSelect, description }: T
             <span className="rounded-full bg-[rgba(255,255,255,0.05)] px-2 py-0.5 text-[9px] text-[#7c83a3]">
               #{event.sequence_num}
             </span>
+            {isBranchable && (
+              <span className="flex items-center gap-1 rounded-full bg-[rgba(103,232,249,0.08)] px-1.5 py-0.5 text-[9px] text-[#67e8f9] border border-[rgba(103,232,249,0.12)]">
+                <GitBranch size={9} />
+                <span>BRANCHABLE</span>
+              </span>
+            )}
             {event.agent_id && (
               <div className="flex items-center gap-1.5 bg-[rgba(255,255,255,0.05)] px-2 py-0.5 rounded-full text-[#c4c7da]">
                 <AgentAvatar agentId={event.agent_id} size="sm" className="!w-3 !h-3 !rounded-[3px]" />

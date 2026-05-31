@@ -5,7 +5,9 @@ import express from 'express';
 import { checkDatabaseHealth, initializeDatabase } from './db/postgres.js';
 import { missionsRouter } from './routes/missions.js';
 import { extrasRouter } from './routes/extras.js';
+import { branchesRouter } from './routes/branches.js';
 import { realtimeManager } from './realtime/missions.js';
+import { sandboxRunner } from './services/runtime/SandboxJobRunner.js';
 
 const app = express();
 
@@ -19,6 +21,7 @@ app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? '10mb' }));
 
 app.use(missionsRouter);
 app.use(extrasRouter);
+app.use(branchesRouter);
 
 app.get('/api/health', async (_req, res) => {
   try {
@@ -34,6 +37,7 @@ const port = Number(process.env.PORT ?? process.env.API_PORT ?? 8001);
 
 async function bootstrap(): Promise<void> {
   await initializeDatabase();
+  await sandboxRunner.start();
 
   const server = http.createServer(app);
   realtimeManager.attach(server);
@@ -44,6 +48,7 @@ async function bootstrap(): Promise<void> {
   });
 
   const shutdown = async () => {
+    await sandboxRunner.stop();
     await realtimeManager.shutdown();
     server.close();
     process.exit(0);

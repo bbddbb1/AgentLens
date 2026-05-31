@@ -110,6 +110,12 @@ class TestAgentLens:
         assert mission.mission_id is not None
         assert len(mission.mission_id) > 0
 
+    @patch.dict("os.environ", {"AGENTLENS_BRANCH_ID": "test-branch-123"})
+    def test_mission_picks_up_branch_id_from_env(self):
+        lens = self._make_lens()
+        mission = lens.mission("Research")
+        assert mission.branch_id == "test-branch-123"
+
     def test_flush_calls_provider_force_flush(self):
         lens = self._make_lens()
         lens.flush()
@@ -297,3 +303,20 @@ class TestAgentLens:
             "/api/v1/interrupts/resume",
             json={"resume_token": "resume-token-abc", "payload": {}},
         )
+
+    # --- register_branch_executor ---
+
+    def test_register_branch_executor(self):
+        lens = self._make_lens()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"id": "exec-1"}
+        mock_resp.raise_for_status = MagicMock()
+        self.mock_client.post.return_value = mock_resp
+
+        result = lens.register_branch_executor(
+            "m1", "My Runner", "python:3.11", "entry.py"
+        )
+        assert result == {"id": "exec-1"}
+        call_args = self.mock_client.post.call_args
+        assert call_args[0][0] == "/api/v1/missions/m1/branch-executors"
+        assert call_args[1]["json"]["name"] == "My Runner"

@@ -110,6 +110,12 @@ For the incident response scenario:
 python examples/hitl_incident_response_demo.py
 ```
 
+For the software deployment audit scenario (LangGraph multi-agent):
+
+```bash
+python examples/demo_audit.py
+```
+
 ## Monorepo Layout
 
 ```

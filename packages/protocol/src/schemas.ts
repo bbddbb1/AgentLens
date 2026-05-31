@@ -115,6 +115,73 @@ export const CreateReplayBranchSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const BranchCapabilitySchema = z.object({
+  is_branchable: z.boolean(),
+  reason: z.string().optional(),
+});
+
+export const BranchPointKindSchema = z.enum(['hitl', 'routing', 'pre_tool', 'post_tool', 'review_divergence', 'other']);
+
+export const BranchExecutorSpecSchema = z.object({
+  id: z.string().uuid(),
+  mission_id: z.string().min(1),
+  name: z.string().min(1),
+  docker_image: z.string().min(1),
+  python_entrypoint: z.string().min(1),
+  timeout_seconds: z.number().int().positive().default(300),
+  resource_limits: z.object({
+    cpu: z.string().optional(),
+    memory: z.string().optional(),
+    pids: z.number().int().optional(),
+  }).optional(),
+  env_allowlist: z.array(z.string()).optional(),
+  is_active: z.boolean().default(true),
+  created_at: z.string().datetime().optional(),
+});
+
+export const BranchSandboxJobSchema = z.object({
+  id: z.string().uuid(),
+  branch_id: z.string().min(1),
+  mission_id: z.string().min(1),
+  executor_id: z.string().uuid(),
+  status: z.enum(['queued', 'starting', 'running', 'completed', 'completed_no_events', 'failed', 'timeout', 'cancelled', 'abandoned']),
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+  started_at: z.string().datetime().optional(),
+  completed_at: z.string().datetime().optional(),
+  container_id: z.string().optional(),
+  exit_code: z.number().optional(),
+});
+
+export const BranchSandboxLogSchema = z.object({
+  id: z.string().uuid(),
+  job_id: z.string().uuid(),
+  timestamp: z.string().datetime(),
+  stream: z.enum(['stdout', 'stderr']),
+  message: z.string(),
+});
+
+export const BranchContextSchema = z.object({
+  mission_id: z.string().min(1),
+  branch_id: z.string().min(1),
+  source_branch_id: z.string().min(1),
+  forked_from_sequence_num: z.number().int().nonnegative(),
+  branch_point_kind: z.string().optional(),
+  source_event: z.record(z.string(), z.unknown()).optional(),
+  fork_snapshot: z.record(z.string(), z.unknown()).optional(),
+  runtime_state_at_fork: z.record(z.string(), z.unknown()).optional(),
+  events_until_fork: z.array(z.record(z.string(), z.unknown())).optional(),
+  selected_node_id: z.string().optional(),
+  selected_event_id: z.string().optional(),
+  user_instructions: z.string().optional(),
+  tool_policy: z.string().default('mock'),
+});
+
+export const CreateBranchResponseSchema = z.object({
+  branch: z.record(z.string(), z.unknown()),
+  job: BranchSandboxJobSchema,
+});
+
 export const KnownAgentEventNames = new Set<string>(Object.values(AgentEvents));
 
 // ─── EventEnvelope Schemas ───
@@ -202,3 +269,10 @@ export type ResumeInterruptInput = z.infer<typeof ResumeInterruptSchema>;
 export type CreateReplayBranchInput = z.infer<typeof CreateReplayBranchSchema>;
 export type PolicyDecisionType = z.infer<typeof PolicyDecisionTypeSchema>;
 export type ErrorSeverity = z.infer<typeof ErrorSeveritySchema>;
+export type BranchCapability = z.infer<typeof BranchCapabilitySchema>;
+export type BranchPointKind = z.infer<typeof BranchPointKindSchema>;
+export type BranchExecutorSpec = z.infer<typeof BranchExecutorSpecSchema>;
+export type BranchSandboxJob = z.infer<typeof BranchSandboxJobSchema>;
+export type BranchSandboxLog = z.infer<typeof BranchSandboxLogSchema>;
+export type BranchContext = z.infer<typeof BranchContextSchema>;
+export type CreateBranchResponse = z.infer<typeof CreateBranchResponseSchema>;

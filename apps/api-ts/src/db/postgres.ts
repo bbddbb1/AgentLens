@@ -94,6 +94,7 @@ export async function initializeDatabase(): Promise<void> {
     CREATE TABLE IF NOT EXISTS semantic_summaries (
       id UUID PRIMARY KEY,
       mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+      branch_id VARCHAR(255) NOT NULL DEFAULT 'main',
       span_id VARCHAR(64) NULL,
       level VARCHAR(50) NOT NULL,
       summary TEXT NOT NULL,
@@ -179,6 +180,10 @@ export async function initializeDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_interrupts_pending
     ON interrupts (mission_id, status, created_at)
   `);
+
+  await pool.query(`
+    ALTER TABLE semantic_summaries ADD COLUMN IF NOT EXISTS branch_id VARCHAR(255) NOT NULL DEFAULT 'main';
+  `).catch(() => {});
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS mission_replay_branches (

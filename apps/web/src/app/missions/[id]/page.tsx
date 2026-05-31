@@ -451,12 +451,21 @@ export default function MissionWorkspacePage() {
     const ws = new WebSocket(`${websocketBaseUrl()}/ws/missions/${missionId}`);
     ws.onmessage = (event: MessageEvent<string>) => {
       try {
-        const message = JSON.parse(event.data) as { type?: string; mission?: Mission };
+        const message = JSON.parse(event.data) as any;
         if (message.type === 'mission.updated' && message.mission) {
           setMission(message.mission);
         }
-        if (message.type === 'graph.snapshot.created' || message.type === 'interrupt.created' || message.type === 'interrupt.decided' || message.type === 'interrupt.resumed') {
-          void loadReplay(currentBranchId ?? undefined);
+        
+        const reloadTypes = [
+          'graph.snapshot.created', 'interrupt.created', 'interrupt.decided', 'interrupt.resumed',
+          'branch.sandbox.queued', 'branch.sandbox.started', 'branch.sandbox.completed', 'branch.sandbox.failed', 'branch.sandbox.timeout'
+        ];
+        
+        if (reloadTypes.includes(message.type)) {
+          const msgBranchId = message.branch?.id || message.snapshot?.branch_id || message.interrupt?.branch_id || message.job?.branch_id;
+          if (!msgBranchId || msgBranchId === currentBranchId) {
+            void loadReplay(currentBranchId ?? undefined);
+          }
         }
       } catch {
         // Ignore malformed realtime messages.

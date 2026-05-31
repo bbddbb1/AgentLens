@@ -33,12 +33,16 @@ class Mission:
         objective: str,
         framework: str = "custom",
         metadata: dict[str, Any] | None = None,
+        branch_id: str | None = None,
+        lens: Any | None = None,
     ):
         self._tracer = tracer
+        self._lens = lens
         self.mission_id = mission_id
         self.objective = objective
         self.framework = normalize_framework_name(framework)
         self.metadata = metadata or {}
+        self.branch_id = branch_id
         self._span: Span | None = None
 
     def __enter__(self) -> Mission:
@@ -51,6 +55,7 @@ class Mission:
                 MissionAttributes.PHASE: "planning",
                 MissionAttributes.FRAMEWORK: self.framework,
                 "agent.span.kind": AgentSpanKind.MISSION,
+                **({MissionAttributes.BRANCH_ID: self.branch_id} if self.branch_id else {}),
             },
         )
         self._ctx = trace.use_span(self._span, end_on_exit=False)
@@ -91,6 +96,7 @@ class Mission:
             agent_role=role,
             agent_team=team,
             framework=self.framework,
+            lens=self._lens,
             **kwargs,
         )
 

@@ -38,6 +38,7 @@ import type { PoolClient } from 'pg';
 import { generateMissionSummary, generateWhyThisState, type WhyThisStateContext } from './semantic.js';
 import {
   ROOT_BRANCH_ID,
+  buildBranchLineage,
   createDefaultBranch,
   normalizeSpansToMissionEvents,
   replayMissionEvents,
@@ -298,7 +299,8 @@ class MissionStore {
               id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at
             ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11)
             ON CONFLICT (mission_id, branch_id, interrupt_id) DO UPDATE
-            SET reason = EXCLUDED.reason,
+            SET status = 'pending',
+                reason = EXCLUDED.reason,
                 resume_url = COALESCE(EXCLUDED.resume_url, interrupts.resume_url),
                 payload = interrupts.payload || EXCLUDED.payload,
                 updated_at = NOW()
@@ -719,7 +721,11 @@ class MissionStore {
       attributeValue(resourceAttributes, MissionAttributes.PHASE) ??
       spans.map((span) => attributeValue(span.attributes, MissionAttributes.PHASE)).find(Boolean) ??
       'executing';
-    const branchId = branchIdInput ?? ROOT_BRANCH_ID;
+    const branchId =
+      branchIdInput ??
+      attributeValue(resourceAttributes, MissionAttributes.BRANCH_ID) ??
+      spans.map((span) => attributeValue(span.attributes, MissionAttributes.BRANCH_ID)).find(Boolean) ??
+      ROOT_BRANCH_ID;
 
     const client = await pool.connect();
     try {
@@ -965,7 +971,7 @@ class MissionStore {
                 JSON.stringify(intr.payload ?? {}),
                 intr.decision ?? null,
                 intr.decision_comment ?? null,
-                JSON.stringify(intr.payload ?? {}),
+                JSON.stringify(intr.decision_payload ?? {}),
                 null, // expires_at omitted for simplicity
               ]
             );
@@ -983,7 +989,7 @@ class MissionStore {
     }
   }
 
-  async generateSummary(missionId: string): Promise<SemanticSummaryResult | null> {
+  async generateSummary(missionId: string, branchId = ROOT_BRANCH_ID): Promise<SemanticSummaryResult | null> {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
 
@@ -997,7 +1003,7 @@ class MissionStore {
         `,
         [missionId],
       ),
-      this.getReplayFromTelemetry(missionId),
+      this.getReplayFromTelemetry(missionId, branchId),
     ]);
 
     const aggregate: MissionAggregate = {
@@ -1010,12 +1016,13 @@ class MissionStore {
 
     await pool.query(
       `
-        INSERT INTO semantic_summaries (id, mission_id, level, summary, conflicts, anomalies)
-        VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
+        INSERT INTO semantic_summaries (id, mission_id, branch_id, level, summary, conflicts, anomalies)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
       `,
       [
         randomUUID(),
         missionId,
+        branchId,
         'mission',
         summary.summary,
         JSON.stringify(summary.conflicts ?? []),
@@ -1074,12 +1081,13 @@ class MissionStore {
 
     await pool.query(
       `
-        INSERT INTO semantic_summaries (id, mission_id, span_id, level, summary, conflicts, anomalies)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+        INSERT INTO semantic_summaries (id, mission_id, branch_id, span_id, level, summary, conflicts, anomalies)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
       `,
       [
         randomUUID(),
         missionId,
+        branchId,
         String(sequenceNum),
         'why_this_state',
         result.summary,
@@ -1107,7 +1115,8 @@ class MissionStore {
             id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at
           ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11)
           ON CONFLICT (mission_id, branch_id, interrupt_id) DO UPDATE
-          SET reason = EXCLUDED.reason,
+          SET status = 'pending',
+              reason = EXCLUDED.reason,
               resume_url = COALESCE(EXCLUDED.resume_url, interrupts.resume_url),
               payload = interrupts.payload || EXCLUDED.payload,
               updated_at = NOW()
@@ -1242,6 +1251,13 @@ class MissionStore {
         if (token) {
           await this.resumeInterruptByToken(token, input.payload ?? {});
         }
+      }
+
+      if (interrupt) {
+        // Notify sandbox runner (if any jobs are waiting)
+        // Use dynamic import to avoid circular dependency
+        const { sandboxRunner } = await import('./runtime/SandboxJobRunner.js');
+        await sandboxRunner.onDecisionMade(missionId, branchId, interrupt);
       }
 
       return interrupt;
@@ -1400,30 +1416,54 @@ class MissionStore {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async listSummaries(missionId: string, level?: string): Promise<Array<Record<string, unknown>>> {
-    const params: Array<string> = [missionId];
-    let whereClause = 'WHERE mission_id = $1';
+  async listSummaries(missionId: string, level?: string, branchId = ROOT_BRANCH_ID): Promise<Array<Record<string, unknown>>> {
+    const client = await pool.connect();
+    try {
+      const branches = await this.listReplayBranchesInternal(client, missionId);
+      const lineage = buildBranchLineage(branches, branchId);
+      const branchIds = lineage.length > 0 ? lineage.map(b => b.id) : [branchId];
 
-    if (level) {
-      params.push(level);
-      whereClause += ` AND level = $${params.length}`;
-    }
-
-    const result = await pool.query(
-      `
+      const params: Array<unknown> = [missionId, branchIds];
+      let queryStr = `
         SELECT *
         FROM semantic_summaries
-        ${whereClause}
-        ORDER BY created_at DESC
-      `,
-      params,
-    );
+        WHERE mission_id = $1 AND branch_id = ANY($2)
+      `;
+      if (level) {
+        params.push(level);
+        queryStr += ` AND level = $3`;
+      }
+      queryStr += ` ORDER BY created_at DESC`;
 
-    return result.rows.map((row) => ({
-      summary: String(row.summary ?? ''),
-      conflicts: Array.isArray(row.conflicts) ? row.conflicts : [],
-      anomalies: Array.isArray(row.anomalies) ? row.anomalies : [],
-    }));
+      const result = await client.query(queryStr, params);
+      const mapped = result.rows.map((row) => ({
+        summary: String(row.summary ?? ''),
+        conflicts: Array.isArray(row.conflicts) ? row.conflicts : [],
+        anomalies: Array.isArray(row.anomalies) ? row.anomalies : [],
+        branch_id: String(row.branch_id ?? ROOT_BRANCH_ID),
+        level: String(row.level),
+        created_at: row.created_at,
+      }));
+
+      // Find the latest summary for each level, prioritizing the most specific branch in the lineage
+      const reversedBranchIds = [...branchIds].reverse();
+      const finalResult: Array<Record<string, unknown>> = [];
+      const levels = level ? [level] : ['mission', 'why_this_state'];
+      
+      for (const lvl of levels) {
+        for (const bid of reversedBranchIds) {
+          const match = mapped.find(m => m.branch_id === bid && m.level === lvl);
+          if (match) {
+            finalResult.push(match);
+            break;
+          }
+        }
+      }
+
+      return finalResult;
+    } finally {
+      client.release();
+    }
   }
 
   async createArtifact(input: {

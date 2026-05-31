@@ -33,7 +33,7 @@ function attributesToRecord(attributes: OtlpJsonAttribute[] | undefined): Record
   return result;
 }
 
-function normalizeOtlpJson(body: any): { resource_attributes: Record<string, string | number | boolean | string[] | number[] | boolean[]>; spans: any[]; batch_id?: string } {
+export function normalizeOtlpJson(body: any): { resource_attributes: Record<string, string | number | boolean | string[] | number[] | boolean[]>; spans: any[]; batch_id?: string } {
   const spans: any[] = [];
   let resourceAttributes: Record<string, string | number | boolean | string[] | number[] | boolean[]> = {};
 

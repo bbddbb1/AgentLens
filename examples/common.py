@@ -39,6 +39,13 @@ def read_env(name: str, default: str) -> str:
 
 
 def outputs_dir() -> Path:
+    # Use sandbox output dir if available (writable volume)
+    sandbox_output = os.environ.get("AGENTLENS_SANDBOX_OUTPUT_DIR")
+    if sandbox_output:
+        path = Path(sandbox_output)
+        path.mkdir(exist_ok=True, parents=True)
+        return path
+
     output_dir = Path(__file__).resolve().parent / "outputs"
     output_dir.mkdir(exist_ok=True)
     return output_dir

@@ -120,3 +120,43 @@ Constants and enums live in:
 - Python: `packages/otel-semconv/agentlens_otel_semconv/events.py`
 - TypeScript: `packages/protocol/src/semconv.ts`
 
+## LLM Trace Attributes
+
+When an agent interacts with an LLM, the following attributes should be captured to provide model provenance:
+
+- `gen_ai.system` (provider, e.g., openai, anthropic)
+- `gen_ai.request.model` (model name)
+- `gen_ai.model.version` (specific version)
+- `gen_ai.prompt` (full prompt text)
+- `gen_ai.completion` (full completion text)
+- `gen_ai.usage.input_tokens`
+- `gen_ai.usage.output_tokens`
+- `gen_ai.usage.total_tokens`
+- `gen_ai.request.temperature`
+- `gen_ai.request.max_tokens`
+- `gen_ai.response.finish_reason`
+- `gen_ai.latency_ms`
+
+LLM events to emit:
+- `gen_ai.call`
+- `gen_ai.response`
+- `gen_ai.error`
+- `gen_ai.streaming.start`
+- `gen_ai.streaming.end`
+
+## Error Attribution
+
+To explicitly track failures across the system, use the following attributes:
+
+- `error.source` (model, tool, human, policy, system)
+- `error.cause` (hallucination, prompt_injection, tool_failure, timeout, permission_denied, validation_error)
+- `error.severity` (low, medium, high, critical)
+- `error.recovery.action` (retry, fallback, escalate, abort)
+- `error.original` (original error message)
+
+Constants and enums live in:
+
+- Python: `packages/otel-semconv/agentlens_otel_semconv/attributes.py`
+- Python: `packages/otel-semconv/agentlens_otel_semconv/events.py`
+- TypeScript: `packages/protocol/src/semconv.ts`
+

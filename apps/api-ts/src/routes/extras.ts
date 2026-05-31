@@ -57,30 +57,7 @@ extrasRouter.get('/api/v1/missions/:missionId/replay', async (req, res) => {
   return res.json(replay);
 });
 
-extrasRouter.get('/api/v1/missions/:missionId/replay/branches', async (req, res) => {
-  try {
-    const branches = await missionStore.listReplayBranches(req.params.missionId);
-    if (!branches) return res.status(404).json({ detail: 'Mission not found' });
-    return res.json({ branches });
-  } catch (error) {
-    return respondRouteError(res, error, 'Failed to load replay branches');
-  }
-});
 
-extrasRouter.post('/api/v1/missions/:missionId/replay/branches', async (req, res) => {
-  try {
-    const parsed = CreateReplayBranchSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ detail: parsed.error.flatten() });
-    }
-    const branch = await missionStore.createReplayBranch(req.params.missionId, parsed.data);
-    if (!branch) return res.status(404).json({ detail: 'Mission not found' });
-    await publishMissionEvent(req.params.missionId, 'replay.branch.created', { branch });
-    return res.status(201).json(branch);
-  } catch (error) {
-    return respondRouteError(res, error, 'Failed to create replay branch');
-  }
-});
 
 extrasRouter.get('/api/v1/missions/:missionId/events', async (req, res) => {
   try {
@@ -99,7 +76,8 @@ extrasRouter.get('/api/v1/missions/:missionId/summary', async (req, res) => {
     if (!mission) return res.status(404).json({ detail: 'Mission not found' });
 
     const level = typeof req.query.level === 'string' ? req.query.level : undefined;
-    const summaries = await missionStore.listSummaries(req.params.missionId, level);
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    const summaries = await missionStore.listSummaries(req.params.missionId, level, branchId);
     return res.json(summaries);
   } catch (error) {
     return respondRouteError(res, error, 'Failed to load mission summary');
@@ -108,11 +86,12 @@ extrasRouter.get('/api/v1/missions/:missionId/summary', async (req, res) => {
 
 extrasRouter.post('/api/v1/missions/:missionId/summary/generate', async (req, res) => {
   try {
-    const summary = await missionStore.generateSummary(req.params.missionId);
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    const summary = await missionStore.generateSummary(req.params.missionId, branchId);
     if (!summary) return res.status(404).json({ detail: 'Mission not found' });
 
     await publishMissionEvent(req.params.missionId, 'summary.generated', { summary });
-    const latest = await missionStore.listSummaries(req.params.missionId);
+    const latest = await missionStore.listSummaries(req.params.missionId, undefined, branchId);
     return res.status(201).json(latest[0] ?? summary);
   } catch (error) {
     return respondRouteError(res, error, 'Failed to generate mission summary');

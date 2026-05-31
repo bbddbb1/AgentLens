@@ -38,6 +38,7 @@ export const AgentAttributes = {
 
 export const MissionAttributes = {
   ID: 'mission.id',
+  BRANCH_ID: 'mission.branch_id',
   OBJECTIVE: 'mission.objective',
   PHASE: 'mission.phase',
   STATUS: 'mission.status',

@@ -5,6 +5,7 @@ Agent instrumentor - records agent activities as OpenTelemetry spans and events.
 from __future__ import annotations
 
 import uuid
+import os
 from typing import Any
 
 from opentelemetry import trace
@@ -35,9 +36,11 @@ class AgentInstrumentor:
         agent_role: str = "agent",
         agent_team: str | None = None,
         framework: str = "custom",
+        lens: Any | None = None,
         **kwargs: Any,
     ):
         self._tracer = tracer
+        self._lens = lens
         self.mission_id = mission_id
         self.agent_id = agent_id
         self.agent_name = agent_name
@@ -46,6 +49,7 @@ class AgentInstrumentor:
         self.framework = normalize_framework_name(framework)
         self._span: Span | None = None
         self._kwargs = kwargs
+        self._interrupt_count = 0
 
     def __enter__(self) -> AgentInstrumentor:
         attrs = {
@@ -253,7 +257,35 @@ class AgentInstrumentor:
         if not self._span:
             raise RuntimeError("request_human_review() requires an active agent span.")
 
-        next_interrupt_id = interrupt_id or str(uuid.uuid4())
+        self._interrupt_count += 1
+        
+        # Determine the interrupt ID
+        # 1. Use explicitly provided ID
+        # 2. In sandbox mode, check for injections matching this agent
+        # 3. Fall back to a deterministic ID based on agent and count
+        next_interrupt_id = interrupt_id
+        
+        if not next_interrupt_id and self._lens and os.environ.get("AGENTLENS_SANDBOX_MODE") == "1":
+            # Search for a human_decision injection
+            # Try targeted by agent name first
+            injection = getattr(self._lens, "_get_injection")("human_decision", target=f"agent:{self.agent_id}")
+            if not injection:
+                injection = getattr(self._lens, "_get_injection")("human_decision", target=self.agent_id)
+            if not injection:
+                # Fallback to any human_decision injection (useful for single-interrupt scenarios)
+                injection = getattr(self._lens, "_get_injection")("human_decision")
+            
+            if injection:
+                # Adopt the injection target as our interrupt ID if it looks like a specific ID
+                inj_target = injection.get("target")
+                if inj_target and "-" in str(inj_target) and len(str(inj_target)) > 20:
+                    next_interrupt_id = str(inj_target)
+                # Also store the mapping so wait_for_interrupt_decision can find it if needed
+                # (though it already searches by ID so adopting it is enough)
+
+        if not next_interrupt_id:
+            next_interrupt_id = f"{self.agent_id}-interrupt-{self._interrupt_count}"
+
         next_resume_token = resume_token or f"{uuid.uuid4()}{uuid.uuid4()}"
         attrs: dict[str, str | bool] = {
             AgentAttributes.INTERRUPT_ID: next_interrupt_id,

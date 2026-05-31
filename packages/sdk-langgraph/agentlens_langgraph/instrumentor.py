@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+import logging
 
 from langchain_core.callbacks import BaseCallbackHandler
 
@@ -14,6 +15,8 @@ from agentlens_sdk.mission import Mission
 from agentlens_sdk.agent import AgentInstrumentor
 from agentlens_otel_semconv.attributes import AgentAttributes
 from agentlens_otel_semconv.events import AgentEvents
+
+logger = logging.getLogger("agentlens")
 
 
 def auto_instrument(
@@ -75,7 +78,20 @@ class AgentLensLangGraphCallbackHandler(BaseCallbackHandler):
 
         node_name = metadata.get("langgraph_node")
         if not node_name:
-            node_name = serialized.get("name") or serialized.get("id") or "unknown_node"
+            # Check tags for graph:step:node_name pattern
+            if tags:
+                for tag in tags:
+                    if tag.startswith("graph:step:"):
+                        node_name = tag.split(":")[-1]
+                        break
+            
+            # Fallback to serialized name or ID
+            if not node_name:
+                node_name = serialized.get("name") or serialized.get("id")
+        
+        # Final fallback
+        if not node_name:
+            node_name = "unknown_node"
 
         if self._should_ignore_node(node_name):
             return
@@ -92,6 +108,16 @@ class AgentLensLangGraphCallbackHandler(BaseCallbackHandler):
                     },
                 )
 
+        task = node_name
+        goal = ""
+        
+        if getattr(self.lens, "_get_injection", None):
+            injection = self.lens._get_injection("prompt_injection", target=f"agent:{node_name}")
+            if injection:
+                task = injection.get("task", node_name)
+                goal = injection.get("goal", "")
+                logger.info(f"[AgentLens Sandbox] Injecting prompt override for agent {node_name}: task='{task}' goal='{goal}'")
+
         agent = self.mission.agent(
             agent_id=node_name,
             role=node_name,
@@ -101,7 +127,9 @@ class AgentLensLangGraphCallbackHandler(BaseCallbackHandler):
         self._active_agents[run_id] = agent
         self._node_names[run_id] = node_name
 
-        agent.set_task(node_name)
+        agent.set_task(task)
+        if goal:
+            agent.set_goal(goal)
 
         if inputs:
             agent.record_memory_read(f"{node_name}.inputs", str(inputs)[:500])

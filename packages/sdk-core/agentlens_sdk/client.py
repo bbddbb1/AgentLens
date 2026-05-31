@@ -6,9 +6,14 @@ from __future__ import annotations
 
 import time
 import uuid
+import os
+import json
+import logging
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger("agentlens")
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -77,6 +82,17 @@ class AgentLens:
             timeout=30.0,
         )
 
+        self._injections = []
+        if os.environ.get("AGENTLENS_SANDBOX_MODE") == "1":
+            ctx_path = "/agentlens/context/context.json"
+            if os.path.exists(ctx_path):
+                try:
+                    with open(ctx_path, "r") as f:
+                        ctx = json.load(f)
+                        self._injections = ctx.get("injections", [])
+                except Exception:
+                    pass
+
     def _build_headers(self, api_key: str | None) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -97,12 +113,15 @@ class AgentLens:
                 ...
         """
         mid = mission_id or str(uuid.uuid4())
+        branch_id = os.environ.get("AGENTLENS_BRANCH_ID")
         return Mission(
             tracer=self._tracer,
             mission_id=mid,
             objective=objective,
             framework=self.framework,
             metadata=metadata,
+            branch_id=branch_id,
+            lens=self,
         )
 
     def flush(self) -> None:
@@ -111,7 +130,14 @@ class AgentLens:
 
     def list_interrupts(self, mission_id: str, status: str | None = None) -> list[dict[str, Any]]:
         """List interrupts for a mission."""
-        params = {"status": status} if status else None
+        params = {}
+        if status:
+            params["status"] = status
+        
+        branch_id = os.environ.get("AGENTLENS_BRANCH_ID")
+        if branch_id:
+            params["branch_id"] = branch_id
+
         response = self._http.get(f"/api/v1/missions/{mission_id}/interrupts", params=params)
         response.raise_for_status()
         data = response.json()
@@ -194,6 +220,20 @@ class AgentLens:
             f"mission_id={mission_id}, interrupt_id={interrupt_id}"
         )
 
+    def _get_injection(self, type: str, target: str | None = None) -> dict[str, Any] | None:
+        """Find a matching injection in the active branch context."""
+        for inj in getattr(self, "_injections", []):
+            if inj.get("type") != type:
+                continue
+            if target is None:
+                return inj
+            inj_target = inj.get("target")
+            if inj_target == target:
+                return inj
+            if inj_target and (target in str(inj_target) or str(inj_target) in target):
+                return inj
+        return None
+
     def wait_for_interrupt_decision(
         self,
         mission_id: str,
@@ -204,9 +244,49 @@ class AgentLens:
         retry_status_codes: tuple[int, ...] = (404, 502, 503, 504),
     ) -> dict[str, Any]:
         """Poll the backend until an interrupt receives a non-pending decision."""
+        if os.environ.get("AGENTLENS_SANDBOX_MODE") == "1":
+            # 1. Check for injections (priority)
+            injection = self._get_injection("human_decision", target=interrupt_id)
+            if not injection:
+                injection = self._get_injection("human_decision")
+            if injection:
+                logger.info(f"[AgentLens Sandbox] Injecting decision for interrupt {interrupt_id}: {injection['decision']}")
+                return {
+                    "interrupt_id": interrupt_id,
+                    "status": "approved" if injection["decision"] in ("approve", "approved") else "rejected",
+                    "decision": injection["decision"],
+                    "decision_comment": injection.get("comment", "Automated mock decision"),
+                    "decision_payload": injection.get("payload", {}),
+                }
+
+            # 2. Check for local decision bridge (file-based)
+            output_dir = os.environ.get("AGENTLENS_SANDBOX_OUTPUT_DIR")
+            if output_dir:
+                decision_file = os.path.join(output_dir, "decisions.jsonl")
+                # We'll poll this file in the loop below alongside the API
+                logger.info(f"[AgentLens Sandbox] Waiting for manual decision on interrupt {interrupt_id} via {decision_file} or API...")
+
         deadline = time.time() + timeout_seconds
         last_error: Exception | None = None
         while time.time() < deadline:
+            # Check local decision file if in sandbox mode
+            if os.environ.get("AGENTLENS_SANDBOX_MODE") == "1":
+                output_dir = os.environ.get("AGENTLENS_SANDBOX_OUTPUT_DIR")
+                if output_dir:
+                    decision_file = os.path.join(output_dir, "decisions.jsonl")
+                    if os.path.exists(decision_file):
+                        try:
+                            with open(decision_file, "r") as f:
+                                for line in f:
+                                    if not line.strip():
+                                        continue
+                                    intr = json.loads(line)
+                                    if str(intr.get("interrupt_id")) == str(interrupt_id):
+                                        logger.info(f"[AgentLens Sandbox] Received manual decision via bridge: {intr.get('decision')}")
+                                        return intr
+                        except Exception as e:
+                            logger.error(f"[AgentLens Sandbox] Error reading decision bridge: {e}")
+
             try:
                 for interrupt in self.list_interrupts(mission_id):
                     if interrupt.get("interrupt_id") != interrupt_id:
@@ -214,12 +294,14 @@ class AgentLens:
                     if interrupt.get("status") != "pending":
                         return interrupt
                 last_error = None
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code not in retry_status_codes:
-                    raise
-                last_error = exc
             except httpx.HTTPError as exc:
+                # In sandbox, ignore network errors and keep polling (might be using file bridge)
                 last_error = exc
+                if os.environ.get("AGENTLENS_SANDBOX_MODE") != "1":
+                    # If not in sandbox, standard retry logic
+                    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code not in retry_status_codes:
+                        raise
+            
             time.sleep(poll_interval_seconds)
 
         if last_error is not None:
@@ -251,9 +333,16 @@ class AgentLens:
             "payload": payload or {},
             "idempotency_key": idempotency_key or str(uuid.uuid4()),
         }
+        
+        params = {}
+        branch_id = os.environ.get("AGENTLENS_BRANCH_ID")
+        if branch_id:
+            params["branch_id"] = branch_id
+
         response = self._http.post(
             f"/api/v1/missions/{mission_id}/interrupts/{interrupt_id}/decision",
             json=body,
+            params=params,
         )
         response.raise_for_status()
         return response.json()
@@ -271,6 +360,33 @@ class AgentLens:
                 "resume_token": resume_token,
                 "payload": payload or {},
             },
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def register_branch_executor(
+        self,
+        mission_id: str,
+        name: str,
+        docker_image: str,
+        python_entrypoint: str,
+        timeout_seconds: int = 300,
+        resource_limits: dict[str, Any] | None = None,
+        env_allowlist: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Register a branch executor for this mission."""
+        body = {
+            "name": name,
+            "docker_image": docker_image,
+            "python_entrypoint": python_entrypoint,
+            "timeout_seconds": timeout_seconds,
+            "resource_limits": resource_limits or {},
+            "env_allowlist": env_allowlist or [],
+            "is_active": True,
+        }
+        response = self._http.post(
+            f"/api/v1/missions/{mission_id}/branch-executors",
+            json=body,
         )
         response.raise_for_status()
         return response.json()

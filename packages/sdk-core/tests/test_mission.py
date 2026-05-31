@@ -17,6 +17,7 @@ class TestMission:
             objective=overrides.get("objective", "Research AI trends"),
             framework=overrides.get("framework", "custom"),
             metadata=overrides.get("metadata", {"source": "test"}),
+            branch_id=overrides.get("branch_id", None),
         )
         return mission, tracer, mock_span
 
@@ -35,7 +36,14 @@ class TestMission:
         assert attrs["mission.objective"] == "Research AI trends"
         assert attrs["mission.status"] == "active"
         assert attrs["mission.phase"] == "planning"
+        assert attrs["mission.phase"] == "planning"
         assert attrs["agent.span.kind"] == "mission"
+
+    def test_enter_sets_branch_id_if_provided(self):
+        mission, tracer, span = self._make_mission(branch_id="b123")
+        mission.__enter__()
+        attrs = tracer.start_span.call_args[1]["attributes"]
+        assert attrs["mission.branch_id"] == "b123"
 
     def test_enter_records_started_event(self):
         mission, tracer, span = self._make_mission()

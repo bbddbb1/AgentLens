@@ -253,6 +253,17 @@ def main() -> None:
     print("[*] Starting LangGraph HITL release-gate demo")
     print(f"[*] AgentLens endpoint: {endpoint}")
 
+    try:
+        lens.register_branch_executor(
+            mission_id=mission.mission_id,
+            name="Local Demo Runner",
+            docker_image="python:3.11-slim",
+            python_entrypoint="examples/hitl_release_gate_demo.py",
+        )
+        print("[*] Registered branch executor")
+    except Exception as e:
+        print(f"[-] Failed to register branch executor: {e}")
+
     with mission:
         mission.set_phase("planning")
         graph = build_graph(lens, mission)

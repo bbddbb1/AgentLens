@@ -403,9 +403,13 @@ export function eventDescription(event: MissionEventRecord): string {
     case 'tool.called':
       return `${agentId ?? 'Agent'} called ${String(payload.tool_name ?? 'tool')}`;
     case 'interrupt.requested':
-      return `${agentId ?? 'Agent'} requested interrupt`;
+      return `${agentId ?? 'Agent'} requested human review`;
+    case 'interrupt.decision': {
+      const decision = String(payload.decision ?? 'none').toUpperCase();
+      return `Human Review: ${decision}${payload.comment ? ` - ${String(payload.comment)}` : ''}`;
+    }
     case 'interrupt.resumed':
-      return `${agentId ?? 'Agent'} resumed after interrupt`;
+      return `${agentId ?? 'Agent'} resumed execution after human review`;
     case 'handoff.requested':
     case 'handoff.accepted':
     case 'handoff.rejected':

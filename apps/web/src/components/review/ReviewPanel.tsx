@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useReviewStore, type Comment } from '@/stores/reviewStore';
+import { useReplayStore } from '@/stores/replayStore';
 
 interface SummaryPayload {
   summary: string;
@@ -126,6 +127,7 @@ function CommentBubble({ comment }: { comment: Comment }) {
 
 export function ReviewPanel() {
   const { comments, isCommentPanelOpen, setCommentPanelOpen, addComment } = useReviewStore();
+  const currentBranchId = useReplayStore((state) => state.currentBranchId);
   const [activeTab, setActiveTab] = useState<'comments' | 'interrupts' | 'summary' | 'anomalies'>('interrupts');
   const [newComment, setNewComment] = useState('');
   const [decisionComment, setDecisionComment] = useState('');
@@ -149,7 +151,7 @@ export function ReviewPanel() {
     setIsSummaryLoading(true);
     setSummaryError(null);
     try {
-      const summaries = await api.semantic.summaries(missionId);
+      const summaries = await api.semantic.summaries(missionId, 'mission', currentBranchId ?? undefined);
       const latestSummary = normalizeSummaryPayload(summaries[0]);
       if (latestSummary) {
         setMissionSummary(latestSummary);
@@ -161,7 +163,7 @@ export function ReviewPanel() {
         return;
       }
 
-      const generated = normalizeSummaryPayload(await api.semantic.generate(missionId));
+      const generated = normalizeSummaryPayload(await api.semantic.generate(missionId, currentBranchId ?? undefined));
       if (!generated) {
         throw new Error('Summary response was empty.');
       }
@@ -172,7 +174,7 @@ export function ReviewPanel() {
     } finally {
       setIsSummaryLoading(false);
     }
-  }, [missionId]);
+  }, [missionId, currentBranchId]);
 
   const loadInterrupts = useCallback(async () => {
     if (!missionId || missionId === 'demo-mission') {
@@ -184,7 +186,7 @@ export function ReviewPanel() {
     setIsInterruptLoading(true);
     setInterruptError(null);
     try {
-      const response = await api.interrupts.list(missionId);
+      const response = await api.interrupts.list(missionId, undefined, currentBranchId ?? undefined);
       setInterrupts(normalizeInterrupts(response.interrupts));
     } catch (error) {
       setInterrupts([]);
@@ -192,7 +194,7 @@ export function ReviewPanel() {
     } finally {
       setIsInterruptLoading(false);
     }
-  }, [missionId]);
+  }, [missionId, currentBranchId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -219,7 +221,7 @@ export function ReviewPanel() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [loadInterrupts, loadSummary, missionId]);
+  }, [loadInterrupts, loadSummary, missionId, currentBranchId]);
 
   const handleSubmitComment = () => {
     if (!newComment.trim()) return;
@@ -242,7 +244,7 @@ export function ReviewPanel() {
         decision,
         comment: decisionComment.trim() || undefined,
         idempotency_key: crypto.randomUUID(),
-      });
+      }, currentBranchId ?? undefined);
       setDecisionComment('');
       await Promise.all([loadInterrupts(), loadSummary(true)]);
     } catch (error) {

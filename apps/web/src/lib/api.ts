@@ -87,7 +87,9 @@ export const api = {
       request<ReplayStateResponse>(`/api/v1/missions/${missionId}/replay${branchId ? `?branch_id=${branchId}` : ''}`),
     branches: (missionId: string) => request<BranchesResponse>(`/api/v1/missions/${missionId}/replay/branches`),
     createBranch: (missionId: string, data: { name?: string; source_branch_id?: string; forked_from_sequence_num?: number; metadata?: Record<string, unknown> }) =>
-      request<ReplayBranch>(`/api/v1/missions/${missionId}/replay/branches`, { method: 'POST', body: JSON.stringify(data) }),
+      request<{ branch: ReplayBranch; job: unknown }>(`/api/v1/missions/${missionId}/replay/branches`, { method: 'POST', body: JSON.stringify(data) }),
+    jobs: (missionId: string) => request<{ jobs: any[] }>(`/api/v1/missions/${missionId}/branch-jobs`),
+    jobLogs: (missionId: string, jobId: string) => request<{ job: any, logs: any[] }>(`/api/v1/missions/${missionId}/branch-jobs/${jobId}`),
   },
 
   events: {
@@ -127,11 +129,18 @@ export const api = {
   },
 
   semantic: {
-    summaries: (missionId: string, level?: string) =>
-      request<SemanticSummaryResult[]>(`/api/v1/missions/${missionId}/summary${level ? `?level=${level}` : ''}`),
+    summaries: (missionId: string, level?: string, branchId?: string) => {
+      const params = new URLSearchParams();
+      if (level) params.append('level', level);
+      if (branchId) params.append('branch_id', branchId);
+      const query = params.toString();
+      return request<SemanticSummaryResult[]>(`/api/v1/missions/${missionId}/summary${query ? `?${query}` : ''}`);
+    },
 
-    generate: (missionId: string) =>
-      request<SemanticSummaryResult>(`/api/v1/missions/${missionId}/summary/generate`, { method: 'POST' }),
+    generate: (missionId: string, branchId?: string) => {
+      const query = branchId ? `?branch_id=${branchId}` : '';
+      return request<SemanticSummaryResult>(`/api/v1/missions/${missionId}/summary/generate${query}`, { method: 'POST' });
+    },
 
     whyThisState: (missionId: string, data: { sequence_num: number; branch_id?: string }) =>
       request<SemanticSummaryResult>(`/api/v1/missions/${missionId}/why-this-state`, { method: 'POST', body: JSON.stringify(data) }),
@@ -151,11 +160,18 @@ export const api = {
   },
 
   interrupts: {
-    list: (missionId: string, status?: string) =>
-      request<InterruptsResponse>(`/api/v1/missions/${missionId}/interrupts${status ? `?status=${status}` : ''}`),
+    list: (missionId: string, status?: string, branchId?: string) => {
+      const params = new URLSearchParams();
+      if (status) params.append('status', status);
+      if (branchId) params.append('branch_id', branchId);
+      const query = params.toString();
+      return request<InterruptsResponse>(`/api/v1/missions/${missionId}/interrupts${query ? `?${query}` : ''}`);
+    },
 
-    decide: (missionId: string, interruptId: string, data: { decision: string; comment?: string; payload?: Record<string, unknown>; idempotency_key: string }) =>
-      request<InterruptRecord>(`/api/v1/missions/${missionId}/interrupts/${interruptId}/decision`, { method: 'POST', body: JSON.stringify(data) }),
+    decide: (missionId: string, interruptId: string, data: { decision: string; comment?: string; payload?: Record<string, unknown>; idempotency_key: string }, branchId?: string) => {
+      const query = branchId ? `?branch_id=${branchId}` : '';
+      return request<InterruptRecord>(`/api/v1/missions/${missionId}/interrupts/${interruptId}/decision${query}`, { method: 'POST', body: JSON.stringify(data) });
+    },
   },
 
   sharing: {
