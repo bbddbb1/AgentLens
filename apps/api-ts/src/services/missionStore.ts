@@ -15,6 +15,7 @@ import {
   type PolicyDecision,
   type ReplayBranch,
   type ReplayStateResponse,
+  type MissionAuditEventResponse,
 } from '@agentlens/protocol';
 import { BuiltInRules, PolicyEngine } from './policyEngine.js';
 

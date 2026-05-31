@@ -1,22 +1,22 @@
-# AgentLens Semantic Conventions (Frozen)
+# AgentLens Semantic Conventions (Frozen Reference)
 
-This document freezes the semantic conventions emitted by adapters. It is the contract between framework integrations and the control plane.
+This document establishes the telemetry semantic conventions emitted by AgentLens SDKs and adapters. It defines the formal data contract between agent framework integrations and the Express control plane.
 
 Version: 0.1 (frozen)
 
 ## Goals
 
-- Provide a unified event model across agent frameworks.
-- Define what counts as an agent, tool call, handoff, interrupt, resume, and review.
-- Keep adapters lightweight while enabling consistent replay, governance, and UI.
+- Establish a unified, framework-agnostic telemetry schema for multi-agent workflows.
+- Standardize trace representations of agent execution steps, tool invocations, handoffs, human-in-the-loop interrupts, and reviews.
+- Keep agent instrumentation code minimal while enabling consistent execution replay, visual graph rendering, and UI reporting.
 
 ## Scope
 
-These conventions apply to OpenTelemetry spans and span events emitted by AgentLens adapters. The TypeScript control plane treats them as the source of truth.
+These conventions apply to OpenTelemetry spans and span events emitted by AgentLens adapters. The TypeScript control plane treats them as the formal interface contract.
 
-## Required base attributes
+## Required Base Attributes
 
-Adapters should set these attributes on every AgentLens span:
+Adapters must set these attributes on every AgentLens span:
 
 - `agent.id` (required)
 - `agent.span.kind` (required)
@@ -24,11 +24,11 @@ Adapters should set these attributes on every AgentLens span:
 - `agent.name` (recommended)
 - `agent.role` (recommended)
 
-## Span kinds
+## Span Kinds
 
-`agent.span.kind` is required on spans. Supported values:
+The `agent.span.kind` attribute is required on telemetry spans. Supported enum values:
 
-- `mission`
+- `mission` (represents the top-level workflow/run execution)
 - `agent.orchestration`
 - `agent.task`
 - `agent.delegation`
@@ -41,9 +41,9 @@ Adapters should set these attributes on every AgentLens span:
 
 ## Events
 
-### Tool call
+### Tool Call
 
-Tool usage can be a span or events on a span:
+Tool invocations can be represented as standalone spans or events on an existing span:
 
 - Span attribute: `agent.span.kind = agent.tool.call`
 - Required attribute: `agent.tool.name`
@@ -54,11 +54,11 @@ Tool usage can be a span or events on a span:
 
 ### Handoff
 
-Use handoff events when control moves between agents (or to a human supervisor):
+Emit handoff events when control transitions between agents or shifts to a human supervisor:
 
-- `agent.handoff.requested` (required when initiating a handoff)
-- `agent.handoff.accepted` (required when accepted)
-- `agent.handoff.rejected` (required when rejected)
+- `agent.handoff.requested` (required when initiating a transition)
+- `agent.handoff.accepted` (required when accepted by the recipient)
+- `agent.handoff.rejected` (required when rejected or returned)
 
 Required attributes:
 
@@ -68,14 +68,14 @@ Recommended attributes:
 
 - `agent.handoff.reason`
 
-Legacy alias: `agent.delegation` and `agent.delegation.*` are accepted but should be replaced by `agent.handoff.*` in new adapters.
+Legacy alias: `agent.delegation` and `agent.delegation.*` are supported for backwards compatibility but should be replaced by `agent.handoff.*` in new integrations.
 
-### Interrupt and resume
+### Interrupt and Resume
 
-Interrupts represent human review or policy gates:
+Interrupts represent human-in-the-loop review gates or automated runtime policy blocks:
 
-- `agent.interrupt.requested` (required)
-- `agent.interrupt.resumed` (required when resumed)
+- `agent.interrupt.requested` (required when execution is paused)
+- `agent.interrupt.resumed` (required when execution is continued)
 
 Required attributes on `agent.interrupt.requested`:
 
@@ -89,15 +89,15 @@ Recommended attributes:
 - `agent.timeout_at`
 - `agent.policy.required_review`
 
-When a human decision is captured, emit:
+When a human override decision is recorded, emit:
 
-- `agent.human.decision` with:
+- `agent.human.decision` containing:
   - `agent.human.decision` (approve, reject, revise, resume)
-  - `agent.human.input` (optional)
+  - `agent.human.input` (optional comments or parameters)
 
 ### Review
 
-Formal review steps emit one of:
+Formal peer or supervisor review steps emit one of:
 
 - `agent.review`
 - `agent.review.approved`
@@ -106,15 +106,15 @@ Formal review steps emit one of:
 
 Required attributes:
 
-- `agent.review.target` (agent id or span id under review)
+- `agent.review.target` (the agent_id or span_id under review)
 
 Recommended attributes:
 
 - `agent.review.result` (approved, changes_requested, rejected)
 
-## Source of truth
+## Source of Truth Reference
 
-Constants and enums live in:
+Constants and enums reside in the following modules:
 
 - Python: `packages/otel-semconv/agentlens_otel_semconv/attributes.py`
 - Python: `packages/otel-semconv/agentlens_otel_semconv/events.py`
@@ -153,10 +153,3 @@ To explicitly track failures across the system, use the following attributes:
 - `error.severity` (low, medium, high, critical)
 - `error.recovery.action` (retry, fallback, escalate, abort)
 - `error.original` (original error message)
-
-Constants and enums live in:
-
-- Python: `packages/otel-semconv/agentlens_otel_semconv/attributes.py`
-- Python: `packages/otel-semconv/agentlens_otel_semconv/events.py`
-- TypeScript: `packages/protocol/src/semconv.ts`
-

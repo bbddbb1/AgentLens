@@ -1,7 +1,7 @@
 # AgentLens
 
 <p align="center">
-  <strong>Framework-agnostic Human-in-the-Loop control plane for multi-agent AI systems.</strong>
+  <strong>Framework-agnostic Human-in-the-Loop telemetry and governance for multi-agent systems.</strong>
 </p>
 
 <p align="center">
@@ -11,21 +11,20 @@
   <a href="#"><img src="https://img.shields.io/badge/version-0.1.0-informational" alt="Version"></a>
 </p>
 
-AgentLens ingests **OpenTelemetry traces** from any multi-agent framework, projects them into **replayable interaction graphs**, and powers a **review UI** with interrupt/decision/resume workflows — giving you observability and control over autonomous AI teams without coupling to a specific agent framework.
+AgentLens ingests **OpenTelemetry traces** from any multi-agent framework, structures them into **visual execution graphs**, and provides a **review UI** with pause, review, and resume workflows — giving you observability and runtime control over multi-agent loops without coupling to any single framework.
 
 ---
 
 ## Features
 
-- **Framework-Agnostic Ingestion** — Native OTLP/HTTP (`/v1/traces`) and compatibility JSON endpoints. Supports LangGraph, AutoGen, CrewAI, OpenAI Agents SDK, and custom frameworks out of the box.
-- **Replayable Mission Graphs** — Every agent interaction, delegation, critique, tool call, and handoff is projected into a time-series graph you can pause, rewind, and replay.
-- **Human-in-the-Loop (HITL)** — Agents can request human review via interrupts. Reviewers approve, reject, request changes, or trigger remediation branches — all from the web UI.
-- **Branch-Based What-If Analysis** — Fork mission timelines at any sequence point to explore alternative decisions without affecting the original execution.
-- **Real-Time WebSocket Streaming** — Watch multi-agent missions unfold live with Redis-backed pub/sub for horizontal scaling.
-- **Semantic Analysis Engine** — AI-powered summaries of mission state, conflict detection, and anomaly flagging (with deterministic template-based fallbacks).
-- **Multi-Framework SDKs** — First-class Python instrumentation SDK with context-manager API, plus a LangGraph callback handler for zero-code instrumentation.
-- **End-to-End Encryption** — Mission data and shared artifacts support encrypted storage with per-user key sharing.
-- **MinIO Artifact Storage** — S3-compatible object storage for agent-produced artifacts (reports, datasets, decision logs).
+- **Framework-Agnostic Ingestion** — Uses standard OTLP/HTTP (`/v1/traces`) and compatibility JSON endpoints. Features **first-class native integration for LangGraph** (via automated callback handler) and **standard manual telemetry instrumentation for other frameworks** (CrewAI, AutoGen, OpenAI Agents SDK, custom scripts) via core SDK decorators.
+- **Visual Execution Graphs** — Every agent step, handoff, tool call, and delegating loop is projected into an interactive visual graph you can step through chronologically.
+- **Human-in-the-Loop (HITL) Reviews** — Agents can raise interrupts when human review or authorization is required. Reviewers can approve, reject, or supply execution overrides directly from the web UI.
+- **Timeline Branching** — Fork execution at any state step to explore alternative outcomes or overrides without affecting the original run.
+- **Real-Time WebSocket Updates** — Watch agent runs progress live with Redis-backed pub/sub for horizontal scaling.
+- **Automated Anomaly Detection** — Automated detection of execution anomalies, recursive loops, and agent failures with template-based summaries and LLM support.
+- **Telemetry SDKs** — Clean, lightweight Python SDK decorators and context managers for custom frameworks, plus a zero-code LangGraph callback handler.
+- **Database and File Storage** — Secure storage of run logs and states in PostgreSQL, with support for file-based artifact storage in MinIO.
 
 ## Tech Stack
 
@@ -102,15 +101,15 @@ uv sync
 python examples/hitl_release_gate_demo.py
 ```
 
-The demo creates a multi-agent mission with a LangGraph graph, raises a HITL interrupt, and prompts you to make a human decision. A markdown report is written to `examples/outputs/`.
+The demo runs a multi-agent execution with a LangGraph graph, raises a HITL interrupt, and prompts you to make a human decision. A markdown report is written to `examples/outputs/`.
 
-For the incident response scenario:
+For the incident response demo run:
 
 ```bash
 python examples/hitl_incident_response_demo.py
 ```
 
-For the software deployment audit scenario (LangGraph multi-agent):
+For the software deployment audit demo run (LangGraph multi-agent):
 
 ```bash
 python examples/demo_audit.py
@@ -140,15 +139,52 @@ agentlens/
 └── pyproject.toml        # Python workspace (uv)
 ```
 
-## Architecture
+## Architecture & Data Flow
 
-AgentLens follows a **control-plane / data-plane** architecture:
+AgentLens is built on a high-throughput **control-plane / data-plane** split:
 
-1. **Data Plane** — Your multi-agent system (LangGraph, CrewAI, custom) runs normally. The AgentLens Python SDK instruments it with OpenTelemetry spans and events.
-2. **Control Plane** — The TypeScript API ingests OTLP traces, builds replayable graph snapshots, manages HITL interrupts, and serves the review UI.
-3. **Review UI** — A Next.js dashboard for browsing missions, inspecting replay graphs, submitting human decisions, and forking timelines.
+```mermaid
+flowchart TB
+    subgraph DataPlane["Data Plane (Your Agent Application)"]
+        LG["LangGraph App"]
+        CA["CrewAI / AutoGen / Custom App"]
+        SDK["AgentLens SDK (OTLP Exporter)"]
+        
+        LG -->|"Auto-callbacks"| SDK
+        CA -->|"Manual decorators"| SDK
+    end
 
-For a deep-dive into the AI agent architecture, prompt engineering, tool definitions, and the replay state machine, see **[docs/agent.md](docs/agent.md)**.
+    subgraph ControlPlane["Control Plane (AgentLens API)"]
+        Ingest["OTLP Ingest\n/v1/traces"]
+        API["Express API Server\n(TypeScript)"]
+        Ledger[("PostgreSQL\nImmutable Event Ledger")]
+        Redis[("Redis\nPub/Sub & Websockets")]
+        
+        SDK -->|"OTLP/HTTP"| Ingest
+        Ingest --> API
+        API -->|"Cryptographic hash-chain append"| Ledger
+        API -->|"Live events fan-out"| Redis
+    end
+
+    subgraph UserInterface["Review Web UI"]
+        Next["Next.js Application"]
+        Graph["XYFlow Time-Travel Graph"]
+        HITL["HITL Decider Panel"]
+        
+        Redis -->|"Websockets"| Next
+        Next --> Graph
+        Next --> HITL
+    end
+
+    HITL -->|"Decision POST"| API
+    API -->|"Hashed Ephemeral Token Resume"| SDK
+```
+
+1. **Data Plane** — Your multi-agent application. The AgentLens Python SDK exports execution telemetry using standard OpenTelemetry spans and events.
+2. **Control Plane** — The TypeScript API server. Ingests OTLP traces, projects the state graph history, handles secure hashed interrupts, and hosts the review API.
+3. **Review UI** — A Next.js dashboard for browsing runs, inspecting execution graphs, submitting manual overrides, and forking execution paths.
+
+For a deep-dive into the AI agent architecture, prompt engineering, tool definitions, and the replay state machine, see **[docs/agent.md](docs/agent.md)** and the architectural guide in **[docs/portfolio.md](docs/portfolio.md)**.
 
 ## Ingestion API
 
@@ -166,7 +202,7 @@ POST http://localhost:8001/api/v1/ingest/otlp
 Content-Type: application/json
 ```
 
-Both endpoints accept spans with AgentLens semantic convention attributes (`agent.id`, `agent.role`, `agent.task`, etc.) and project them into mission graphs.
+Both endpoints accept spans with AgentLens semantic convention attributes (`agent.id`, `agent.role`, `agent.task`, etc.) and project them into run state graphs.
 
 ## Developer Workflows
 
@@ -194,6 +230,23 @@ pnpm dev:api-ts             # API server only (hot reload)
 pnpm --filter api-ts test   # API tests only
 pnpm --filter web dev       # Web UI only
 ```
+
+## Implemented vs Roadmap
+
+### Currently Implemented (Core Telemetry & HITL)
+- **OpenTelemetry Ingestion**: Standard OTLP/HTTP ingestion endpoint at `/v1/traces`.
+- **Immutable Event Logs**: Sequential, historical execution logs stored in PostgreSQL.
+- **Visual Execution Graphs**: Interactive temporal snapshots projected in the Next.js review UI.
+- **HITL Review Protocol**: Secure, hashed resume token matching with local file-based decision bridging.
+- **Docker Sandbox Runner**: Run branch forks in isolated docker containers with mounted configurations and disabled networks.
+- **LangGraph Callback Adapter**: Automated out-of-the-box instrumentation.
+
+### Roadmap (Future Plans)
+- **Organization & Multi-Tenancy**: Workspace division and role-based access policies (RBAC).
+- **Token Usage & Cost Metrics**: Real-time tracking of API usage, prompt token counts, and operational costs per run.
+- **Advanced Run History Filters**: Robust search, tagging, and filtering capabilities for historical agent runs.
+- **PII & Credential Masking**: Sanitization rules to scrub API keys, credentials, and PII from execution logs before database storage.
+- **MicroVM Sandboxing Options**: Exploration of lightweight microVM platforms (like Firecracker) for stronger, faster sandbox isolation.
 
 ## License
 

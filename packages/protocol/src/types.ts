@@ -191,6 +191,7 @@ export interface RuntimeInterruptState {
   decision_comment?: string;
   resume_url?: string;
   payload: Record<string, unknown>;
+  decision_payload?: Record<string, unknown>;
   updated_at: string;
 }
 

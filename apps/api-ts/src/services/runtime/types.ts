@@ -3,12 +3,13 @@ import {
   GraphNode,
   GraphEdge,
   RuntimeAgentState,
-  RuntimeInterruptState
+  RuntimeInterruptState,
+  EventEnvelope
 } from '@agentlens/protocol';
 
 export const ROOT_BRANCH_ID = 'main';
 
-export type PendingMissionEvent = Omit<MissionEventRecord, 'id' | 'sequence_num' | 'branch_sequence_num'>;
+export type PendingMissionEvent = Omit<EventEnvelope, 'id' | 'sequence_num' | 'branch_sequence_num'>;
 
 export interface InternalRuntimeState {
   mission_id: string;

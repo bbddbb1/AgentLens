@@ -14,7 +14,7 @@ export const BuiltInRules: GovernanceRule[] = [
     name: 'Deny Dangerous Tools',
     description: 'Automatically denies execution of inherently dangerous shell commands.',
     evaluate: (event) => {
-      if (event.event_type !== 'tool.started' && event.event_type !== 'gen_ai.call') return null;
+      if (event.event_type !== 'tool.called') return null;
 
       // Simplistic check for tool inputs containing dangerous commands
       const payloadString = JSON.stringify(event.payload);
@@ -33,7 +33,7 @@ export const BuiltInRules: GovernanceRule[] = [
     name: 'Require Review for Financial Transactions',
     description: 'Flags financial or blockchain transactions for human review.',
     evaluate: (event) => {
-      if (event.event_type !== 'tool.started') return null;
+      if (event.event_type !== 'tool.called') return null;
       
       const toolName = typeof event.payload.tool_name === 'string' ? event.payload.tool_name.toLowerCase() : '';
       if (toolName.includes('transfer_funds') || toolName.includes('sign_transaction')) {

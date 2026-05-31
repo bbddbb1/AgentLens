@@ -121,11 +121,51 @@ export async function initializeDatabase(): Promise<void> {
       mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
       batch_id VARCHAR(255) NOT NULL,
       span_count INTEGER NOT NULL,
-      mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
-      batch_id VARCHAR(255) NOT NULL,
-      span_count INTEGER NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (mission_id, batch_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS branch_executor_specs (
+      id UUID PRIMARY KEY,
+      mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL,
+      docker_image VARCHAR(255) NOT NULL,
+      python_entrypoint VARCHAR(255) NOT NULL,
+      timeout_seconds INTEGER NOT NULL DEFAULT 300,
+      resource_limits JSONB NOT NULL DEFAULT '{}'::jsonb,
+      env_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS branch_sandbox_jobs (
+      id UUID PRIMARY KEY,
+      branch_id VARCHAR(255) NOT NULL,
+      mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+      executor_id UUID NOT NULL REFERENCES branch_executor_specs(id) ON DELETE CASCADE,
+      status VARCHAR(50) NOT NULL DEFAULT 'queued',
+      container_id VARCHAR(255) NULL,
+      exit_code INTEGER NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      started_at TIMESTAMPTZ NULL,
+      completed_at TIMESTAMPTZ NULL,
+      FOREIGN KEY (mission_id, branch_id) REFERENCES mission_replay_branches (mission_id, id) ON DELETE CASCADE
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS branch_sandbox_logs (
+      id UUID PRIMARY KEY,
+      job_id UUID NOT NULL REFERENCES branch_sandbox_jobs(id) ON DELETE CASCADE,
+      timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      stream VARCHAR(50) NOT NULL,
+      message TEXT NOT NULL
     )
   `);
 

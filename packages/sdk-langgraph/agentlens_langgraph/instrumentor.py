@@ -113,7 +113,7 @@ class AgentLensLangGraphCallbackHandler(BaseCallbackHandler):
         
         if getattr(self.lens, "_get_injection", None):
             injection = self.lens._get_injection("prompt_injection", target=f"agent:{node_name}")
-            if injection:
+            if injection and isinstance(injection, dict):
                 task = injection.get("task", node_name)
                 goal = injection.get("goal", "")
                 logger.info(f"[AgentLens Sandbox] Injecting prompt override for agent {node_name}: task='{task}' goal='{goal}'")

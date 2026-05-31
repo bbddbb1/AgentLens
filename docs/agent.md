@@ -1,4 +1,4 @@
-# AgentLens AI Agent Architecture
+# AgentLens System Architecture & Telemetry Design
 
 **Version**: 0.1.0 | **Last Updated**: 2026-05-25
 
@@ -18,10 +18,10 @@
 
 ## Architectural Overview
 
-AgentLens is **not** an agent framework. It is a **control plane** that sits alongside any multi-agent system and provides observability, human-in-the-loop governance, and replay capabilities. It follows a **data-plane / control-plane** split:
+AgentLens is a **framework-agnostic telemetry and governance platform** for multi-agent systems. It provides visibility, runtime policies, and historical debugging capabilities by decoupling telemetry collection from agent execution. It follows a clean **data-plane / control-plane** separation:
 
-- **Data Plane**: Your multi-agent system (LangGraph, CrewAI, AutoGen, OpenAI Agents, or custom) runs its normal execution loop. The AgentLens Python SDK (or raw OTLP/HTTP) instruments it with OpenTelemetry spans and semantic events.
-- **Control Plane**: The TypeScript API ingests traces, builds a time-series graph representation of agent interactions, manages human interrupts, and serves a web review UI.
+- **Data Plane**: Your multi-agent application (built on LangGraph, CrewAI, AutoGen, OpenAI Agents, or custom loops) runs normally. The AgentLens Python SDK exports execution telemetry using standard OpenTelemetry spans and events.
+- **Control Plane**: The TypeScript API server. Ingests OTLP traces at a standard OTLP/HTTP ingestion endpoint, projects the states into visual execution graphs, manages runtime review interrupts, and serves a Next.js web interface.
 
 ### High-Level System Architecture
 
@@ -37,7 +37,7 @@ flowchart TB
     subgraph ControlPlane["Control Plane (AgentLens)"]
         OTLP["OTLP/HTTP Ingest\n/v1/traces"]
         API["Express API Server\n(TS)"]
-        PG[("PostgreSQL\nmissions, events,\nsnapshots, agents")]
+        PG[("PostgreSQL\nruns, events,\nsnapshots, agents")]
         Redis[("Redis\npub/sub fan-out")]
         WS["WebSocket Server\n/ws/missions/:id"]
 
@@ -69,19 +69,19 @@ flowchart TB
 | Framework | Integration | Status |
 |---|---|---|
 | **LangGraph** | First-class callback handler (`agentlens_langgraph`) | Stable |
-| **CrewAI** | Raw OTLP via `agentlens_sdk` | Supported |
-| **AutoGen** | Raw OTLP via `agentlens_sdk` | Supported |
-| **OpenAI Agents SDK** | Raw OTLP via `agentlens_sdk` | Supported |
-| **Microsoft Agent Framework** | Raw OTLP via `agentlens_sdk` | Supported |
+| **CrewAI** | Telemetry via core `agentlens_sdk` | Supported |
+| **AutoGen** | Telemetry via core `agentlens_sdk` | Supported |
+| **OpenAI Agents SDK** | Telemetry via core `agentlens_sdk` | Supported |
+| **Microsoft Agent Framework** | Telemetry via core `agentlens_sdk` | Supported |
 | **Custom / In-House** | `AgentLens` client + `Mission.agent()` context managers | Full API |
 
 ---
 
 ## Agent Lifecycle & State Machine
 
-### The Mission as a Unit of Work
+### The Run as a Unit of Work
 
-A **Mission** is the top-level unit of observability. It represents one complete multi-agent objective execution — from planning through execution, review, and completion or failure.
+A **Run** (historically named Mission in telemetry constants) is the top-level unit of execution. It tracks one complete multi-agent workflow — from planning through execution, review, and completion or failure.
 
 ```mermaid
 stateDiagram-v2
@@ -103,11 +103,11 @@ stateDiagram-v2
 
 ### Event-Driven Graph Construction
 
-Every agent action is recorded as an **event** with a monotonically increasing `sequence_num`. The system replays events from `sequence_num = 0` to build the current graph state. This design enables:
+Every agent action is recorded as an **event** with a monotonically increasing `sequence_num` in an append-only event log. The system processes events from `sequence_num = 0` to reconstruct the execution graph. This design enables:
 
-- **Deterministic replay**: Given the same event stream, the graph is always reproduced identically.
-- **Branch forking**: A new branch can fork from any `sequence_num` and replay events with a different decision path.
-- **Time-travel debugging**: Jump to any past snapshot to inspect agent state at that moment.
+- **Deterministic reconstruction**: Replaying the same event stream produces identical state graphs.
+- **Timeline branching**: Create a new execution branch from any `sequence_num` to test alternative inputs or overrides.
+- **Time-travel debugging**: Jump to any past step in the timeline to inspect the active state at that moment.
 
 ### Agent Lifecycle (Per-Agent)
 
@@ -157,17 +157,17 @@ sequenceDiagram
 
 ### Node Types in the Graph
 
-Each event transitions a set of **nodes** and **edges** in the in-memory graph:
+Each event transitions a set of **nodes** and **edges** in the runtime graph:
 
 | Node Type | Represents | Created By |
 |---|---|---|
-| `agent` | A single AI agent, positioned by registration order | `agent.registered` event |
-| `task` | A discrete work item assigned to an agent | `task.started` event (from span with `agent.span.kind = agent.task`) |
+| `agent` | A single agent runtime instance | `agent.registered` event |
+| `task` | A work item assigned to an agent | `task.started` event (from span with `agent.span.kind = agent.task`) |
 | `tool` | An external tool or API called by an agent | `tool.called` event (from span with `agent.span.kind = agent.tool.call`) |
-| `human` | A human reviewer/escalation target | `escalation` event |
-| `memory` | A named shared memory or knowledge store | `memory.written` event |
+| `human` | A human reviewer or supervisor | `escalation` event |
+| `memory` | A named shared database or state store | `memory.written` event |
 | `team` | A logical grouping of agents | (planned) |
-| `artifact` | An output document, report, or dataset | `artifact.created` event |
+| `artifact` | An output document, file, or dataset | `artifact.created` event |
 
 ### Edge Types
 
@@ -216,22 +216,22 @@ The API exposes these capabilities for external orchestration:
 
 | Capability | Endpoint | Description |
 |---|---|---|
-| Mission CRUD | `GET/POST/PATCH/DELETE /api/v1/missions` | Full mission lifecycle management |
-| Graph Retrieval | `GET /api/v1/missions/:id/graph` | Current graph state (nodes + edges) |
-| Snapshot History | `GET /api/v1/missions/:id/graph/snapshots` | Paginated time-series snapshots |
-| Replay Engine | `GET /api/v1/missions/:id/replay` | Full replay state with events, snapshots, agent states |
-| Branch Management | `GET/POST /api/v1/missions/:id/replay/branches` | List and create replay branches |
-| Event Stream | `GET /api/v1/missions/:id/events` | Raw mission event log |
-| Interrupt Management | `GET/POST /api/v1/missions/:id/interrupts` | List and decide on HITL interrupts |
-| Semantic Summaries | `GET/POST /api/v1/missions/:id/summary` | AI-generated mission analysis |
-| Why-This-State | `POST /api/v1/missions/:id/why-this-state` | Contextual state explanation |
-| Artifact Storage | `GET/POST /api/v1/missions/:id/artifacts` | Agent-produced artifacts via MinIO |
-| Encrypted Sharing | `POST /api/v1/missions/:id/share` | Per-user encrypted mission sharing |
-| Real-Time Streaming | `WS /ws/missions/:id` | WebSocket for live graph updates |
+| Run Logs CRUD | `GET/POST/PATCH/DELETE /api/v1/missions` | Full run lifecycle management |
+| Graph Retrieval | `GET /api/v1/missions/:id/graph` | Current state graph (nodes + edges) |
+| Snapshot History | `GET /api/v1/missions/:id/graph/snapshots` | Paginated chronological snapshots |
+| Replay Engine | `GET /api/v1/missions/:id/replay` | Complete run history, snapshots, and states |
+| Branch Management | `GET/POST /api/v1/missions/:id/replay/branches` | List and create execution branch forks |
+| Event Stream | `GET /api/v1/missions/:id/events` | Raw execution event logs |
+| Interrupt Management | `GET/POST /api/v1/missions/:id/interrupts` | List and submit decisions for HITL interrupts |
+| Semantic Summaries | `GET/POST /api/v1/missions/:id/summary` | Automated run state explanations |
+| Why-This-State | `POST /api/v1/missions/:id/why-this-state` | Contextual state analysis |
+| Artifact Storage | `GET/POST /api/v1/missions/:id/artifacts` | Run artifacts stored via MinIO |
+| Key Sharing | `POST /api/v1/missions/:id/share` | Run sharing settings |
+| Real-Time Streaming | `WS /ws/missions/:id` | WebSockets for live graph updates |
 
 ### LangGraph Callback Handler
 
-The `AgentLensLangGraphCallbackHandler` provides zero-code instrumentation for LangGraph graphs:
+The `AgentLensLangGraphCallbackHandler` provides zero-code instrumentation for LangGraph applications:
 
 - **`on_chain_start`**: Each LangGraph node is automatically instrumented as an agent. Node-to-node transitions create handoff events.
 - **`on_chain_end`**: Node outputs are recorded as memory writes. Completion events mark the handoff as accepted.
@@ -246,7 +246,7 @@ Framework-internal nodes (`LangGraph`, `RunnableSequence`, `RunnableParallel`, `
 
 ### Semantic Engine Architecture
 
-AgentLens uses a **dual-path semantic engine** for generating human-readable explanations of multi-agent system state:
+AgentLens uses a **dual-path semantic engine** for generating human-readable explanations of execution state:
 
 ```
                     ┌─────────────────────────┐
@@ -276,32 +276,28 @@ AgentLens uses a **dual-path semantic engine** for generating human-readable exp
 
 The semantic engine crafts prompts with a specific design:
 
-1. **System-level framing**: Prompts explicitly instruct the model to think as a "system architect describing topology and flow, not a log summarizer." This avoids narrative retelling of events and instead produces structural analysis.
-
-2. **Context injection**: Each prompt is built from the mission aggregate (objective, all agents, all snapshots, event timeline) and organized into sections:
-   - Mission objective and status
+1. **System-level framing**: Prompts instruct the model to act as a system analyst describing execution topology and flow rather than a narrative log translator. This produces structural analysis instead of plain storytelling.
+2. **Context injection**: Each prompt is built from the run aggregate (objective, active agents, snapshots, event timeline) and organized into sections:
+   - Run objective and status
    - Agent states with roles, statuses, and last-known reasons
    - Graph topology (node types, labels, statuses)
    - Edge relationships (source → target, type, label)
    - Recent event timeline (last 8 events)
-
 3. **Structured output**: Both summary paths enforce JSON output with the exact schema `{ summary, conflicts, anomalies }`. The parse pipeline handles markdown code fences and bare JSON objects.
-
 4. **Timeout and degradation**: LLM calls are bounded by a configurable timeout (`SUMMARY_TIMEOUT_MS`, default 15 seconds). On timeout or parse failure, the system falls back to deterministic templates that compute the same JSON structure from graph topology alone.
 
 ### Fallback Templates
 
 The deterministic fallback for `generateMissionSummary` computes:
-
 - **System state** classification: actively progressing, paused at review gate, completed, or failed
 - **Conflict detection**: excessive delegation loops (`delegation_count > agents.length * 3`)
-- **Anomaly detection**: escalations to human oversight, rejected critiques
-- **Activity summary**: which agents are engaged, what phase they're in
+- **Anomaly detection**: human escalations, rejected critiques
+- **Activity summary**: active agents and active execution phases
 
 The `generateWhyThisState` fallback analyzes:
 - Phase semantics (human review gate, review cycle, planning, execution)
-- Agent dynamics (active/blocked/waiting/failed/completed)
-- Blocking analysis (which agents are blocked by which dependencies)
+- Agent dynamics (active, blocked, waiting, failed, completed)
+- Dependency blocking (which agents are blocked by unresolved tasks)
 - Structural patterns (review bottlenecks, handoff chains, escalation paths)
 
 ### Memory Model
@@ -309,10 +305,8 @@ The `generateWhyThisState` fallback analyzes:
 AgentLens does **not** maintain a vector database or RAG pipeline. Instead, memory is modeled as:
 
 1. **Short-Term / Episodic Memory**: The event log (`mission_events` table). Every agent action is an immutable, sequenced event. The replay engine reads this to reconstruct state.
-
-2. **Semantic Memory**: AI-generated summaries stored in the `semantic_summaries` table with levels (`mission`, `why_this_state`). These persist across sessions and can be queried via the API.
-
-3. **Agent Memory Events**: The `agent.memory.write` and `agent.memory.read` events create `memory`-type nodes in the graph, representing shared knowledge stores that agents interact with. This is a **graph-level abstraction** — the actual memory implementation (in-memory dict, Redis, vector DB) is left to the instrumented application.
+2. **Semantic Memory**: Automated summaries stored in the `semantic_summaries` table with levels (`mission`, `why_this_state`).
+3. **Agent Memory Events**: The `agent.memory.write` and `agent.memory.read` events create `memory`-type nodes in the graph, representing shared knowledge stores that agents interact with. This is a **graph-level abstraction** — the actual memory implementation (in-memory dict, Redis, database) is left to the instrumented application.
 
 ---
 
@@ -345,8 +339,8 @@ For external LLM providers used by the instrumented application itself (not the 
 ### Credential Security Model
 
 - **API Key Storage**: Credentials are read from environment variables only (`process.env` / `dotenv`). No credentials are stored in the database, code, or configuration files.
-- **`.env` Isolation**: The `.gitignore` blocks all `.env` files except `.env.example`. The `.env.example` file contains only placeholder values and documentation.
-- **Bearer Token Auth**: When configured, the SDK sends `Authorization: Bearer <api_key>` headers with ingest requests. The token is set once at client initialization and used for all subsequent requests.
+- **`.env` Isolation**: The `.gitignore` blocks all `.env` files except `.env.example`.
+- **Bearer Token Auth**: When configured, the SDK sends `Authorization: Bearer <api_key>` headers with ingest requests.
 - **Resume Token Hashing**: Interrupt resume tokens are SHA-256 hashed before storage in the `interrupts` table. The plaintext token is returned once to the requesting agent and never stored.
 - **Idempotency**: Decision endpoints (`POST /interrupts/:id/decision`) require an `idempotency_key` to prevent duplicate processing. The key is checked against the database under advisory locks.
 
@@ -409,15 +403,15 @@ AgentLens defines a comprehensive set of OpenTelemetry semantic convention attri
 | `agent.tool.name` | string | Name of tool being called |
 | `agent.interrupt.id` | string | Unique interrupt identifier |
 | `agent.interrupt.reason` | string | Reason for human review request |
-| `mission.id` | string | Mission identifier |
-| `mission.objective` | string | Mission objective text |
+| `mission.id` | string | Run/execution identifier |
+| `mission.objective` | string | Run/execution objective text |
 | `mission.phase` | string | Current phase (planning/executing/reviewing/waiting_for_human/completed/failed) |
 
 ### Span Kinds
 
 | Span Kind | Use |
 |---|---|
-| `mission` | Top-level mission span |
+| `mission` | Top-level execution span |
 | `agent.orchestration` | Orchestration/routing logic |
 | `agent.task` | Individual agent task execution |
 | `agent.delegation` | Delegation/handoff operation |
@@ -435,5 +429,5 @@ AgentLens defines a comprehensive set of OpenTelemetry semantic convention attri
 - **Team nodes**: Hierarchical grouping of agents with aggregate metrics
 - **Agent drift scoring**: Statistical comparison of actual vs. expected agent behavior
 - **Policy engine**: Declarative rules for automatic review gating (e.g., "require human review when confidence < 0.7")
-- **Multi-tenant isolation**: Per-organization mission namespaces with role-based access control
+- **Multi-tenant isolation**: Per-organization namespaces with role-based access control
 - **Vector memory backends**: Optional integration with vector databases for long-term agent memory
