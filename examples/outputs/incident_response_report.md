@@ -20,7 +20,7 @@ Primary plan: revoke active sessions for the affected tenant cohort and force re
 Fallback plan: hold containment, continue monitoring, and gather additional evidence.
 
 Human comment:
-
+Reviewed by human
 
 System state after review:
 Containment state: executed
