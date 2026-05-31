@@ -76,11 +76,11 @@ export function WorkspaceShell({ leftPanel, centerPanel, rightPanel, bottomPanel
         {/* Right Panel */}
         <div 
           className={`flex flex-col bg-[#12131a] border-l border-[rgba(255,255,255,0.05)] transition-all duration-300 ease-in-out shrink-0 ${
-            isRightCollapsed ? 'w-0 opacity-0 overflow-hidden border-l-0' : 'w-[340px] opacity-100'
+            isRightCollapsed ? 'w-0 opacity-0 overflow-hidden border-l-0' : 'w-[420px] opacity-100'
           }`}
         >
           {/* Inner fixed-width container prevents content from squishing during animation */}
-          <div className="w-[340px] h-full flex flex-col">
+          <div className="w-[420px] h-full flex flex-col">
             {rightPanel}
           </div>
         </div>

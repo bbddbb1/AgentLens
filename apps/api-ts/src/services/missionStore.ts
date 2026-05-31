@@ -238,6 +238,9 @@ class MissionStore {
       actor_type: row.actor_type ? String(row.actor_type) : undefined,
       actor_id: row.actor_id ? String(row.actor_id) : undefined,
       origin_framework: row.origin_framework ? String(row.origin_framework) : undefined,
+      causal: row.causal ? (row.causal as any) : undefined,
+      model: row.model ? (row.model as any) : undefined,
+      error: row.error_attribution ? (row.error_attribution as any) : undefined,
     } as EventEnvelope;
   }
 
@@ -433,14 +436,14 @@ class MissionStore {
     if (rows.length === 0) return [];
 
     // Build batch INSERT with parameterized values
-    const COLS_PER_ROW = 17;
+    const COLS_PER_ROW = 23;
     const valuePlaceholders: string[] = [];
     const params: unknown[] = [];
 
     for (let i = 0; i < rows.length; i++) {
-      const offset = i * 17;
+      const offset = i * 23;
       valuePlaceholders.push(
-        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11}, $${offset + 12}, $${offset + 13}::jsonb, $${offset + 14}::jsonb, $${offset + 15}, $${offset + 16}, $${offset + 17}::jsonb)`,
+        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11}, $${offset + 12}, $${offset + 13}::jsonb, $${offset + 14}::jsonb, $${offset + 15}, $${offset + 16}, $${offset + 17}::jsonb, $${offset + 18}, $${offset + 19}, $${offset + 20}::jsonb, $${offset + 21}, $${offset + 22}::jsonb, $${offset + 23}::jsonb)`,
       );
 
       const { id, missionSequence: seq, branchSequence: bseq, event, content_hash, previous_hash } = rows[i];
@@ -461,7 +464,13 @@ class MissionStore {
         JSON.stringify(event.metadata ?? {}),
         content_hash,
         previous_hash,
-        JSON.stringify(event.policy ?? null)
+        JSON.stringify(event.policy ?? null),
+        event.actor_type ?? null,
+        event.actor_id ?? null,
+        JSON.stringify(event.causal ?? null),
+        event.origin_framework ?? null,
+        JSON.stringify(event.model ?? null),
+        JSON.stringify(event.error ?? null)
       );
     }
 
@@ -469,7 +478,8 @@ class MissionStore {
       `
         INSERT INTO mission_events (
           id, mission_id, branch_id, sequence_num, branch_sequence_num, timestamp, event_type,
-          agent_id, span_id, trace_id, parent_span_id, idempotency_key, payload, metadata, content_hash, previous_hash, policy_decision
+          agent_id, span_id, trace_id, parent_span_id, idempotency_key, payload, metadata, content_hash, previous_hash, policy_decision,
+          actor_type, actor_id, causal, origin_framework, model, error_attribution
         )
         VALUES ${valuePlaceholders.join(', ')}
         ON CONFLICT (mission_id, branch_id, idempotency_key)
@@ -509,6 +519,66 @@ class MissionStore {
       [missionId],
     );
     return result.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
+  }
+
+  async getAuditEvents(missionId: string, branchId = 'main', sequenceNum?: number): Promise<MissionAuditEventResponse> {
+    const client = await pool.connect();
+    try {
+      let queryText = `SELECT * FROM mission_events WHERE mission_id = $1 AND branch_id = $2`;
+      const queryParams: any[] = [missionId, branchId];
+      if (sequenceNum !== undefined) {
+        queryParams.push(sequenceNum);
+        queryText += ` AND sequence_num <= $3`;
+      }
+      queryText += ` ORDER BY sequence_num ASC`;
+
+      const result = await client.query(queryText, queryParams);
+      const events = result.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
+
+      // Calculate compact integrity summary
+      let is_valid = true;
+      let hash_chain_status: 'valid' | 'broken' = 'valid';
+
+      let previousHash: string | null = null;
+      for (const event of events) {
+        const hashInput = deterministicStringify({
+          mission_id: event.mission_id,
+          branch_id: event.branch_id,
+          sequence_num: event.sequence_num,
+          branch_sequence_num: event.branch_sequence_num,
+          event_type: event.event_type,
+          timestamp: event.timestamp,
+          agent_id: event.agent_id ?? null,
+          payload: event.payload ?? {},
+          metadata: event.metadata ?? {},
+          previous_hash: previousHash ?? null
+        });
+        const computed_hash = createHash('sha256').update(hashInput).digest('hex');
+
+        const eventContentHash = (event as any).content_hash ?? null;
+        const eventPreviousHash = (event as any).previous_hash ?? null;
+
+        if (computed_hash !== eventContentHash || eventPreviousHash !== previousHash) {
+          is_valid = false;
+          hash_chain_status = 'broken';
+          break;
+        }
+
+        previousHash = eventContentHash;
+      }
+
+      return {
+        events,
+        integrity: {
+          is_valid,
+          hash_chain_status,
+          branch_id: branchId,
+          total_events: events.length
+        }
+      };
+    } finally {
+      client.release();
+    }
   }
 
   async verifyMissionIntegrity(missionId: string): Promise<IntegrityReport> {

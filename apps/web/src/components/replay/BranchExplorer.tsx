@@ -396,130 +396,211 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
   };
 
   return (
-    <div className="glass rounded-2xl border border-[rgba(255,255,255,0.06)] bg-[rgba(10,11,16,0.82)] p-3 shadow-[0_16px_48px_rgba(0,0,0,0.32)] backdrop-blur-xl">
-      <div className="flex items-center justify-between gap-3">
+    <div className="space-y-4">
+      {/* Header Panel */}
+      <div className="flex items-center justify-between gap-3 border-b border-[rgba(255,255,255,0.05)] pb-3">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[rgba(103,232,249,0.12)] text-[#67e8f9]">
-            <GitBranch size={15} />
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[rgba(6,182,212,0.1)] text-[#22d3ee] border border-[#06b6d4]/20 shadow-inner">
+            <GitBranch size={15} className="animate-pulse" />
           </div>
           <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#67e8f9]">
-              Branches
+            <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#22d3ee]">
+              Lineage Branches
             </div>
-            <div className="text-[12px] text-[#cfd3e6]">
-              Runtime forks and replay lineage
+            <div className="text-[11px] text-[#8f95b2]">
+              Operational state forks & lineage
             </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={onToggleCollapsed}
-            aria-label={isCollapsed ? 'Expand branch explorer' : 'Collapse branch explorer'}
-            className="inline-flex items-center justify-center rounded-lg border border-[rgba(255,255,255,0.08)] p-2 text-[#cfd3e6] transition-colors hover:bg-[rgba(255,255,255,0.04)]"
-          >
-            {isCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-          </button>
-          <button
-            type="button"
             onClick={openForkModal}
             disabled={isCreating || !currentSnapshot || missionId === 'demo-mission' || !isBranchable}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-[rgba(255,255,255,0.08)] px-3 py-2 text-[11px] text-[#e8eaf0] transition-colors hover:bg-[rgba(255,255,255,0.04)] disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-3 py-1.5 text-[11px] text-[#e8eaf0] transition-all hover:bg-[rgba(255,255,255,0.05)] hover:border-[rgba(255,255,255,0.12)] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none font-semibold"
           >
-            {isCreating ? <RefreshCw size={12} className="animate-spin" /> : <Plus size={12} />}
-            Branch Here
+            {isCreating ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+            Fork Here
           </button>
         </div>
       </div>
 
       {!isCollapsed && (
         <>
-          <div className="mt-3 grid gap-2">
+          {/* Branch Fork Visual Git-Tree Lineage List */}
+          <div className="relative pl-6 pr-1 py-1 space-y-3">
+            {/* Visual connecting line */}
+            <div className="absolute left-[9px] top-0 bottom-0 w-[1.5px] bg-[rgba(255,255,255,0.05)] rounded" />
+            
             {branches.map((branch) => {
               const isActive = branch.id === currentBranchId;
               const branchJobs = jobs.filter((j) => j.branch_id === branch.id);
-              const latestJob = branchJobs[0]; // assuming ordered by created_at DESC
+              const latestJob = branchJobs[0];
+              
               return (
-                <button
-                  type="button"
-                  key={branch.id}
-                  onClick={() => void onBranchChange(branch.id)}
-                  className={`rounded-xl border px-3 py-2 text-left transition-colors ${
-                    isActive
-                      ? 'border-[rgba(103,232,249,0.24)] bg-[rgba(103,232,249,0.08)]'
-                      : 'border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.04)]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-[12px] font-medium text-[#e8eaf0]">{branch.name}</div>
-                    <span className="rounded-full bg-[rgba(255,255,255,0.05)] px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8f95b2]">
-                      {branch.status}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-[10px] text-[#6d7392]">
-                    <div>
-                      {branch.parent_branch_id ? `Forked from ${branch.parent_branch_id}` : 'Root branch'}
-                      {branch.forked_from_sequence_num !== undefined ? ` at event ${branch.forked_from_sequence_num}` : ''}
-                    </div>
-                    {latestJob && (
-                      <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase tracking-[0.1em] ${latestJob.status === 'completed' ? 'bg-[#34d399]/20 text-[#34d399]' : latestJob.status === 'failed' ? 'bg-[#f87171]/20 text-[#f87171]' : 'bg-[#fbbf24]/20 text-[#fbbf24]'}`}>
-                        {latestJob.status}
-                      </span>
+                <div key={branch.id} className="relative group">
+                  {/* Branch dot connection node */}
+                  <div className={`absolute left-[-22px] top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full border transition-all duration-500 z-10 ${
+                    isActive 
+                      ? 'bg-[#06b6d4] border-[#06b6d4] scale-105' 
+                      : 'bg-[#12131a] border-[#8f95b2]/40 group-hover:border-white/60'
+                  }`} />
+                  
+                  {/* Horizontal connection segment */}
+                  <div className={`absolute left-[-17px] top-1/2 -translate-y-1/2 h-[1.5px] transition-all duration-500 ${
+                    isActive ? 'w-[17px] bg-[#06b6d4]/40' : 'w-[17px] bg-[rgba(255,255,255,0.05)]'
+                  }`} />
+
+                  <button
+                    type="button"
+                    onClick={() => void onBranchChange(branch.id)}
+                    className={`w-full rounded-xl border p-3 text-left transition-all duration-300 relative overflow-hidden ${
+                      isActive
+                        ? 'border-[#06b6d4]/20 bg-[rgba(6,182,212,0.03)]'
+                        : 'border-[rgba(255,255,255,0.04)] bg-[rgba(255,255,255,0.01)] hover:bg-[rgba(255,255,255,0.03)] hover:border-[rgba(255,255,255,0.06)]'
+                    }`}
+                  >
+                    {isActive && (
+                      <div className="absolute top-0 bottom-0 left-0 w-1 bg-[#06b6d4]" />
                     )}
-                  </div>
-                </button>
+                    
+                    <div className="flex items-center justify-between gap-2 pl-1">
+                      <div className="text-[12px] font-semibold text-white flex items-center gap-1.5">
+                        {branch.name}
+                        {isActive && <span className="w-1.5 h-1.5 rounded-full bg-[#06b6d4]" />}
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-md text-[8px] font-bold uppercase tracking-wider border ${
+                        branch.status === 'active' 
+                          ? 'bg-[#10b981]/10 border-[#10b981]/20 text-[#34d399]'
+                          : 'bg-[#5d6180]/15 border-[#5d6180]/30 text-[#cfd3e6]'
+                      }`}>
+                        {branch.status}
+                      </span>
+                    </div>
+
+                    <div className="mt-1.5 flex items-center justify-between text-[10px] text-[#8f95b2] pl-1 font-mono">
+                      <div className="truncate max-w-[70%]">
+                        {branch.parent_branch_id ? `Fork step #${branch.forked_from_sequence_num}` : 'Root Context'}
+                      </div>
+                      {latestJob && (
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold border tracking-wide ${
+                          latestJob.status === 'completed' 
+                            ? 'bg-[#10b981]/10 border-[#10b981]/20 text-[#34d399]' 
+                            : latestJob.status === 'failed' 
+                              ? 'bg-[#f43f5e]/10 border-[#f43f5e]/20 text-[#fb7185]' 
+                              : 'bg-[#fbbf24]/10 border-[#fbbf24]/20 text-[#fde68a]'
+                        }`}>
+                          {latestJob.status}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                </div>
               );
             })}
           </div>
 
-          <div className="mt-4 grid gap-3">
-
-            <div className="rounded-xl border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.02)] p-3">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#fbbf24]">
-                <Waypoints size={12} />
-                Reconstructed Runtime
+          {/* Reconstructed Runtime Matrix & Agents list */}
+          <div className="pt-3 border-t border-[rgba(255,255,255,0.05)] space-y-4">
+            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#fbbf24]">
+              <Waypoints size={13} />
+              Reconstructed Runtime
+            </div>
+            
+            {/* 2x2 Dashboard Matrix Grid */}
+            <div className="grid grid-cols-2 gap-2.5">
+              
+              {/* Phase */}
+              <div className="rounded-xl border border-[rgba(255,255,255,0.04)] bg-[rgba(255,255,255,0.01)] p-3 flex flex-col justify-between h-[64px] relative overflow-hidden group">
+                <div className="text-[8px] uppercase tracking-[0.12em] text-[#818cf8] font-bold">Phase</div>
+                <div className="text-[12px] font-semibold text-white tracking-wide uppercase flex items-center gap-1.5 mt-1 truncate">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#818cf8]" />
+                  {currentSnapshot?.phase ?? currentState?.phase ?? 'executing'}
+                </div>
               </div>
-              <div className="mt-3 grid gap-2">
-                <div className="rounded-lg bg-[rgba(255,255,255,0.03)] px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-[#6a718c]">Phase</div>
-                  <div className="mt-1 text-[13px] font-medium text-[#f5f7ff]">{currentSnapshot?.phase ?? currentState?.phase ?? 'executing'}</div>
+
+              {/* Status */}
+              <div className="rounded-xl border border-[rgba(255,255,255,0.04)] bg-[rgba(255,255,255,0.01)] p-3 flex flex-col justify-between h-[64px] relative overflow-hidden group">
+                <div className="text-[8px] uppercase tracking-[0.12em] text-[#10b981] font-bold">Runtime Status</div>
+                <div className="text-[12px] font-semibold text-white tracking-wide uppercase flex items-center gap-1.5 mt-1 truncate">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#34d399]" />
+                  {currentState?.status ?? 'active'}
                 </div>
-                <div className="rounded-lg bg-[rgba(255,255,255,0.03)] px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-[#6a718c]">Mission Status</div>
-                  <div className="mt-1 text-[13px] font-medium text-[#f5f7ff]">{currentState?.status ?? 'active'}</div>
+              </div>
+
+              {/* Active Step */}
+              <div className="rounded-xl border border-[rgba(255,255,255,0.04)] bg-[rgba(255,255,255,0.01)] p-3 flex flex-col justify-between h-[64px] relative overflow-hidden group">
+                <div className="text-[8px] uppercase tracking-[0.12em] text-[#cfd3e6] font-bold">Active Sequence</div>
+                <div className="text-[13px] font-bold text-white tracking-wide font-mono mt-1">
+                  #{fromSequence}
                 </div>
-                <div className="rounded-lg bg-[rgba(255,255,255,0.03)] px-3 py-2">
-                  <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[#6a718c]">
-                    <span>Agents in State</span>
+              </div>
+
+              {/* Pending Interrupts */}
+              {(() => {
+                const pendingCount = Object.values(currentState?.interrupts ?? {}).filter((i) => i.status === 'pending').length;
+                const isWarning = pendingCount > 0;
+                const cellBorder = isWarning ? 'border-[#fbbf24]/30' : 'border-[rgba(255,255,255,0.04)]';
+                const cellBg = isWarning ? 'bg-[rgba(251,191,36,0.03)]' : 'bg-[rgba(255,255,255,0.01)]';
+                const textColor = isWarning ? 'text-[#fbbf24]' : 'text-[#8f95b2]';
+                
+                return (
+                  <div className={`rounded-xl border ${cellBorder} ${cellBg} p-3 flex flex-col justify-between h-[64px] relative overflow-hidden group`}>
+                    <div className={`text-[8px] uppercase tracking-[0.12em] ${textColor} font-bold`}>Pending Gates</div>
+                    <div className="text-[12px] font-semibold text-white tracking-wide uppercase flex items-center gap-1.5 mt-1">
+                      {isWarning && <span className="w-1.5 h-1.5 rounded-full bg-[#fbbf24] animate-ping" />}
+                      {pendingCount} {pendingCount === 1 ? 'Interrupt' : 'Interrupts'}
+                    </div>
                   </div>
-                  <div className="mt-2 space-y-2">
-                    {Object.values(currentState?.agents ?? {}).slice(0, 4).map((agent) => (
-                      <div key={agent.agent_id} className="flex items-center justify-between gap-2 text-[11px]">
-                        <div className="flex min-w-0 items-center gap-2 text-[#d7dbeb]">
-                          <Bot size={11} className="text-[#818cf8]" />
-                          <span className="truncate">{agent.name ?? agent.agent_id}</span>
-                        </div>
-                        <span className="inline-flex shrink-0 items-center rounded-full bg-[rgba(255,255,255,0.05)] px-2 py-0.5 text-[9px] uppercase tracking-[0.12em] text-[#a7aecb]">
+                );
+              })()}
+            </div>
+
+            {/* Borderless Status List of Agents */}
+            <div className="space-y-2 pt-1">
+              <div className="text-[9px] uppercase tracking-[0.12em] text-[#cfd3e6] font-bold pl-0.5">
+                Runtime Agent Contexts
+              </div>
+              <div className="rounded-xl border border-[rgba(255,255,255,0.04)] bg-[rgba(255,255,255,0.01)] divide-y divide-[rgba(255,255,255,0.04)] overflow-hidden">
+                {Object.values(currentState?.agents ?? {}).slice(0, 4).map((agent) => {
+                  const isExecuting = agent.status === 'active';
+                  const isWaiting = agent.status === 'waiting' || agent.status === 'reviewing';
+                  const dotColor = isExecuting 
+                    ? 'bg-[#34d399]' 
+                    : isWaiting 
+                      ? 'bg-[#fbbf24]' 
+                      : 'bg-[#5d6180]';
+
+                  return (
+                    <div key={agent.agent_id} className="flex items-center justify-between gap-3 px-3 py-2 text-[11px] hover:bg-[rgba(255,255,255,0.015)] transition-all duration-150 group">
+                      <div className="flex min-w-0 items-center gap-2 text-white/90">
+                        <Bot size={12} className={`text-[#818cf8] shrink-0 group-hover:scale-105 transition-transform ${isExecuting ? 'animate-bounce' : ''}`} />
+                        <span className="truncate font-semibold tracking-wide">{agent.name ?? agent.agent_id}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`w-1.5 h-1.5 rounded-full ${dotColor} ${isExecuting ? 'animate-pulse shadow-[0_0_6px_#34d399]' : ''}`} />
+                        <span className="text-[9px] font-mono uppercase tracking-wide text-[#8f95b2]">
                           {agent.status}
                         </span>
                       </div>
-                    ))}
+                    </div>
+                  );
+                })}
+                {Object.values(currentState?.agents ?? {}).length === 0 && (
+                  <div className="px-3 py-4 text-center text-[10px] text-[#5d6180] italic">
+                    No active agents registered in state.
                   </div>
-                </div>
-                <div className="rounded-lg bg-[rgba(255,255,255,0.03)] px-3 py-2">
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-[#6a718c]">
-                    <AlertTriangle size={10} />
-                    Pending Interrupts
-                  </div>
-                  <div className="mt-1 text-[13px] font-medium text-[#f5f7ff]">
-                    {Object.values(currentState?.interrupts ?? {}).filter((interrupt) => interrupt.status === 'pending').length}
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
 
-          {error && <div className="mt-3 text-[11px] text-[#fca5a5]">{error}</div>}
+          {error && (
+            <div className="mt-3 p-2.5 text-[11px] rounded-lg bg-[#f43f5e]/10 border border-[#f43f5e]/20 text-[#fb7185] flex items-center gap-2">
+              <AlertTriangle size={12} className="shrink-0 text-[#fb7185]" />
+              <p className="flex-1">{error}</p>
+            </div>
+          )}
         </>
       )}
 

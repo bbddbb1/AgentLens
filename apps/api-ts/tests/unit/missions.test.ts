@@ -400,3 +400,59 @@ describe('missionStore — createInterrupt', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('missionStore — getAuditEvents and EventEnvelope', () => {
+  it('hydrates EventEnvelope correctly with actor, model, error, causal, and policy fields', async () => {
+    const rawRow = {
+      id: 'e1',
+      mission_id: '550e8400-e29b-41d4-a716-446655440000',
+      branch_id: 'main',
+      sequence_num: 0,
+      branch_sequence_num: 0,
+      event_type: 'tool.called',
+      timestamp: new Date('2026-05-31T00:00:00Z'),
+      agent_id: 'agent1',
+      span_id: 'span1',
+      trace_id: 'trace1',
+      parent_span_id: 'parent1',
+      idempotency_key: 'key1',
+      payload: { tool_name: 'test_tool' },
+      metadata: {},
+      content_hash: 'somehash',
+      previous_hash: 'prevhash',
+      policy_decision: { rule_id: 'rule1', decision: 'allow' },
+      actor_type: 'tool',
+      actor_id: 'test_tool',
+      origin_framework: 'langgraph',
+      causal: { parent_span_id: 'parent1' },
+      model: { model_name: 'gemini-3.5-flash' },
+      error_attribution: { source: 'model', cause: 'hallucination' }
+    };
+
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [rawRow], rowCount: 1 }); // SELECT in getAuditEvents
+
+    const response = await missionStore.getAuditEvents('550e8400-e29b-41d4-a716-446655440000', 'main');
+
+    expect(response.events).toHaveLength(1);
+    const event = response.events[0];
+    expect(event.actor_type).toBe('tool');
+    expect(event.actor_id).toBe('test_tool');
+    expect(event.origin_framework).toBe('langgraph');
+    expect(event.causal).toEqual({ parent_span_id: 'parent1' });
+    expect(event.model).toEqual({ model_name: 'gemini-3.5-flash' });
+    expect(event.error).toEqual({ source: 'model', cause: 'hallucination' });
+    expect(event.policy).toEqual({ rule_id: 'rule1', decision: 'allow' });
+  });
+
+  it('filters by branch and sequence number in getAuditEvents query', async () => {
+    mockClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    await missionStore.getAuditEvents('550e8400-e29b-41d4-a716-446655440000', 'dev-branch', 10);
+
+    expect(mockClient.query).toHaveBeenCalledWith(
+      expect.stringContaining('AND sequence_num <= $3'),
+      ['550e8400-e29b-41d4-a716-446655440000', 'dev-branch', 10]
+    );
+  });
+});

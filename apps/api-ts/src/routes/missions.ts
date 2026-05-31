@@ -110,6 +110,17 @@ missionsRouter.delete('/api/v1/missions/:missionId', async (req, res) => {
   return res.status(204).send();
 });
 
+missionsRouter.get('/api/v1/missions/:missionId/audit/events', async (req, res) => {
+  const mission = await missionStore.getMission(req.params.missionId);
+  if (!mission) return res.status(404).json({ detail: 'Mission not found' });
+
+  const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : 'main';
+  const sequenceNum = req.query.sequence_num !== undefined ? Number(req.query.sequence_num) : undefined;
+
+  const result = await missionStore.getAuditEvents(req.params.missionId, branchId, sequenceNum);
+  return res.json(result);
+});
+
 missionsRouter.get('/api/v1/missions/:missionId/audit/verify', async (req, res) => {
   const mission = await missionStore.getMission(req.params.missionId);
   if (!mission) return res.status(404).json({ detail: 'Mission not found' });

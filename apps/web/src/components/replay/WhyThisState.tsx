@@ -86,7 +86,9 @@ export function WhyThisState({ missionId }: WhyThisStateProps) {
   }, [whyKey, missionId, currentState, currentSnapshot, visibleEvent, currentFrame, currentBranchId]);
 
   useEffect(() => {
-    void fetchWhyThisState();
+    setTimeout(() => {
+      void fetchWhyThisState();
+    }, 0);
   }, [fetchWhyThisState]);
 
   return (

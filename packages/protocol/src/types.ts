@@ -194,6 +194,24 @@ export interface RuntimeInterruptState {
   updated_at: string;
 }
 
+export type PendingMissionEvent = Omit<EventEnvelope, 'id' | 'sequence_num' | 'branch_sequence_num'>;
+
+export interface InternalRuntimeState {
+  mission_id: string;
+  branch_id: string;
+  status: string;
+  phase: string;
+  sequence_num: number;
+  last_event_id?: string;
+  last_event_type?: string;
+  last_updated_at?: string;
+  agents: Record<string, RuntimeAgentState>;
+  interrupts: Record<string, RuntimeInterruptState>;
+  nodeMap: Map<string, GraphNode>;
+  edgeMap: Map<string, GraphEdge>;
+  agentOrder: string[];
+}
+
 export interface RuntimeState {
   mission_id: string;
   branch_id: string;
@@ -215,7 +233,7 @@ export interface ReplayStateResponse {
   total_frames: number;
   duration_seconds: number | null;
   branches: ReplayBranch[];
-  events: MissionEventRecord[];
+  events: EventEnvelope[];
   snapshots: GraphSnapshot[];
   current_state: RuntimeState | null;
 }
@@ -306,4 +324,32 @@ export interface EventEnvelope extends MissionEventRecord {
 
   /** Content hash of the previous event in this branch for hash-chain integrity. */
   previous_hash?: string;
+}
+
+export interface AuditBranchReport {
+  branch_id: string;
+  is_valid: boolean;
+  event_count: number;
+  error_count: number;
+}
+
+export interface AuditIntegrityReport {
+  is_valid: boolean;
+  branch_reports: AuditBranchReport[];
+}
+
+export interface MissionAuditEventResponse {
+  events: EventEnvelope[];
+  integrity: {
+    is_valid: boolean;
+    hash_chain_status: 'valid' | 'broken';
+    branch_id: string;
+    total_events: number;
+  };
+}
+
+export interface OperatorRailContext {
+  selected_node_id?: string;
+  selected_event_id?: string;
+  active_tab: 'run' | 'govern' | 'audit' | 'ask_pi';
 }

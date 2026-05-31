@@ -2,7 +2,17 @@
  * API client for AgentLens TS backend.
  */
 
-import type { GraphSnapshot, InterruptRecord, Mission, MissionEventRecord, ReplayBranch, ReplayStateResponse, SemanticSummaryResult } from '@agentlens/protocol';
+import type {
+  GraphSnapshot,
+  InterruptRecord,
+  Mission,
+  MissionEventRecord,
+  ReplayBranch,
+  ReplayStateResponse,
+  SemanticSummaryResult,
+  AuditIntegrityReport,
+  MissionAuditEventResponse,
+} from '@agentlens/protocol';
 import type { Comment, Review } from '@/stores/reviewStore';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
@@ -88,8 +98,8 @@ export const api = {
     branches: (missionId: string) => request<BranchesResponse>(`/api/v1/missions/${missionId}/replay/branches`),
     createBranch: (missionId: string, data: { name?: string; source_branch_id?: string; forked_from_sequence_num?: number; metadata?: Record<string, unknown> }) =>
       request<{ branch: ReplayBranch; job: unknown }>(`/api/v1/missions/${missionId}/replay/branches`, { method: 'POST', body: JSON.stringify(data) }),
-    jobs: (missionId: string) => request<{ jobs: any[] }>(`/api/v1/missions/${missionId}/branch-jobs`),
-    jobLogs: (missionId: string, jobId: string) => request<{ job: any, logs: any[] }>(`/api/v1/missions/${missionId}/branch-jobs/${jobId}`),
+    jobs: (missionId: string) => request<{ jobs: unknown[] }>(`/api/v1/missions/${missionId}/branch-jobs`),
+    jobLogs: (missionId: string, jobId: string) => request<{ job: unknown, logs: unknown[] }>(`/api/v1/missions/${missionId}/branch-jobs/${jobId}`),
   },
 
   events: {
@@ -179,5 +189,17 @@ export const api = {
       request<Record<string, unknown>>(`/api/v1/missions/${missionId}/share`, { method: 'POST', body: JSON.stringify(data) }),
 
     list: (missionId: string) => request<Record<string, unknown>[]>(`/api/v1/missions/${missionId}/shares`),
+  },
+
+  audit: {
+    events: (missionId: string, branchId?: string, sequenceNum?: number) => {
+      const params = new URLSearchParams();
+      if (branchId) params.append('branch_id', branchId);
+      if (sequenceNum !== undefined) params.append('sequence_num', String(sequenceNum));
+      const query = params.toString();
+      return request<MissionAuditEventResponse>(`/api/v1/missions/${missionId}/audit/events${query ? `?${query}` : ''}`);
+    },
+    verify: (missionId: string) =>
+      request<AuditIntegrityReport>(`/api/v1/missions/${missionId}/audit/verify`),
   },
 };

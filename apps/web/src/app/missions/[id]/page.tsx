@@ -24,7 +24,7 @@ import { AiAssistant } from '@/components/ai/AiAssistant';
 import { MissionGraph } from '@/components/graph/MissionGraph';
 import { BranchExplorer } from '@/components/replay/BranchExplorer';
 import { ReplayControls } from '@/components/replay/ReplayControls';
-import { ReviewPanel } from '@/components/review/ReviewPanel';
+import { RightSidebar } from '@/components/layout/RightSidebar';
 import { MissionTimeline } from '@/components/timeline/MissionTimeline';
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell';
 import { StatusBar } from '@/components/layout/StatusBar';
@@ -567,15 +567,6 @@ export default function MissionWorkspacePage() {
                   <span className="text-[#9498b0]">{activeAgents} active agents</span>
                 </div>
               </div>
-
-              <BranchExplorer
-                missionId={missionId}
-                isCollapsed={isBranchExplorerCollapsed}
-                onToggleCollapsed={() => setIsBranchExplorerCollapsed((value) => !value)}
-                onBranchChange={async (branchId) => {
-                  await loadReplay(branchId);
-                }}
-              />
             </div>
 
             {currentSnapshot && (
@@ -593,14 +584,15 @@ export default function MissionWorkspacePage() {
             )}
           </div>
         }
-        rightPanel={<ReviewPanel />}
+        rightPanel={
+          <RightSidebar
+            missionId={missionId}
+            onBranchChange={loadReplay}
+            missionObjective={mission?.objective ?? 'Mission overview'}
+            missionStatus={missionStatus}
+          />
+        }
         bottomPanel={<StatusBar />}
-      />
-
-      <AiAssistant
-        missionId={missionId}
-        missionObjective={mission?.objective ?? 'Mission overview'}
-        missionStatus={missionStatus}
       />
     </div>
   );

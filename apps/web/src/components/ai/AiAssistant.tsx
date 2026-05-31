@@ -7,9 +7,10 @@ interface AiAssistantProps {
   missionId: string;
   missionObjective: string;
   missionStatus?: string;
+  inline?: boolean;
 }
 
-export function AiAssistant({ missionId, missionObjective, missionStatus }: AiAssistantProps) {
+export function AiAssistant({ missionId, missionObjective, missionStatus, inline }: AiAssistantProps) {
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [response, setResponse] = useState('');
@@ -42,6 +43,48 @@ export function AiAssistant({ missionId, missionObjective, missionStatus }: AiAs
     } finally {
       setLoading(false);
     }
+  }
+
+  if (inline) {
+    return (
+      <div className="flex flex-col h-full bg-[#12131a]">
+        <div className="flex items-center gap-2 border-b border-[rgba(255,255,255,0.05)] px-4 py-3 bg-[rgba(10,11,16,0.3)]">
+          <Bot size={16} className="text-[#818cf8]" />
+          <div>
+            <div className="text-xs font-semibold text-[#e8eaf0]">Pi Assistant</div>
+            <div className="text-[10px] text-[#5d6180]">Mission-aware coding interface</div>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="space-y-3">
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Ask about this mission, the graph, or what to do next..."
+              className="h-28 w-full resize-none rounded-xl border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.03)] px-3 py-2 text-xs text-[#e8eaf0] placeholder:text-[#3a3d54] outline-none focus:border-[#6366f1]/30 focus:bg-[rgba(255,255,255,0.05)] transition-all duration-200"
+            />
+
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#6366f1] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#5558e6] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Send size={12} />
+              {loading ? 'Thinking...' : 'Ask Pi'}
+            </button>
+
+            {error ? <div className="text-[11px] text-[#f87171]">{error}</div> : null}
+
+            {response ? (
+              <div className="rounded-xl border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.03)] p-3 text-xs leading-6 text-[#d8dbef] whitespace-pre-wrap">
+                {response}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
