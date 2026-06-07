@@ -8,8 +8,38 @@ import type { GraphSnapshot } from '@agentlens/protocol';
 // Zustand stores are standalone — reset between tests by calling getState/setState
 beforeEach(() => {
   useGraphStore.setState({
-    nodes: [], edges: [], snapshots: [], currentSnapshotIndex: 0,
-    selectedNodeId: null, zoomLevel: 1,
+    nodes: [],
+    edges: [],
+    baseNodes: [],
+    baseEdges: [],
+    snapshots: [],
+    currentSnapshotIndex: 0,
+    selectedNodeId: null,
+    highlightedEdgeId: null,
+    zoomLevel: 1,
+    zoomBand: 'standard',
+    edgeVisibility: {
+      dependency: true,
+      uses: true,
+      delegation: true,
+      critique: true,
+      review: true,
+      escalation: true,
+      data_flow: true,
+      approval: true,
+      member_of: true,
+      produces: true,
+    },
+    edgeLayerPreset: 'all',
+    tracePreset: 'none',
+    showActiveOnly: false,
+    focusModeEnabled: true,
+    focusDepth: 1,
+    bundleEdges: true,
+    visibleEdgeCount: 0,
+    totalEdgeCount: 0,
+    satelliteCounts: {},
+    layoutPositions: {},
   });
   useMissionStore.setState({ missions: [], activeMission: null, isLoading: false, error: null });
   useReplayStore.setState({
@@ -80,11 +110,12 @@ describe('graphStore', () => {
         { id: 'tool1', type: 'tool', label: 'web_search', status: 'active', position: { x: 125, y: 300 } },
       ],
       edges: [
-        { id: 'e1', type: 'delegation', source: 'a1', target: 'a2', label: 'delegates', status: 'active' },
-        { id: 'e2', type: 'critique', source: 'a3', target: 'a1', label: 'critique: fix', status: 'active' },
+        { id: 'e1', type: 'dependency', source: 'a1', target: 't1', label: 'executes', status: 'active' },
+        { id: 'e2', type: 'uses', source: 'a1', target: 'tool1', label: 'calls tool', status: 'active' },
       ],
     };
 
+    useGraphStore.getState().setZoomLevel(1.5);
     useGraphStore.getState().applySnapshot(snapshot);
 
     const state = useGraphStore.getState();
@@ -103,12 +134,13 @@ describe('graphStore', () => {
     // Tool maps to 'toolNode' type
     expect(state.nodes[2].type).toBe('toolNode');
 
-    // Delegation edge style
+    // Dependency edge style
     expect(state.edges[0].style).toBeDefined();
-    expect(state.edges[0].data.edgeType).toBe('delegation');
+    expect(state.edges[0].type).toBe('bundledEdge');
+    expect(state.edges[0].data?.edgeType).toBe('dependency');
 
-    // Critique edge
-    expect(state.edges[1].data.edgeType).toBe('critique');
+    // Uses edge
+    expect(state.edges[1].data?.edgeType).toBe('uses');
   });
 
   it('maps memory and artifact node types', () => {
@@ -123,6 +155,7 @@ describe('graphStore', () => {
       edges: [],
     };
 
+    useGraphStore.getState().setZoomLevel(1.5);
     useGraphStore.getState().applySnapshot(snapshot);
     const state = useGraphStore.getState();
 

@@ -49,6 +49,10 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
   const agentId = typeof nodeData.agentId === 'string' ? nodeData.agentId : '';
   const metadata = (nodeData.metadata as Record<string, unknown>) || {};
   const hasPendingInterrupt = metadata.hasPendingInterrupt === true;
+  const hideLabel = nodeData.hideLabel === true;
+  const satelliteCounts = nodeData.satelliteCounts as
+    | { tools: number; memory: number; artifacts: number }
+    | undefined;
 
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -59,9 +63,8 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
 
   return (
     <motion.div
-      initial={{ scale: 0.8, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      transition={{ duration: 0.3, ease: 'easeOut' }}
+      initial={false}
+      layout={false}
       style={{
         borderColor: selected ? color : 'rgba(255,255,255,0.08)',
         boxShadow: selected ? `0 0 24px ${color}33` : '0 4px 16px rgba(0,0,0,0.3)',
@@ -94,12 +97,14 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
           {Icon}
         </div>
         <div className="flex-1 min-w-0">
-          <Tooltip content={label} side="right">
-            <div className="text-[13px] font-semibold text-[#e8eaf0] truncate">
-              {label}
-            </div>
-          </Tooltip>
-          {role && (
+          {!hideLabel && (
+            <Tooltip content={label} side="right">
+              <div className="text-[13px] font-semibold text-[#e8eaf0] truncate">
+                {label}
+              </div>
+            </Tooltip>
+          )}
+          {!hideLabel && role && (
             <div className="text-[10px] text-[#9498b0] uppercase tracking-wider">{role}</div>
           )}
         </div>
@@ -171,6 +176,26 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
               </motion.div>
             )}
           </AnimatePresence>
+        </div>
+      )}
+
+      {satelliteCounts && (satelliteCounts.tools > 0 || satelliteCounts.memory > 0 || satelliteCounts.artifacts > 0) && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {satelliteCounts.tools > 0 && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[rgba(251,191,36,0.12)] text-[#fbbf24] border border-[rgba(251,191,36,0.2)]">
+              {satelliteCounts.tools} tool{satelliteCounts.tools > 1 ? 's' : ''}
+            </span>
+          )}
+          {satelliteCounts.memory > 0 && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[rgba(52,211,153,0.12)] text-[#34d399] border border-[rgba(52,211,153,0.2)]">
+              {satelliteCounts.memory} mem
+            </span>
+          )}
+          {satelliteCounts.artifacts > 0 && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[rgba(251,146,60,0.12)] text-[#fb923c] border border-[rgba(251,146,60,0.2)]">
+              {satelliteCounts.artifacts} art
+            </span>
+          )}
         </div>
       )}
 

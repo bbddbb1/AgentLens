@@ -26,6 +26,7 @@ import {
   Bot
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { EdgeInspector } from '@/components/graph/EdgeInspector';
 
 interface RightSidebarProps {
   missionId: string;
@@ -198,6 +199,8 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
               className="h-full overflow-y-auto p-4 space-y-4"
             >
               {/* Context Summary Cards */}
+              {selectedNode && <EdgeInspector />}
+
               {selectedNode && (
                 <div className="rounded-xl border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.015)] hover:bg-[rgba(255,255,255,0.025)] p-3.5 relative overflow-hidden group transition-all duration-300">
                   <div className="border-l-3 border-[#6366f1] pl-3 space-y-2">

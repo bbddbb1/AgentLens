@@ -10,6 +10,7 @@ import {
   RuntimeInterruptState,
   RuntimeState,
 } from '@agentlens/protocol';
+import { applyHierarchicalLayout } from '../graphLayout.js';
 import { InternalRuntimeState, ROOT_BRANCH_ID } from './types.js';
 import { sanitizeId } from './utils.js';
 
@@ -422,7 +423,7 @@ export function eventDescription(event: MissionEventRecord): string {
 
 export function snapshotFromState(state: InternalRuntimeState, event: MissionEventRecord): GraphSnapshot {
   const serialized = serializeRuntimeState(state);
-  return {
+  const snapshot: GraphSnapshot = {
     id: `${state.branch_id}:${event.sequence_num}`,
     mission_id: state.mission_id,
     branch_id: state.branch_id,
@@ -436,4 +437,6 @@ export function snapshotFromState(state: InternalRuntimeState, event: MissionEve
     source_event_sequence_num: event.sequence_num,
     phase: state.phase,
   };
+
+  return applyHierarchicalLayout(snapshot);
 }

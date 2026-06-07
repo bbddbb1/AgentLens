@@ -250,6 +250,10 @@ html, body {
   100% { offset-distance: 100%; opacity: 0; }
 }
 
+@keyframes dash-flow {
+  to { stroke-dashoffset: -28; }
+}
+
 .panel-transition {
   transition: flex-basis 0.3s ease-in-out, width 0.3s ease-in-out;
 }

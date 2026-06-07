@@ -7,20 +7,18 @@ import {
   ArrowLeft,
   CheckCircle2,
   Download,
-  GitBranch,
   Loader2,
   Lock,
   Maximize2,
   Minimize2,
   PauseCircle,
   Share2,
-  Shield,
   Telescope,
-  Users,
   XCircle,
 } from 'lucide-react';
 import type { MissionEventRecord, ReplayBranch, ReplayStateResponse, RuntimeState } from '@agentlens/protocol';
 import { AiAssistant } from '@/components/ai/AiAssistant';
+import { CanvasToolbar } from '@/components/graph/CanvasToolbar';
 import { MissionGraph } from '@/components/graph/MissionGraph';
 import { BranchExplorer } from '@/components/replay/BranchExplorer';
 import { ReplayControls } from '@/components/replay/ReplayControls';
@@ -356,7 +354,7 @@ const statusConfig: Record<string, { icon: React.ReactNode; color: string; label
 };
 
 export default function MissionWorkspacePage() {
-  const { setSnapshots, applySnapshot, snapshots } = useGraphStore();
+  const { setSnapshots, applySnapshot, snapshots, visibleEdgeCount, totalEdgeCount, zoomBand } = useGraphStore();
   const currentFrame = useReplayStore((state) => state.currentFrame);
   const branches = useReplayStore((state) => state.branches);
   const currentBranchId = useReplayStore((state) => state.currentBranchId);
@@ -533,7 +531,13 @@ export default function MissionWorkspacePage() {
       <WorkspaceShell
         leftPanel={<MissionTimeline />}
         centerPanel={
-          <div className="flex-1 relative overflow-hidden">
+          <div className="relative flex-1 overflow-hidden">
+            <CanvasToolbar
+              agentCount={Object.keys(currentState?.agents ?? {}).length}
+              branchCount={branches.length}
+              pendingInterrupts={pendingInterrupts}
+              activeAgents={activeAgents}
+            />
             <MissionGraph />
 
             {showMissionError && (
@@ -547,27 +551,6 @@ export default function MissionWorkspacePage() {
                 </div>
               </div>
             )}
-
-            <div className="absolute top-3 left-3 right-3 z-10 flex flex-col gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
-                  <Users size={12} className="text-[#818cf8]" />
-                  <span className="text-[#9498b0]">{Object.keys(currentState?.agents ?? {}).length} agents</span>
-                </div>
-                <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
-                  <GitBranch size={12} className="text-[#67e8f9]" />
-                  <span className="text-[#9498b0]">{branches.length} branches</span>
-                </div>
-                <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
-                  <Shield size={12} className="text-[#34d399]" />
-                  <span className="text-[#9498b0]">{pendingInterrupts} pending interrupts</span>
-                </div>
-                <div className="glass px-3 py-1.5 rounded-lg flex items-center gap-2 text-[11px]">
-                  <Loader2 size={12} className={activeAgents > 0 ? 'text-[#fbbf24] animate-spin' : 'text-[#5d6180]'} />
-                  <span className="text-[#9498b0]">{activeAgents} active agents</span>
-                </div>
-              </div>
-            </div>
 
             {currentSnapshot && (
               <div className="absolute bottom-4 left-4 z-10 max-w-sm rounded-2xl border border-[rgba(255,255,255,0.06)] bg-[rgba(10,11,16,0.82)] px-4 py-3 shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-xl">
@@ -592,7 +575,18 @@ export default function MissionWorkspacePage() {
             missionStatus={missionStatus}
           />
         }
-        bottomPanel={<StatusBar />}
+        bottomPanel={
+          <StatusBar
+            metrics={
+              <div className="flex items-center gap-3 text-[10px]">
+                <span className="text-[#5d6180] capitalize">{zoomBand} view</span>
+                <span className={totalEdgeCount > 0 && visibleEdgeCount / totalEdgeCount < 0.3 ? 'text-[#fbbf24]' : 'text-[#9498b0]'}>
+                  {visibleEdgeCount} / {totalEdgeCount} edges visible
+                </span>
+              </div>
+            }
+          />
+        }
       />
     </div>
   );

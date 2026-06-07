@@ -29,9 +29,8 @@ function TaskNodeComponent({ data, selected }: NodeProps) {
 
   return (
     <motion.div
-      initial={{ scale: 0.8, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      transition={{ duration: 0.3, ease: 'easeOut', delay: 0.05 }}
+      initial={false}
+      layout={false}
       style={{
         borderColor: selected ? color : 'rgba(255,255,255,0.06)',
         boxShadow: selected ? `0 0 20px ${color}22` : '0 2px 8px rgba(0,0,0,0.2)',

@@ -12,20 +12,26 @@ export function AnimatedEdge({
   data,
   animated,
 }: EdgeProps) {
+  const pathOffset = typeof data?.pathOffset === 'number' ? data.pathOffset : 0;
+
   const [edgePath] = getSmoothStepPath({
     sourceX,
-    sourceY,
+    sourceY: sourceY + pathOffset * 0.15,
     sourcePosition,
     targetX,
-    targetY,
+    targetY: targetY + pathOffset * 0.15,
     targetPosition,
+    borderRadius: 16,
+    offset: pathOffset,
   });
 
   const edgeType = data?.edgeType as string;
   const isDataFlow = edgeType === 'data_flow' || edgeType === 'uses' || edgeType === 'produces';
-  
-  // If it's explicitly animated, we show particles
-  const showParticles = animated || (isDataFlow && data?.status === 'active');
+  const disableParticles = data?.disableParticles === true;
+
+  const showParticles =
+    !disableParticles &&
+    (animated || (isDataFlow && data?.status === 'active'));
 
   return (
     <>
