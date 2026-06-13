@@ -1,6 +1,6 @@
 # AgentLens Semantic Conventions (Frozen Reference)
 
-This document establishes the telemetry semantic conventions emitted by AgentLens SDKs and adapters. It defines the formal data contract between agent framework integrations and the Express control plane.
+AgentLens SDKs and adapters emit telemetry according to these semantic conventions to maintain a stable contract with the Express control plane.
 
 Version: 0.1 (frozen)
 
@@ -12,7 +12,7 @@ Version: 0.1 (frozen)
 
 ## Scope
 
-These conventions apply to OpenTelemetry spans and span events emitted by AgentLens adapters. The TypeScript control plane treats them as the formal interface contract.
+All AgentLens adapters must follow these conventions when emitting OpenTelemetry spans and events. The control plane relies on this contract to parse execution graphs.
 
 ## Required Base Attributes
 

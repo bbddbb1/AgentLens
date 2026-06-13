@@ -1,19 +1,17 @@
-# AgentLens: Framework-Agnostic Observability & Governance Control Plane for Autonomous Multi-Agent Systems
+# Background
 
-Welcome to the technical deep-dive of **AgentLens**. This document is designed for AI Infrastructure, Platform, and Distributed Systems engineers evaluating the architectural decisions, trade-offs, and design choices behind this portfolio-grade observability and governance control plane.
+AgentLens exists because standard Application Performance Monitoring (APM) tools fail to capture the dynamic topology and state transitions of multi-agent systems. We designed the control plane to address these specific constraints and trade-offs.
 
----
+## Why Standard APM Fails
 
-## 1. Problem Statement: Why Standard APM Fails Multi-Agent Systems
+Autonomous multi-agent systems (e.g., LangGraph, CrewAI, AutoGen) differ fundamentally from traditional microservices. A single high-level objective triggers complex cascades of internal tasks, tool invocations, peer reviews, consensus loops, and recursive handoffs. 
 
-Autonomous multi-agent systems (e.g., built on LangGraph, CrewAI, AutoGen) are fundamentally different from traditional microservices. A single high-level objective triggers complex cascades of internal tasks, tool invocations, peer reviews, consensus loops, and recursive handoffs. 
-
-Standard Application Performance Monitoring (APM) tools (like Datadog, Jaeger, or Honeycomb) fail here for several key reasons:
-1.  **State-Topology Blindness**: Standard APM traces depict execution waterfalls but fail to capture the evolving **dynamic interaction topology** of an agent network.
+Standard APM tools (like Datadog, Jaeger, or Honeycomb) struggle here for several reasons:
+1.  **State-Topology Blindness**: Standard APM traces depict execution waterfalls but fail to capture the evolving dynamic interaction topology of an agent network.
 2.  **Immutability & Replayability Deficit**: Standard APM does not treat execution as a series of state-changing events. It cannot answer questions like: *"What did the graph topology look like exactly before Agent A escalated to Agent B?"* or *"Can we fork execution at step 3 to explore an alternative decision?"*
-3.  **Human-in-the-Loop (HITL) Steerability**: Observability must not be read-only. In high-stakes AI applications (financial, security, infrastructure), the control plane must support asynchronous pause, policy-driven gatekeeping, and resume-with-override capabilities.
+3.  **Human-in-the-Loop (HITL) Steerability**: Observability must not be read-only. In high-stakes AI applications, the control plane must support asynchronous pause, policy-driven gatekeeping, and resume-with-override capabilities.
 
-**AgentLens** solves this by establishing a strict boundary between the **data plane** (where agents run) and the **control plane** (where states are ingested, replayed, evaluated, and versioned).
+We intentionally chose to establish a strict boundary between the data plane (where agents run) and the control plane (where states are ingested, replayed, evaluated, and versioned).
 
 ---
 
@@ -44,7 +42,7 @@ Instead of forcing developers to adopt a proprietary runtime or coupling directl
 ```
 
 ### Why OpenTelemetry?
-*   **Industry Standard**: Universal vendor support means zero vendor lock-in.
+*   **Standards-based**: Universal support allows instrumenting once without proprietary SDK lock-in.
 *   **Schema-Driven Ingestion**: The data plane transmits telemetry using standard HTTP/JSON traces at `/v1/traces`.
 *   **Decoupled Instrumentation**: Frameworks like LangGraph use a non-invasive callback handler (`sdk-langgraph`) that runs out-of-band and does not alter agent execution.
 
@@ -111,7 +109,7 @@ The plaintext resume token is generated via a cryptographically secure random ge
 
 ## 5. Timeline Branching & Sandbox Execution Trade-Offs
 
-One of the most powerful capabilities of AgentLens is **Timeline Branching**. A reviewer can fork execution from any branchable sequence number (e.g., a tool call, a handoff, or a human interrupt) to simulate alternative paths.
+**Timeline branching** allows forking execution from any branchable sequence number (such as a tool call, a handoff, or a human interrupt) to simulate alternative paths.
 
 ```
 Main branch:     E0 ── E1 ── E2 ── E3 (Interrupt) ── E4 ── E5
@@ -120,32 +118,16 @@ Fork at E2:                   └───► B1 (What-If Branch) ── B2
 ```
 
 ### Docker-Based Sandbox Isolation (The Trade-Offs)
-To execute a timeline branch deterministically without interfering with the live system, AgentLens launches a sandboxed worker. This architecture balances isolation against resource constraints:
+We run sandboxed workers to isolate timeline branch execution from the live system. This balance keeps resource usage manageable:
 
-*   **MVP Isolation (Implemented)**: The control plane spawns a stateless Docker container using the registered `branch_executor_specs`. 
+*   **Current Docker Isolation**: We spawn a stateless Docker container using the registered `branch_executor_specs`. 
 *   **Networking**: The container runs under `--network none` to prevent side-effects, resource leaks, or outbound network tampering during simulated "what-if" branches.
 *   **State Injection**: The sandbox context (injections, overrides) is mounted read-only as `context.json` into `/agentlens/context`.
 *   **Local Decision Bridge**: The parent decisions are communicated into the sandbox via a file-based JSONL bridge (`decisions.jsonl`), allowing the sandboxed agent to "read" human responses without requiring live API network requests.
-*   **Limitations**: High-fidelity branching requires mocking database connections, API calls, and model outputs. In the v0.1 MVP, these external factors are simulated via local mock configurations.
+*   **Limitations**: High-fidelity branching requires mocking database connections, API calls, and model outputs. We currently simulate these external factors using local mock configurations.
 
 ---
 
-## 6. Implementation Status Matrix
+## 6. Implementation Status & Roadmap
 
-| Subsystem | Implemented Capabilities | Hiring Portfolio Target |
-|---|---|---|
-| **Ingestion** | OTLP/HTTP `/v1/traces` & `/api/v1/ingest/otlp` JSON normalization | Framework-agnostic contract boundary |
-| **Replay Graph** | Chronological replay, dynamic state projection, time-series snapshots | Complex time-series state machines |
-| **Governance** | Built-in policy engine, strictness precedence matching (`deny` > `require_review`) | Automated runtime guardrails |
-| **Audit Trails** | SHA-256 event chaining, payload validation, missing-event detection | Cryptographic distributed ledger design |
-| **HITL Loops** | Ephemeral hashed resume tokens, async polling protocol, decision payloads | Highly secure, asynchronous workflows |
-| **Branching** | Lineage tree building, Docker execution runner, log streaming, telemetry feedback | Sandbox orchestration & containers |
-
----
-
-## 7. Strategic Hardening Roadmap
-
-To transition this portfolio project into a production-grade enterprise control plane:
-1.  **Distributed Consensus**: Replace local database state locking with a distributed raft-based consensus layer to handle high-throughput telemetry ingestion.
-2.  **VM Sandboxing**: Migrate container sandboxes to microVM systems (e.g., Firecracker) to achieve faster cold-start times (sub-100ms) and secure kernel-level isolation.
-3.  **Encrypted Event Streams**: Support zero-knowledge event storage where agent payloads remain encrypted using client-side keys, and the control plane only evaluates policy metadata.
+For detailed information on current implementation status and the strategic hardening roadmap, please see [Roadmap](../project/roadmap.md).

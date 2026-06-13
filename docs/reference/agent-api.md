@@ -18,7 +18,7 @@
 
 ## Architectural Overview
 
-AgentLens is a **framework-agnostic telemetry and governance platform** for multi-agent systems. It provides visibility, runtime policies, and historical debugging capabilities by decoupling telemetry collection from agent execution. It follows a clean **data-plane / control-plane** separation:
+AgentLens decouples telemetry collection from agent execution using a data-plane / control-plane split:
 
 - **Data Plane**: Your multi-agent application (built on LangGraph, CrewAI, AutoGen, OpenAI Agents, or custom loops) runs normally. The AgentLens Python SDK exports execution telemetry using standard OpenTelemetry spans and events.
 - **Control Plane**: The TypeScript API server. Ingests OTLP traces at a standard OTLP/HTTP ingestion endpoint, projects the states into visual execution graphs, manages runtime review interrupts, and serves a Next.js web interface.
@@ -272,12 +272,12 @@ AgentLens uses a **dual-path semantic engine** for generating human-readable exp
                     └──────────┘ └──────────────┘
 ```
 
-### System Prompt Design Philosophy
+### System Prompt Design
 
-The semantic engine crafts prompts with a specific design:
+We design prompts to structure context and output for the semantic analysis model:
 
-1. **System-level framing**: Prompts instruct the model to act as a system analyst describing execution topology and flow rather than a narrative log translator. This produces structural analysis instead of plain storytelling.
-2. **Context injection**: Each prompt is built from the run aggregate (objective, active agents, snapshots, event timeline) and organized into sections:
+1. **System-level framing**: We instruct the model to act as a system analyst describing execution topology and flow rather than a narrative log translator. This produces structural analysis instead of plain storytelling.
+2. **Context injection**: We build each prompt from the run aggregate (objective, active agents, snapshots, event timeline) and organize it into sections:
    - Run objective and status
    - Agent states with roles, statuses, and last-known reasons
    - Graph topology (node types, labels, statuses)
@@ -386,41 +386,7 @@ Each snapshot contains the complete graph topology at that event, enabling:
 
 ## Semantic Conventions (OTEL)
 
-AgentLens defines a comprehensive set of OpenTelemetry semantic convention attributes and events. The canonical reference is in `packages/protocol/src/semconv.ts` (TypeScript) and `packages/otel-semconv/` (Python).
-
-### Key Attributes
-
-| Attribute | Type | Description |
-|---|---|---|
-| `agent.id` | string | Unique agent identifier |
-| `agent.name` | string | Human-readable agent name |
-| `agent.role` | string | Agent role (planner, researcher, reviewer, etc.) |
-| `agent.team` | string | Team or organizational grouping |
-| `agent.framework` | string | Originating framework (langgraph, crewai, autogen, etc.) |
-| `agent.goal` | string | Current goal or objective description |
-| `agent.task` | string | Current task description |
-| `agent.confidence` | float | Confidence score 0.0-1.0 |
-| `agent.tool.name` | string | Name of tool being called |
-| `agent.interrupt.id` | string | Unique interrupt identifier |
-| `agent.interrupt.reason` | string | Reason for human review request |
-| `mission.id` | string | Run/execution identifier |
-| `mission.objective` | string | Run/execution objective text |
-| `mission.phase` | string | Current phase (planning/executing/reviewing/waiting_for_human/completed/failed) |
-
-### Span Kinds
-
-| Span Kind | Use |
-|---|---|
-| `mission` | Top-level execution span |
-| `agent.orchestration` | Orchestration/routing logic |
-| `agent.task` | Individual agent task execution |
-| `agent.delegation` | Delegation/handoff operation |
-| `agent.tool.call` | External tool invocation |
-| `agent.review` | Formal review operation |
-| `agent.reflection` | Self-reflection step |
-| `agent.planning` | Planning/decomposition step |
-| `agent.memory.op` | Memory read/write operation |
-| `agent.human.input` | Human input collection |
+AgentLens defines a comprehensive set of OpenTelemetry semantic convention attributes and events. The canonical reference is in [semconv.md](semconv.md).
 
 ---
 

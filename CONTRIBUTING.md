@@ -36,6 +36,18 @@ We follow a standard **Fork → Branch → Pull Request** model:
 - [ ] No new warnings or errors in the build.
 - [ ] Documentation is updated if public APIs or configuration surfaces change.
 
+### Design constraints
+
+Changes to protocol, replay, governance, or branch semantics must respect AgentLens core rules. Before merging, verify:
+
+- Canonical history is append-only; corrections are new events.
+- Replay must be deterministic from canonical events (gaps → explicit markers).
+- Branches are isolated histories with lineage, not UI filters.
+- Semantic conventions (`EventEnvelope`, `semconv`) are the compatibility boundary.
+- Governance decisions (policy, HITL) are ledger events, not side channels.
+
+See [docs/explanation/architecture.md#design-constraints](docs/explanation/architecture.md#design-constraints) for the full list and review checklist.
+
 ## Coding Standards
 
 AgentLens enforces consistent style through automated tooling. Please do not bypass or disable these checks.
