@@ -4,3 +4,4 @@ export * from './SpanNormalizer.js';
 export * from './GraphStateBuilder.js';
 export * from './EventReplayEngine.js';
 export * from './BranchManager.js';
+export { projectRuntimeSummary, describeRuntimeEvent, getRuntimeNodeProjection, getRuntimeAgentSummary } from '@agentlens/protocol';

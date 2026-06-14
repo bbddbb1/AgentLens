@@ -48,6 +48,87 @@ function respondRouteError(res: Response, error: unknown, fallback: string): voi
   res.status(status).json({ detail: message || fallback });
 }
 
+extrasRouter.get('/api/v1/missions/:missionId/nodes/:agentId/projection', async (req, res) => {
+  try {
+    const mission = await missionStore.getMission(req.params.missionId);
+    if (!mission) return res.status(404).json({ detail: 'Mission not found' });
+
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    const sequenceNum = req.query.sequence_num !== undefined ? Number(req.query.sequence_num) : undefined;
+
+    const projection = await missionStore.getNodeProjection(
+      req.params.missionId,
+      req.params.agentId,
+      branchId,
+      Number.isFinite(sequenceNum) ? sequenceNum : undefined,
+    );
+    if (!projection) return res.status(404).json({ detail: 'Node projection not found' });
+
+    return res.json(projection);
+  } catch (error) {
+    return respondRouteError(res, error, 'Failed to load node projection');
+  }
+});
+
+extrasRouter.post('/api/v1/missions/:missionId/nodes/:agentId/projection/enhance', async (req, res) => {
+  try {
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    const sequenceNum = req.query.sequence_num !== undefined ? Number(req.query.sequence_num) : undefined;
+
+    const projection = await missionStore.enhanceNodeProjection(
+      req.params.missionId,
+      req.params.agentId,
+      branchId,
+      Number.isFinite(sequenceNum) ? sequenceNum : undefined,
+    );
+    if (!projection) return res.status(404).json({ detail: 'Node projection not found' });
+
+    await publishMissionEvent(req.params.missionId, 'node.projection.updated', {
+      agent_id: req.params.agentId,
+      node_projection: projection,
+    });
+    return res.status(201).json(projection);
+  } catch (error) {
+    return respondRouteError(res, error, 'Failed to enhance node projection');
+  }
+});
+
+extrasRouter.get('/api/v1/missions/:missionId/runtime-summary', async (req, res) => {
+  try {
+    const mission = await missionStore.getMission(req.params.missionId);
+    if (!mission) return res.status(404).json({ detail: 'Mission not found' });
+
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    const sequenceNum = req.query.sequence_num !== undefined ? Number(req.query.sequence_num) : undefined;
+    const useLlm = req.query.enhance === 'true' || req.query.enhance === '1';
+
+    const summary = await missionStore.getRuntimeSummary(
+      req.params.missionId,
+      branchId,
+      Number.isFinite(sequenceNum) ? sequenceNum : undefined,
+      useLlm,
+    );
+    if (!summary) return res.status(404).json({ detail: 'Mission not found' });
+
+    return res.json(summary);
+  } catch (error) {
+    return respondRouteError(res, error, 'Failed to load runtime summary');
+  }
+});
+
+extrasRouter.post('/api/v1/missions/:missionId/runtime-summary/enhance', async (req, res) => {
+  try {
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    const summary = await missionStore.getRuntimeSummary(req.params.missionId, branchId, undefined, true);
+    if (!summary) return res.status(404).json({ detail: 'Mission not found' });
+
+    await publishMissionEvent(req.params.missionId, 'runtime.summary.updated', { runtime_summary: summary });
+    return res.status(201).json(summary);
+  } catch (error) {
+    return respondRouteError(res, error, 'Failed to enhance runtime summary');
+  }
+});
+
 extrasRouter.get('/api/v1/missions/:missionId/replay', async (req, res) => {
   const mission = await missionStore.getMission(req.params.missionId);
   if (!mission) return res.status(404).json({ detail: 'Mission not found' });

@@ -1,5 +1,7 @@
 import { useReplayStore } from '@/stores/replayStore';
 import { useGraphStore } from '@/stores/graphStore';
+import { getRuntimeNodeProjection } from '@agentlens/protocol';
+import { useRuntimeSummary } from '@/hooks/useRuntimeSummary';
 import { AgentStateCard } from './AgentStateCard';
 import { InterruptBadge } from './InterruptBadge';
 import { WhyThisState } from '@/components/replay/WhyThisState';
@@ -9,6 +11,13 @@ import { Activity } from 'lucide-react';
 export function StateInspector({ missionId }: { missionId: string }) {
   const { currentState } = useReplayStore();
   const { selectedNodeId, setSelectedNodeId } = useGraphStore();
+
+  const runtimeSummary = useRuntimeSummary({
+    missionId,
+    objective: 'Mission overview',
+    missionStatus: currentState?.status ?? 'active',
+    missionPhase: currentState?.phase ?? 'executing',
+  });
 
   const agents = Object.values(currentState?.agents ?? {});
   const pendingInterrupts = Object.values(currentState?.interrupts ?? {}).filter(i => i.status === 'pending');
@@ -35,7 +44,8 @@ export function StateInspector({ missionId }: { missionId: string }) {
                 return (
                   <AgentStateCard 
                     key={agent.agent_id} 
-                    agent={agent} 
+                    agent={agent}
+                    behavior={runtimeSummary ? getRuntimeNodeProjection(runtimeSummary, agent.agent_id)?.generated?.current_understanding : undefined}
                     isSelected={isSelected}
                     onClick={() => setSelectedNodeId(agent.agent_id)}
                   />

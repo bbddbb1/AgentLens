@@ -8,6 +8,9 @@ import { BranchExplorer } from '@/components/replay/BranchExplorer';
 import { AiAssistant } from '@/components/ai/AiAssistant';
 import { api } from '@/lib/api';
 import type { MissionAuditEventResponse, EventEnvelope } from '@agentlens/protocol';
+import { useRuntimeSummary } from '@/hooks/useRuntimeSummary';
+import { useNodeProjection } from '@/hooks/useNodeProjection';
+import { AgentNodeProjectionPanel } from '@/components/runtime/AgentNodeProjectionPanel';
 import {
   PanelRightClose,
   Activity,
@@ -131,6 +134,27 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     return currentSnapshot.nodes.find((n) => n.id === selectedNodeId) ?? null;
   }, [selectedNodeId, currentFrame, snapshots]);
 
+  const runtimeSummary = useRuntimeSummary({
+    missionId,
+    objective: missionObjective,
+    missionStatus,
+    missionPhase: currentState?.phase ?? 'executing',
+  });
+
+
+  const selectedAgentId = selectedNode?.type === 'agent'
+    ? (selectedNode.agent_id ?? selectedNode.id ?? selectedNode.label)
+    : null;
+
+  const { projection: nodeProjection, enhance: enhanceNodeProjection, isEnhancing: isEnhancingNode } = useNodeProjection({
+    missionId,
+    agentId: selectedAgentId,
+    branchId: currentBranchId ?? undefined,
+    sequenceNum: events[currentFrame]?.sequence_num,
+    events: events as unknown as import('@agentlens/protocol').MissionEventRecord[],
+    runtimeSummary,
+  });
+
   // Interrupt lists
   const pendingInterrupts = useMemo(() => {
     return Object.values(currentState?.interrupts ?? {}).filter(i => i.status === 'pending');
@@ -201,7 +225,16 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
               {/* Context Summary Cards */}
               {selectedNode && <EdgeInspector />}
 
-              {selectedNode && (
+              {selectedNode && selectedNode.type === 'agent' && nodeProjection && (
+                <AgentNodeProjectionPanel
+                  projection={nodeProjection}
+                  nodeType={selectedNode.type}
+                  onEnhance={missionId !== 'demo-mission' ? enhanceNodeProjection : undefined}
+                  isEnhancing={isEnhancingNode}
+                />
+              )}
+
+              {selectedNode && selectedNode.type !== 'agent' && (
                 <div className="rounded-xl border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.015)] hover:bg-[rgba(255,255,255,0.025)] p-3.5 relative overflow-hidden group transition-all duration-300">
                   <div className="border-l-3 border-[#6366f1] pl-3 space-y-2">
                     <div className="flex items-center justify-between">
@@ -215,9 +248,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
                     </div>
                     <div className="text-[13px] font-semibold text-white tracking-wide">{selectedNode.label}</div>
                     {selectedNode.summary && (
-                      <div className="text-[11px] text-[#9498b0] leading-relaxed italic bg-[rgba(255,255,255,0.01)] p-2 rounded-lg border border-[rgba(255,255,255,0.02)]">
-                        &ldquo;{selectedNode.summary}&rdquo;
-                      </div>
+                      <div className="text-[11px] text-[#9498b0] leading-relaxed">{selectedNode.summary}</div>
                     )}
                     {selectedNode.confidence !== undefined && (
                       <div className="space-y-1 pt-1">
@@ -226,8 +257,8 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
                           <span className="text-[#34d399] font-bold">{Math.round(selectedNode.confidence * 100)}%</span>
                         </div>
                         <div className="w-full bg-[rgba(255,255,255,0.05)] rounded-full h-1">
-                          <div 
-                            className="bg-[#34d399]/40 h-1 rounded-full transition-all duration-500" 
+                          <div
+                            className="bg-[#34d399]/40 h-1 rounded-full transition-all duration-500"
                             style={{ width: `${Math.round(selectedNode.confidence * 100)}%` }}
                           />
                         </div>

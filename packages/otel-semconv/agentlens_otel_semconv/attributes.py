@@ -82,6 +82,9 @@ class AgentAttributes:
     MEMORY_KEY = "agent.memory.key"
     """Key of memory being read or written."""
 
+    MEMORY_VALUE = "agent.memory.value"
+    """Opaque serialized value written to memory."""
+
     MEMORY_OPERATION = "agent.memory.operation"
     """Memory operation type (read, write, delete)."""
 

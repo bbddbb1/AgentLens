@@ -138,16 +138,21 @@ class AgentInstrumentor:
         tool_output: Any = None,
         status: str = "success",
     ):
-        """Record a tool invocation."""
+        """Record a tool invocation with lossless serialized I/O."""
         if self._span:
+            import json
+
+            def serialize(value: Any) -> str:
+                return value if isinstance(value, str) else json.dumps(value, default=str)
+
             attrs: dict[str, str] = {
                 AgentAttributes.TOOL_NAME: tool_name,
                 AgentAttributes.TOOL_STATUS: status,
             }
             if tool_input is not None:
-                attrs[AgentAttributes.TOOL_INPUT] = str(tool_input)[:1000]
+                attrs[AgentAttributes.TOOL_INPUT] = serialize(tool_input)
             if tool_output is not None:
-                attrs[AgentAttributes.TOOL_OUTPUT] = str(tool_output)[:1000]
+                attrs[AgentAttributes.TOOL_OUTPUT] = serialize(tool_output)
 
             self._span.add_event(AgentEvents.TOOL_CALL, attrs)
 
@@ -170,8 +175,7 @@ class AgentInstrumentor:
     ):
         """Record an LLM call with full provenance for governance and debugging.
 
-        Unlike tool I/O which is truncated at 1KB, LLM traces preserve up to
-        10KB of prompt/completion by default to support forensic analysis of
+        LLM traces preserve up to 10KB of prompt/completion by default to support forensic analysis of
         hallucinations, prompt injection, and decision attribution.
         """
         if self._span:
@@ -208,6 +212,10 @@ class AgentInstrumentor:
                 AgentAttributes.MEMORY_KEY: key,
                 AgentAttributes.MEMORY_OPERATION: "write",
             }
+            if value is not None:
+                import json
+                serialized = value if isinstance(value, str) else json.dumps(value, default=str)
+                attrs[AgentAttributes.MEMORY_VALUE] = serialized
             self._span.add_event(AgentEvents.MEMORY_WRITE, attrs)
 
     def record_memory_read(self, key: str, value: Any = None):

@@ -83,6 +83,205 @@ export interface SemanticSummaryResult {
   anomalies: Array<Record<string, unknown>>;
 }
 
+/** A single progressive step in the runtime execution narrative. */
+export interface RuntimeSummaryProgressEntry {
+  sequence_num: number;
+  timestamp: string;
+  event_type: string;
+  actor?: string;
+  text: string;
+}
+
+export interface RuntimeSummaryObservation {
+  text: string;
+  sequence_num?: number;
+  actor?: string;
+}
+
+export interface RuntimeSummaryDecision {
+  text: string;
+  sequence_num?: number;
+  actor?: string;
+}
+
+export interface RuntimeSummaryEvidence {
+  text: string;
+  source?: string;
+  sequence_num?: number;
+}
+
+export interface RuntimeSummaryAction {
+  text: string;
+  sequence_num?: number;
+  actor?: string;
+  status?: string;
+}
+
+export interface RuntimeSummaryPendingWork {
+  text: string;
+  kind: 'interrupt' | 'waiting' | 'blocked' | 'review';
+}
+
+export interface RuntimeSummaryWarning {
+  text: string;
+  severity?: 'low' | 'medium' | 'high';
+}
+
+export interface RuntimeSummaryArtifact {
+  name: string;
+  type?: string;
+  sequence_num?: number;
+}
+
+export interface RuntimeSummaryInterrupt {
+  interrupt_id: string;
+  status: string;
+  reason?: string;
+  agent_id?: string;
+}
+
+export type OutputType =
+  | 'memory'
+  | 'artifact'
+  | 'tool'
+  | 'message'
+  | 'reflection'
+  | 'generated_file'
+  | 'patch';
+
+export interface ProducedOutput {
+  id: string;
+  source: string;
+  type: OutputType;
+  name: string;
+  value?: unknown;
+  sequence_num: number;
+  timestamp: string;
+}
+
+export interface RuntimeEventRef {
+  event_type: string;
+  sequence_num: number;
+  timestamp: string;
+  actor?: string;
+  object?: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface RuntimeFactWarning {
+  code: string;
+  message: string;
+  sequence_num: number;
+  severity?: 'low' | 'medium' | 'high';
+}
+
+export interface NodeProjectionFacts {
+  role?: string;
+  status: NodeStatus;
+  status_label: string;
+  produced_outputs: ProducedOutput[];
+  next_transition?: { target: string; kind: 'handoff' | 'delegation' };
+  pending?: string | null;
+  warnings: RuntimeFactWarning[];
+  requires_human: boolean;
+}
+
+export interface NodeProjectionGenerated {
+  projection_version: number;
+  prompt_version?: string;
+  model?: string;
+  source: 'deterministic' | 'llm';
+  generated_at: string;
+  current_understanding?: string;
+  highlights?: string[];
+  llm_warnings?: string[];
+  suggested_title?: string;
+}
+
+/** Per-node runtime state projection — facts separated from generated content. */
+export interface RuntimeNodeProjection {
+  projection_version: number;
+  mission_id: string;
+  branch_id: string;
+  sequence_num: number;
+  generated_at: string;
+  agent_id: string;
+  name: string;
+  node_type: NodeType;
+  facts: NodeProjectionFacts;
+  generated?: NodeProjectionGenerated;
+  recent_runtime_events: RuntimeEventRef[];
+}
+
+export interface NodeProjectionEnhancement {
+  current_understanding: string;
+  highlights?: string[];
+  llm_warnings?: string[];
+  suggested_title?: string;
+}
+
+export interface ProjectNodeStateInput {
+  mission_id: string;
+  branch_id: string;
+  agent_id: string;
+  events: MissionEventRecord[];
+  up_to_sequence_num?: number;
+}
+
+/** @deprecated Use RuntimeNodeProjection */
+export interface RuntimeAgentSummary {
+  agent_id: string;
+  name: string;
+  role?: string;
+  status: string;
+  headline: string;
+  objective?: string;
+  behavior: string;
+  recent_actions: string[];
+  pending?: string;
+}
+
+/**
+ * Operator-oriented runtime summary — a disposable projection over the event ledger.
+ * Not canonical state; rebuildable from EventEnvelope records at any time.
+ */
+export interface RuntimeSummary {
+  mission_id: string;
+  branch_id: string;
+  sequence_num: number;
+  generated_at: string;
+  objective: string;
+  status: string;
+  phase: string;
+  headline: string;
+  progress: RuntimeSummaryProgressEntry[];
+  observations: RuntimeSummaryObservation[];
+  decisions: RuntimeSummaryDecision[];
+  evidence: RuntimeSummaryEvidence[];
+  actions: RuntimeSummaryAction[];
+  pending_work: RuntimeSummaryPendingWork[];
+  warnings: RuntimeSummaryWarning[];
+  artifacts: RuntimeSummaryArtifact[];
+  interrupts: RuntimeSummaryInterrupt[];
+  agents: RuntimeNodeProjection[];
+  nodes?: RuntimeNodeProjection[];
+  is_blocked: boolean;
+  requires_human: boolean;
+  source: 'deterministic' | 'llm';
+  /** Optional LLM-enhanced narrative; projection-only, never authoritative. */
+  narrative?: string;
+}
+
+export interface ProjectRuntimeSummaryInput {
+  mission_id: string;
+  branch_id: string;
+  objective: string;
+  status: string;
+  phase: string;
+  events: MissionEventRecord[];
+  up_to_sequence_num?: number;
+}
+
 export interface InterruptRecord {
   id: string;
   mission_id: string;
@@ -129,6 +328,7 @@ export type RuntimeEventType =
   | 'review.rejected'
   | 'escalation'
   | 'memory.written'
+  | 'observation.recorded'
   | 'artifact.created'
   | 'artifact.updated'
   | 'interrupt.requested'

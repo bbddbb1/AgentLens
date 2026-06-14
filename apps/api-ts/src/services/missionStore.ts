@@ -16,6 +16,8 @@ import {
   type ReplayBranch,
   type ReplayStateResponse,
   type MissionAuditEventResponse,
+  type RuntimeSummary,
+  type RuntimeNodeProjection,
 } from '@agentlens/protocol';
 import { BuiltInRules, PolicyEngine } from './policyEngine.js';
 
@@ -37,6 +39,7 @@ import type { Mission, MissionAggregate, MissionAgent, SemanticSummaryResult } f
 import { pool } from '../db/postgres.js';
 import type { PoolClient } from 'pg';
 import { generateMissionSummary, generateWhyThisState, type WhyThisStateContext } from './semantic.js';
+import { buildRuntimeSummary, buildRuntimeSummaryWithOptionalLlm, buildNodeProjection, enhanceNodeProjectionWithLlm, isNodeProjectionCacheValid } from './runtimeSummary.js';
 import {
   ROOT_BRANCH_ID,
   buildBranchLineage,
@@ -1058,6 +1061,155 @@ class MissionStore {
     } finally {
       client.release();
     }
+  }
+
+  async getRuntimeSummary(
+    missionId: string,
+    branchId = ROOT_BRANCH_ID,
+    upToSequenceNum?: number,
+    useLlm = false,
+  ): Promise<RuntimeSummary | null> {
+    const mission = await this.getMission(missionId);
+    if (!mission) return null;
+
+    const replay = await this.getReplayFromTelemetry(missionId, branchId);
+    if (!replay) return null;
+
+    const input = {
+      mission_id: missionId,
+      branch_id: branchId,
+      objective: mission.objective,
+      status: replay.current_state?.status ?? mission.status,
+      phase: replay.current_state?.phase ?? mission.phase,
+      events: replay.events,
+      up_to_sequence_num: upToSequenceNum,
+    };
+
+    return buildRuntimeSummaryWithOptionalLlm(input, useLlm);
+  }
+
+  async getNodeProjection(
+    missionId: string,
+    agentId: string,
+    branchId = ROOT_BRANCH_ID,
+    upToSequenceNum?: number,
+  ): Promise<RuntimeNodeProjection | null> {
+    const mission = await this.getMission(missionId);
+    if (!mission) return null;
+
+    const replay = await this.getReplayFromTelemetry(missionId, branchId);
+    if (!replay) return null;
+
+    return buildNodeProjection({
+      mission_id: missionId,
+      branch_id: branchId,
+      agent_id: agentId,
+      events: replay.events,
+      up_to_sequence_num: upToSequenceNum,
+    });
+  }
+
+  async getCachedNodeProjectionEnhancement(
+    missionId: string,
+    agentId: string,
+    sequenceNum: number,
+    branchId = ROOT_BRANCH_ID,
+  ): Promise<RuntimeNodeProjection | null> {
+    const cacheKey = `${agentId}:${sequenceNum}`;
+    const result = await pool.query(
+      `
+        SELECT summary, conflicts
+        FROM semantic_summaries
+        WHERE mission_id = $1 AND branch_id = $2 AND level = 'node_projection' AND span_id = $3
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [missionId, branchId, cacheKey],
+    );
+    const row = result.rows[0] as { summary?: string; conflicts?: unknown } | undefined;
+    if (!row?.summary) return null;
+
+    try {
+      const parsed = JSON.parse(row.summary) as RuntimeNodeProjection;
+      const meta = (row.conflicts ?? {}) as { projection_version?: number; prompt_version?: string };
+      if (!isNodeProjectionCacheValid(meta)) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async cacheNodeProjectionEnhancement(
+    missionId: string,
+    agentId: string,
+    projection: RuntimeNodeProjection,
+    branchId = ROOT_BRANCH_ID,
+  ): Promise<void> {
+    const cacheKey = `${agentId}:${projection.sequence_num}`;
+    await pool.query(
+      `
+        INSERT INTO semantic_summaries (id, mission_id, branch_id, span_id, level, summary, conflicts, anomalies)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+      `,
+      [
+        randomUUID(),
+        missionId,
+        branchId,
+        cacheKey,
+        'node_projection',
+        JSON.stringify(projection),
+        JSON.stringify({
+          projection_version: projection.generated?.projection_version,
+          prompt_version: projection.generated?.prompt_version,
+        }),
+        JSON.stringify([]),
+      ],
+    );
+  }
+
+  async enhanceNodeProjection(
+    missionId: string,
+    agentId: string,
+    branchId = ROOT_BRANCH_ID,
+    upToSequenceNum?: number,
+  ): Promise<RuntimeNodeProjection | null> {
+    const projection = await this.getNodeProjection(missionId, agentId, branchId, upToSequenceNum);
+    if (!projection) return null;
+
+    const cached = await this.getCachedNodeProjectionEnhancement(
+      missionId,
+      agentId,
+      projection.sequence_num,
+      branchId,
+    );
+    if (cached?.generated?.source === 'llm') {
+      return { ...projection, generated: cached.generated };
+    }
+
+    const enhanced = await enhanceNodeProjectionWithLlm(projection);
+    await this.cacheNodeProjectionEnhancement(missionId, agentId, enhanced, branchId);
+    return enhanced;
+  }
+
+  async scheduleNodeProjectionEnhancements(
+    missionId: string,
+    branchId = ROOT_BRANCH_ID,
+  ): Promise<void> {
+    const summary = await this.getRuntimeSummary(missionId, branchId);
+    if (!summary?.agents?.length) return;
+
+    await Promise.allSettled(
+      summary.agents.map(async (agent) => {
+        const cached = await this.getCachedNodeProjectionEnhancement(
+          missionId,
+          agent.agent_id,
+          agent.sequence_num,
+          branchId,
+        );
+        if (cached?.generated?.source === 'llm') return;
+        await this.enhanceNodeProjection(missionId, agent.agent_id, branchId, agent.sequence_num);
+      }),
+    );
   }
 
   async generateSummary(missionId: string, branchId = ROOT_BRANCH_ID): Promise<SemanticSummaryResult | null> {

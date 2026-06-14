@@ -16,7 +16,7 @@ import {
   Telescope,
   XCircle,
 } from 'lucide-react';
-import type { MissionEventRecord, ReplayBranch, ReplayStateResponse, RuntimeState } from '@agentlens/protocol';
+import type { MissionEventRecord, ReplayBranch, ReplayStateResponse, RuntimeState, RuntimeSummary } from '@agentlens/protocol';
 import { AiAssistant } from '@/components/ai/AiAssistant';
 import { CanvasToolbar } from '@/components/graph/CanvasToolbar';
 import { MissionGraph } from '@/components/graph/MissionGraph';
@@ -24,6 +24,7 @@ import { BranchExplorer } from '@/components/replay/BranchExplorer';
 import { ReplayControls } from '@/components/replay/ReplayControls';
 import { RightSidebar } from '@/components/layout/RightSidebar';
 import { MissionTimeline } from '@/components/timeline/MissionTimeline';
+import { RuntimeSummaryPanel } from '@/components/runtime/RuntimeSummaryPanel';
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { useLayoutStore } from '@/stores/layoutStore';
@@ -365,6 +366,8 @@ export default function MissionWorkspacePage() {
   const [isBranchExplorerCollapsed, setIsBranchExplorerCollapsed] = useState(false);
   const [mission, setMission] = useState<Mission | null>(null);
   const [missionLoadError, setMissionLoadError] = useState<string | null>(null);
+  const [runtimeSummary, setRuntimeSummary] = useState<RuntimeSummary | null>(null);
+  const [isEnhancingSummary, setIsEnhancingSummary] = useState(false);
   const params = useParams<{ id?: string }>();
   const missionId = Array.isArray(params?.id) ? params.id[0] : params?.id ?? 'demo-mission';
 
@@ -413,6 +416,15 @@ export default function MissionWorkspacePage() {
     setMission(missionData);
     setMissionLoadError(null);
     syncReplayToGraph(replay);
+
+    if (missionId !== 'demo-mission') {
+      try {
+        const summary = await api.runtimeSummary.get(missionId, { branchId: branchId ?? replay.branch_id });
+        setRuntimeSummary(summary);
+      } catch {
+        setRuntimeSummary(null);
+      }
+    }
   }, [missionId, syncReplayToGraph]);
 
   useEffect(() => {
@@ -456,8 +468,13 @@ export default function MissionWorkspacePage() {
         
         const reloadTypes = [
           'graph.snapshot.created', 'interrupt.created', 'interrupt.decided', 'interrupt.resumed',
-          'branch.sandbox.queued', 'branch.sandbox.started', 'branch.sandbox.completed', 'branch.sandbox.failed', 'branch.sandbox.timeout'
+          'branch.sandbox.queued', 'branch.sandbox.started', 'branch.sandbox.completed', 'branch.sandbox.failed', 'branch.sandbox.timeout',
+          'runtime.summary.updated',
         ];
+        
+        if (message.type === 'runtime.summary.updated' && message.runtime_summary) {
+          setRuntimeSummary(message.runtime_summary as RuntimeSummary);
+        }
         
         if (reloadTypes.includes(message.type)) {
           const msgBranchId = message.branch?.id || message.snapshot?.branch_id || message.interrupt?.branch_id || message.job?.branch_id;
@@ -472,6 +489,17 @@ export default function MissionWorkspacePage() {
 
     return () => ws.close();
   }, [currentBranchId, loadReplay, missionId]);
+
+  const handleEnhanceSummary = useCallback(async () => {
+    if (!missionId || missionId === 'demo-mission') return;
+    setIsEnhancingSummary(true);
+    try {
+      const enhanced = await api.runtimeSummary.enhance(missionId, currentBranchId ?? undefined);
+      setRuntimeSummary(enhanced);
+    } finally {
+      setIsEnhancingSummary(false);
+    }
+  }, [missionId, currentBranchId]);
 
   const currentSnapshot = snapshots[currentFrame] ?? snapshots[snapshots.length - 1] ?? null;
   const missionStatus = mission?.status ?? currentState?.status ?? 'active';
@@ -529,7 +557,22 @@ export default function MissionWorkspacePage() {
       </header>
 
       <WorkspaceShell
-        leftPanel={<MissionTimeline />}
+        leftPanel={
+          <div className="flex flex-col h-full min-h-0">
+            <RuntimeSummaryPanel
+              missionId={missionId}
+              objective={mission?.objective ?? 'Mission overview'}
+              missionStatus={missionStatus}
+              missionPhase={currentState?.phase ?? mission?.phase ?? 'executing'}
+              serverSummary={runtimeSummary}
+              onEnhance={missionId !== 'demo-mission' ? handleEnhanceSummary : undefined}
+              isEnhancing={isEnhancingSummary}
+            />
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <MissionTimeline />
+            </div>
+          </div>
+        }
         centerPanel={
           <div className="relative flex-1 overflow-hidden">
             <CanvasToolbar

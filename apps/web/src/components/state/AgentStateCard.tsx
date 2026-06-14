@@ -13,11 +13,12 @@ const statusIcons: Record<string, React.ReactNode> = {
 
 interface AgentStateCardProps {
   agent: RuntimeAgentState;
+  behavior?: string;
   isSelected?: boolean;
   onClick?: () => void;
 }
 
-export function AgentStateCard({ agent, isSelected, onClick }: AgentStateCardProps) {
+export function AgentStateCard({ agent, behavior, isSelected, onClick }: AgentStateCardProps) {
   const status = agent.status || 'idle';
   const confidence = agent.confidence;
 
@@ -42,6 +43,12 @@ export function AgentStateCard({ agent, isSelected, onClick }: AgentStateCardPro
           <div className="text-[10px] text-[#5d6180] truncate mt-0.5">
             {agent.role} {agent.team ? `• ${agent.team}` : ''}
           </div>
+
+          {(behavior || agent.summary) && (
+            <div className="mt-2 text-[10px] text-[#9498b0] leading-relaxed line-clamp-2 italic">
+              {behavior ?? agent.summary}
+            </div>
+          )}
           
           {agent.current_task_id && (
             <div className="mt-2 text-[10px] text-[#cfd3e6] truncate">

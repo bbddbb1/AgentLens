@@ -21,6 +21,7 @@ export const AgentAttributes = {
   ESCALATION_TARGET: 'agent.escalation.target',
   ESCALATION_REASON: 'agent.escalation.reason',
   MEMORY_KEY: 'agent.memory.key',
+  MEMORY_VALUE: 'agent.memory.value',
   MEMORY_OPERATION: 'agent.memory.operation',
   TOOL_NAME: 'agent.tool.name',
   TOOL_INPUT: 'agent.tool.input',

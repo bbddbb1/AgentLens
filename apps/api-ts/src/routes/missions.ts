@@ -144,6 +144,17 @@ missionsRouter.post('/api/v1/ingest/otlp', async (req, res) => {
   );
   if (!ingestResult) return res.status(400).json({ detail: 'No spans accepted' });
 
+  const branchId = parsed.data.branch_id;
+  const missionId = parsed.data.mission_id;
+  if (missionId) {
+    void missionStore.getRuntimeSummary(missionId, branchId).then((runtimeSummary) => {
+      if (runtimeSummary) {
+        void publishMissionEvent(missionId, 'runtime.summary.updated', { runtime_summary: runtimeSummary });
+      }
+    }).catch(() => undefined);
+    void missionStore.scheduleNodeProjectionEnhancements(missionId, branchId).catch(() => undefined);
+  }
+
   return res.status(202).json({ accepted: parsed.data.spans.length, mission_id: parsed.data.mission_id });
 });
 
@@ -163,6 +174,17 @@ missionsRouter.post('/v1/traces', async (req, res) => {
     parsed.data.batch_id,
   );
   if (!ingestResult) return res.status(400).json({ partialSuccess: { rejectedSpans: parsed.data.spans.length, errorMessage: 'No spans accepted' } });
+
+  const branchId = parsed.data.branch_id;
+  const missionId = parsed.data.mission_id;
+  if (missionId) {
+    void missionStore.getRuntimeSummary(missionId, branchId).then((runtimeSummary) => {
+      if (runtimeSummary) {
+        void publishMissionEvent(missionId, 'runtime.summary.updated', { runtime_summary: runtimeSummary });
+      }
+    }).catch(() => undefined);
+    void missionStore.scheduleNodeProjectionEnhancements(missionId, branchId).catch(() => undefined);
+  }
 
   return res.status(202).json({ partialSuccess: { rejectedSpans: 0 } });
 });

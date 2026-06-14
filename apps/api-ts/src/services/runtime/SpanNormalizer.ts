@@ -27,6 +27,7 @@ export const ATTR = {
   ESCALATION_TARGET: AgentAttributes.ESCALATION_TARGET,
   ESCALATION_REASON: AgentAttributes.ESCALATION_REASON,
   MEMORY_KEY: AgentAttributes.MEMORY_KEY,
+  MEMORY_VALUE: AgentAttributes.MEMORY_VALUE,
   INTERRUPT_ID: AgentAttributes.INTERRUPT_ID,
   INTERRUPT_REASON: AgentAttributes.INTERRUPT_REASON,
   INTERRUPT_RESUME_URL: AgentAttributes.INTERRUPT_RESUME_URL,
@@ -56,6 +57,7 @@ export const EVENT_PRIORITY: Record<string, number> = {
   'review.rejected': 40,
   'escalation': 50,
   'memory.written': 50,
+  'observation.recorded': 50,
   'artifact.created': 50,
   'artifact.updated': 50,
   'interrupt.requested': 60,
@@ -409,6 +411,17 @@ export function normalizeSpansToMissionEvents(
           payload: {
             agent_id: agentId,
             memory_key: attr(eventAttrs, ATTR.MEMORY_KEY) ?? 'shared_memory',
+            value: attr(eventAttrs, ATTR.MEMORY_VALUE),
+            memory_value: attr(eventAttrs, ATTR.MEMORY_VALUE),
+          },
+        }, eventAttrs);
+      } else if (eventName === AgentEvents.REFLECTION) {
+        pushEvent({
+          ...common,
+          event_type: 'observation.recorded',
+          payload: {
+            agent_id: agentId,
+            insight: attr(eventAttrs, 'reflection.insight'),
           },
         }, eventAttrs);
       } else if (eventName === AgentEvents.ARTIFACT_CREATED) {
@@ -502,6 +515,7 @@ export function normalizeSpansToMissionEvents(
           agent_id: agentId,
           tool_name: toolName,
           tool_id: `tool-${span.span_id.slice(0, 8)}`,
+          tool_output: attr(attrs, ATTR.TOOL_OUTPUT),
         },
       });
     }

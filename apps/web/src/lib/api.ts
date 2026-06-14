@@ -10,6 +10,8 @@ import type {
   ReplayBranch,
   ReplayStateResponse,
   SemanticSummaryResult,
+  RuntimeSummary,
+  RuntimeNodeProjection,
   AuditIntegrityReport,
   MissionAuditEventResponse,
 } from '@agentlens/protocol';
@@ -163,6 +165,40 @@ export const api = {
       pendingInterrupts: number;
     }) =>
       request<SemanticSummaryResult>('/api/why-this-state', { method: 'POST', body: JSON.stringify(data) }),
+  },
+
+  runtimeSummary: {
+    get: (missionId: string, options?: { branchId?: string; sequenceNum?: number; enhance?: boolean }) => {
+      const params = new URLSearchParams();
+      if (options?.branchId) params.append('branch_id', options.branchId);
+      if (options?.sequenceNum !== undefined) params.append('sequence_num', String(options.sequenceNum));
+      if (options?.enhance) params.append('enhance', 'true');
+      const query = params.toString();
+      return request<RuntimeSummary>(`/api/v1/missions/${missionId}/runtime-summary${query ? `?${query}` : ''}`);
+    },
+
+    enhance: (missionId: string, branchId?: string) => {
+      const query = branchId ? `?branch_id=${branchId}` : '';
+      return request<RuntimeSummary>(`/api/v1/missions/${missionId}/runtime-summary/enhance${query}`, { method: 'POST' });
+    },
+  },
+
+  nodeProjection: {
+    get: (missionId: string, agentId: string, options?: { branchId?: string; sequenceNum?: number }) => {
+      const params = new URLSearchParams();
+      if (options?.branchId) params.append('branch_id', options.branchId);
+      if (options?.sequenceNum !== undefined) params.append('sequence_num', String(options.sequenceNum));
+      const query = params.toString();
+      return request<RuntimeNodeProjection>(`/api/v1/missions/${missionId}/nodes/${agentId}/projection${query ? `?${query}` : ''}`);
+    },
+
+    enhance: (missionId: string, agentId: string, options?: { branchId?: string; sequenceNum?: number }) => {
+      const params = new URLSearchParams();
+      if (options?.branchId) params.append('branch_id', options.branchId);
+      if (options?.sequenceNum !== undefined) params.append('sequence_num', String(options.sequenceNum));
+      const query = params.toString();
+      return request<RuntimeNodeProjection>(`/api/v1/missions/${missionId}/nodes/${agentId}/projection/enhance${query ? `?${query}` : ''}`, { method: 'POST' });
+    },
   },
 
   ingest: {

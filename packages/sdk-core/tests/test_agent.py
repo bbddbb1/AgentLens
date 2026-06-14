@@ -160,12 +160,13 @@ class TestAgentInstrumentor:
         assert call_args[0][1]["agent.tool.name"] == "web_search"
         assert call_args[0][1]["agent.tool.status"] == "success"
 
-    def test_record_tool_call_truncates_input(self):
+    def test_record_tool_call_preserves_full_input(self):
         agent, _, span = self._make_agent()
         agent.__enter__()
-        agent.record_tool_call("big_tool", "x" * 2000, None)
+        long_input = "x" * 2000
+        agent.record_tool_call("big_tool", long_input, None)
         call_args = span.add_event.call_args
-        assert len(call_args[0][1]["agent.tool.input"]) <= 1000
+        assert call_args[0][1]["agent.tool.input"] == long_input
 
     def test_record_tool_call_with_error_status(self):
         agent, _, span = self._make_agent()
