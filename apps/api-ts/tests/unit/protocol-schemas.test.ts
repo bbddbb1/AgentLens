@@ -19,7 +19,7 @@ import {
 
 describe('AttributeMapSchema', () => {
   it('accepts valid attribute maps', () => {
-    expect(AttributeMapSchema.safeParse({ 'agent.id': 'agent-1', count: 42 }).success).toBe(true);
+    expect(AttributeMapSchema.safeParse({ 'gen_ai.agent.id': 'agent-1', count: 42 }).success).toBe(true);
     expect(AttributeMapSchema.safeParse({}).success).toBe(true);
     expect(AttributeMapSchema.safeParse({ tags: ['a', 'b'], score: 0.95, ok: true }).success).toBe(true);
   });

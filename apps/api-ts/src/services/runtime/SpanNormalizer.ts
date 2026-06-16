@@ -1,4 +1,4 @@
-import { AgentAttributes, AgentEvents, AgentSpanKind, OtlpSpan } from '@agentlens/protocol';
+import { AgentAttributes, AgentEvents, AgentSpanKind, MissionAttributes, OtlpSpan } from '@agentlens/protocol';
 import { ROOT_BRANCH_ID, PendingMissionEvent } from './types.js';
 import { attr, asNumber, nanoToIso, compareTimestamp } from './utils.js';
 
@@ -79,7 +79,7 @@ export function enrichEnvelopeFields(
   const attrs = span.attributes ?? {};
   
   // 1. Origin Framework
-  const origin_framework = attr(attrs, 'agent.framework') ?? attr(attrs, 'mission.framework') ?? undefined;
+  const origin_framework = attr(attrs, AgentAttributes.FRAMEWORK) ?? attr(attrs, MissionAttributes.FRAMEWORK) ?? attr(attrs, 'agent.framework') ?? attr(attrs, 'mission.framework') ?? undefined;
 
   // 2. LLM Model Provenance
   const provider = attr(attrs, 'gen_ai.system');
@@ -116,10 +116,13 @@ export function enrichEnvelopeFields(
   } : undefined;
 
   // 4. Causal Context
-  const causal = (span.parent_span_id || attr(attrs, 'agent.tool.id') || attr(attrs, 'agent.interrupt.id') || (eventAttrs && attr(eventAttrs, 'agent.interrupt.id'))) ? {
+  const toolCallId = attr(attrs, 'gen_ai.tool.id') ?? attr(attrs, 'agent.tool.id') ?? undefined;
+  const decisionForEventId = attr(attrs, AgentAttributes.INTERRUPT_ID) ?? attr(attrs, 'agent.interrupt.id') ?? (eventAttrs ? (attr(eventAttrs, AgentAttributes.INTERRUPT_ID) ?? attr(eventAttrs, 'agent.interrupt.id')) : undefined) ?? undefined;
+
+  const causal = (span.parent_span_id || toolCallId || decisionForEventId) ? {
     parent_span_id: span.parent_span_id ?? undefined,
-    tool_call_id: attr(attrs, 'agent.tool.id') ?? undefined,
-    decision_for_event_id: attr(attrs, 'agent.interrupt.id') ?? (eventAttrs ? attr(eventAttrs, 'agent.interrupt.id') : undefined) ?? undefined,
+    tool_call_id: toolCallId,
+    decision_for_event_id: decisionForEventId,
   } : undefined;
 
   // 5. Actor type and ID
@@ -129,10 +132,10 @@ export function enrichEnvelopeFields(
   const eventType = event.event_type;
   if (['tool.called', 'tool.completed', 'tool.failed'].includes(eventType)) {
     actor_type = 'tool';
-    actor_id = attr(attrs, 'agent.tool.name') ?? attr(eventAttrs ?? {}, 'agent.tool.name') ?? (event.payload?.tool_name as string) ?? undefined;
+    actor_id = attr(attrs, AgentAttributes.TOOL_NAME) ?? attr(eventAttrs ?? {}, AgentAttributes.TOOL_NAME) ?? attr(attrs, 'agent.tool.name') ?? attr(eventAttrs ?? {}, 'agent.tool.name') ?? (event.payload?.tool_name as string) ?? undefined;
   } else if (['interrupt.decision'].includes(eventType)) {
     actor_type = 'human';
-    actor_id = attr(eventAttrs ?? {}, 'agent.human.id') ?? (event.payload?.agent_id as string) ?? undefined;
+    actor_id = attr(eventAttrs ?? {}, 'gen_ai.agent.human.id') ?? attr(eventAttrs ?? {}, 'agent.human.id') ?? (event.payload?.agent_id as string) ?? undefined;
   } else if (event.payload?.policy) {
     actor_type = 'policy';
     actor_id = (event.payload.policy as any)?.rule_id ?? undefined;

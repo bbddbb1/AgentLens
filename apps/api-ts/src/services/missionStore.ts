@@ -1470,7 +1470,7 @@ class MissionStore {
       // Auto-resume if approved
       if (interrupt && input.decision === 'approve') {
         const resumeToken = (interrupt.payload as Record<string, unknown>)?.attributes as Record<string, unknown> | undefined;
-        const token = resumeToken?.['agent.resume.token'] as string | undefined;
+        const token = (resumeToken?.[AgentAttributes.RESUME_TOKEN] ?? resumeToken?.['agent.resume.token']) as string | undefined;
         if (token) {
           await this.resumeInterruptByToken(token, input.payload ?? {});
         }

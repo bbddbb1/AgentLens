@@ -143,6 +143,21 @@ export async function initializeDatabase(): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS mission_replay_branches (
+      id VARCHAR(255) NOT NULL,
+      mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL,
+      parent_branch_id VARCHAR(255) NULL,
+      forked_from_sequence_num INTEGER NULL,
+      status VARCHAR(50) NOT NULL DEFAULT 'active',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (mission_id, id)
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS branch_sandbox_jobs (
       id UUID PRIMARY KEY,
       branch_id VARCHAR(255) NOT NULL,
@@ -224,21 +239,6 @@ export async function initializeDatabase(): Promise<void> {
   await pool.query(`
     ALTER TABLE semantic_summaries ADD COLUMN IF NOT EXISTS branch_id VARCHAR(255) NOT NULL DEFAULT 'main';
   `).catch(() => {});
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS mission_replay_branches (
-      id VARCHAR(255) NOT NULL,
-      mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
-      name VARCHAR(255) NOT NULL,
-      parent_branch_id VARCHAR(255) NULL,
-      forked_from_sequence_num INTEGER NULL,
-      status VARCHAR(50) NOT NULL DEFAULT 'active',
-      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (mission_id, id)
-    )
-  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS mission_events (

@@ -812,12 +812,12 @@ describe('normalizeSpansToMissionEvents', () => {
     const events = normalizeSpansToMissionEvents('m1', [{
       ...baseSpan,
       attributes: {
-        'agent.id': 'researcher',
-        'agent.name': 'Researcher',
-        'agent.role': 'researcher',
-        'agent.span.kind': 'agent.tool.call',
-        'agent.tool.name': 'web_search',
-        'agent.tool.input': '{"query":"AI safety"}',
+        'gen_ai.agent.id': 'researcher',
+        'gen_ai.agent.name': 'Researcher',
+        'gen_ai.agent.role': 'researcher',
+        'agent.span.kind': 'execute_tool',
+        'gen_ai.tool.name': 'web_search',
+        'gen_ai.tool.input': '{"query":"AI safety"}',
       },
     }]);
 
@@ -832,9 +832,9 @@ describe('normalizeSpansToMissionEvents', () => {
       ...baseSpan,
       status_code: 'ERROR',
       attributes: {
-        'agent.id': 'researcher',
-        'agent.span.kind': 'agent.tool.call',
-        'agent.tool.name': 'broken_tool',
+        'gen_ai.agent.id': 'researcher',
+        'agent.span.kind': 'execute_tool',
+        'gen_ai.tool.name': 'broken_tool',
       },
     }]);
 
@@ -845,13 +845,13 @@ describe('normalizeSpansToMissionEvents', () => {
   it('normalizes delegation event on span', () => {
     const events = normalizeSpansToMissionEvents('m1', [{
       ...baseSpan,
-      attributes: { 'agent.id': 'planner', 'agent.span.kind': 'agent.task' },
+      attributes: { 'gen_ai.agent.id': 'planner', 'agent.span.kind': 'invoke_agent' },
       events: [{
         name: 'agent.delegation',
         timestamp: 1_500_000_000,
         attributes: {
-          'agent.delegation.target': 'researcher',
-          'agent.delegation.reason': 'Gather data',
+          'gen_ai.agent.delegation.target': 'researcher',
+          'gen_ai.agent.delegation.reason': 'Gather data',
         },
       }],
     }]);
@@ -863,13 +863,13 @@ describe('normalizeSpansToMissionEvents', () => {
   it('normalizes critique event', () => {
     const events = normalizeSpansToMissionEvents('m1', [{
       ...baseSpan,
-      attributes: { 'agent.id': 'critic', 'agent.span.kind': 'agent.task' },
+      attributes: { 'gen_ai.agent.id': 'critic', 'agent.span.kind': 'invoke_agent' },
       events: [{
         name: 'agent.critique',
         timestamp: 1_500_000_000,
         attributes: {
-          'agent.critique.target': 'writer',
-          'agent.critique.result': 'needs more detail',
+          'gen_ai.agent.critique.target': 'writer',
+          'gen_ai.agent.critique.result': 'needs more detail',
         },
       }],
     }]);
@@ -881,7 +881,7 @@ describe('normalizeSpansToMissionEvents', () => {
   it('normalizes review events', () => {
     const events = normalizeSpansToMissionEvents('m1', [{
       ...baseSpan,
-      attributes: { 'agent.id': 'reviewer', 'agent.span.kind': 'agent.task' },
+      attributes: { 'gen_ai.agent.id': 'reviewer', 'agent.span.kind': 'invoke_agent' },
       events: [
         { name: 'agent.review', timestamp: 1_500_000_000, attributes: { 'agent.review.target': 'writer', 'agent.review.result': 'good' } },
         { name: 'agent.review.approved', timestamp: 1_600_000_000, attributes: { 'agent.review.target': 'writer' } },
@@ -896,7 +896,7 @@ describe('normalizeSpansToMissionEvents', () => {
   it('normalizes escalation event', () => {
     const events = normalizeSpansToMissionEvents('m1', [{
       ...baseSpan,
-      attributes: { 'agent.id': 'bot', 'agent.span.kind': 'agent.task' },
+      attributes: { 'gen_ai.agent.id': 'bot', 'agent.span.kind': 'invoke_agent' },
       events: [{
         name: 'agent.escalation',
         timestamp: 1_500_000_000,
@@ -911,7 +911,7 @@ describe('normalizeSpansToMissionEvents', () => {
   it('normalizes memory.write event', () => {
     const events = normalizeSpansToMissionEvents('m1', [{
       ...baseSpan,
-      attributes: { 'agent.id': 'writer', 'agent.span.kind': 'agent.task' },
+      attributes: { 'gen_ai.agent.id': 'writer', 'agent.span.kind': 'invoke_agent' },
       events: [{
         name: 'agent.memory.write',
         timestamp: 1_500_000_000,
@@ -925,7 +925,7 @@ describe('normalizeSpansToMissionEvents', () => {
   it('normalizes artifact events', () => {
     const events = normalizeSpansToMissionEvents('m1', [{
       ...baseSpan,
-      attributes: { 'agent.id': 'writer', 'agent.span.kind': 'agent.task' },
+      attributes: { 'gen_ai.agent.id': 'writer', 'agent.span.kind': 'invoke_agent' },
       events: [
         { name: 'agent.artifact.created', timestamp: 1_500_000_000, attributes: { 'artifact.name': 'report.pdf', 'artifact.type': 'pdf' } },
       ],
@@ -937,15 +937,15 @@ describe('normalizeSpansToMissionEvents', () => {
   it('normalizes interrupt events', () => {
     const events = normalizeSpansToMissionEvents('m1', [{
       ...baseSpan,
-      attributes: { 'agent.id': 'writer', 'agent.span.kind': 'agent.task' },
+      attributes: { 'gen_ai.agent.id': 'writer', 'agent.span.kind': 'invoke_agent' },
       events: [
         {
           name: 'agent.interrupt.requested',
           timestamp: 1_500_000_000,
           attributes: {
-            'agent.interrupt.id': 'int-1',
-            'agent.interrupt.reason': 'Need approval',
-            'agent.interrupt.resume_url': 'http://resume',
+            'gen_ai.agent.interrupt.id': 'int-1',
+            'gen_ai.agent.interrupt.reason': 'Need approval',
+            'gen_ai.agent.interrupt.resume_url': 'http://resume',
           },
         },
       ],
@@ -962,14 +962,14 @@ describe('normalizeSpansToMissionEvents', () => {
       span_id: 'span-1',
       start_time_unix_nano: 1_000_000_000,
       end_time_unix_nano: 3_000_000_000,
-      attributes: { 'agent.id': 'a1', 'agent.span.kind': 'agent.task', 'agent.task': 'Task 1' },
+      attributes: { 'gen_ai.agent.id': 'a1', 'agent.span.kind': 'invoke_agent', 'gen_ai.agent.task': 'Task 1' },
     };
     const span2: OtlpSpan = {
       ...baseSpan,
       span_id: 'span-2',
       start_time_unix_nano: 2_000_000_000,
       end_time_unix_nano: 4_000_000_000,
-      attributes: { 'agent.id': 'a2', 'agent.span.kind': 'agent.task', 'agent.task': 'Task 2' },
+      attributes: { 'gen_ai.agent.id': 'a2', 'agent.span.kind': 'invoke_agent', 'gen_ai.agent.task': 'Task 2' },
     };
 
     const events = normalizeSpansToMissionEvents('m1', [span2, span1]);
@@ -987,12 +987,12 @@ describe('normalizeSpansToMissionEvents', () => {
       {
         ...baseSpan,
         span_id: 'span-1',
-        attributes: { 'agent.id': 'a1', 'agent.name': 'Agent 1', 'agent.span.kind': 'agent.task', 'agent.task': 'Task 1' },
+        attributes: { 'gen_ai.agent.id': 'a1', 'gen_ai.agent.name': 'Agent 1', 'agent.span.kind': 'invoke_agent', 'gen_ai.agent.task': 'Task 1' },
       },
       {
         ...baseSpan,
         span_id: 'span-2',
-        attributes: { 'agent.id': 'a1', 'agent.name': 'Agent 1', 'agent.span.kind': 'agent.task', 'agent.task': 'Task 2' },
+        attributes: { 'gen_ai.agent.id': 'a1', 'gen_ai.agent.name': 'Agent 1', 'agent.span.kind': 'invoke_agent', 'gen_ai.agent.task': 'Task 2' },
       },
     ]);
 

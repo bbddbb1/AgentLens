@@ -30,13 +30,13 @@ describe('buildGraphSnapshot', () => {
     const snapshot = buildGraphSnapshot([
       span({
         attributes: {
-          'agent.id': 'agent-1',
-          'agent.name': 'Researcher',
-          'agent.role': 'researcher',
-          'agent.team': 'research-team',
-          'agent.goal': 'Find relevant papers',
-          'agent.confidence': '0.85',
-          'agent.framework': 'langgraph',
+          'gen_ai.agent.id': 'agent-1',
+          'gen_ai.agent.name': 'Researcher',
+          'gen_ai.agent.role': 'researcher',
+          'gen_ai.agent.team': 'research-team',
+          'gen_ai.agent.goal': 'Find relevant papers',
+          'gen_ai.agent.confidence': '0.85',
+          'gen_ai.agent.framework': 'langgraph',
         },
       }),
     ], 'm1');
@@ -53,7 +53,7 @@ describe('buildGraphSnapshot', () => {
 
   it('defaults agent label to id when name missing', () => {
     const snapshot = buildGraphSnapshot([
-      span({ attributes: { 'agent.id': 'bot-1' } }),
+      span({ attributes: { 'gen_ai.agent.id': 'bot-1' } }),
     ], 'm1');
 
     // When agent.id is provided as the label, it uses agentId as label
@@ -65,9 +65,9 @@ describe('buildGraphSnapshot', () => {
     const snapshot = buildGraphSnapshot([
       span({
         attributes: {
-          'agent.id': 'writer',
-          'agent.span.kind': 'agent.task',
-          'agent.task': 'Draft the executive summary',
+          'gen_ai.agent.id': 'writer',
+          'agent.span.kind': 'invoke_agent',
+          'gen_ai.agent.task': 'Draft the executive summary',
         },
       }),
     ], 'm1');
@@ -89,9 +89,9 @@ describe('buildGraphSnapshot', () => {
         span_id: 'span-err',
         status_code: 'ERROR',
         attributes: {
-          'agent.id': 'bot',
-          'agent.span.kind': 'agent.task',
-          'agent.task': 'Failed work',
+          'gen_ai.agent.id': 'bot',
+          'agent.span.kind': 'invoke_agent',
+          'gen_ai.agent.task': 'Failed work',
         },
       }),
     ], 'm1');
@@ -105,9 +105,9 @@ describe('buildGraphSnapshot', () => {
     const snapshot = buildGraphSnapshot([
       span({
         attributes: {
-          'agent.id': 'researcher',
-          'agent.span.kind': 'agent.tool.call',
-          'agent.tool.name': 'web_search',
+          'gen_ai.agent.id': 'researcher',
+          'agent.span.kind': 'execute_tool',
+          'gen_ai.tool.name': 'web_search',
         },
       }),
     ], 'm1');
@@ -125,11 +125,11 @@ describe('buildGraphSnapshot', () => {
     const snapshot = buildGraphSnapshot([
       span({
         span_id: 's1',
-        attributes: { 'agent.id': 'r', 'agent.span.kind': 'agent.tool.call', 'agent.tool.name': 'web_search' },
+        attributes: { 'gen_ai.agent.id': 'r', 'agent.span.kind': 'execute_tool', 'gen_ai.tool.name': 'web_search' },
       }),
       span({
         span_id: 's2',
-        attributes: { 'agent.id': 'r', 'agent.span.kind': 'agent.tool.call', 'agent.tool.name': 'web_search' },
+        attributes: { 'gen_ai.agent.id': 'r', 'agent.span.kind': 'execute_tool', 'gen_ai.tool.name': 'web_search' },
       }),
     ], 'm1');
 
@@ -141,13 +141,13 @@ describe('buildGraphSnapshot', () => {
   it('creates delegation edges from span events', () => {
     const snapshot = buildGraphSnapshot([
       span({
-        attributes: { 'agent.id': 'planner' },
+        attributes: { 'gen_ai.agent.id': 'planner' },
         events: [{
           name: 'agent.delegation',
           timestamp: 1_500_000_000,
           attributes: {
-            'agent.delegation.target': 'researcher',
-            'agent.delegation.reason': 'Gather data',
+            'gen_ai.agent.delegation.target': 'researcher',
+            'gen_ai.agent.delegation.reason': 'Gather data',
           },
         }],
       }),
@@ -164,13 +164,13 @@ describe('buildGraphSnapshot', () => {
   it('creates handoff edges with pending status', () => {
     const snapshot = buildGraphSnapshot([
       span({
-        attributes: { 'agent.id': 'a' },
+        attributes: { 'gen_ai.agent.id': 'a' },
         events: [{
           name: 'agent.handoff.requested',
           timestamp: 1_500_000_000,
           attributes: {
-            'agent.handoff.target': 'b',
-            'agent.handoff.reason': 'Continue',
+            'gen_ai.agent.handoff.target': 'b',
+            'gen_ai.agent.handoff.reason': 'Continue',
           },
         }],
       }),
@@ -184,13 +184,13 @@ describe('buildGraphSnapshot', () => {
   it('creates critique edges', () => {
     const snapshot = buildGraphSnapshot([
       span({
-        attributes: { 'agent.id': 'critic' },
+        attributes: { 'gen_ai.agent.id': 'critic' },
         events: [{
           name: 'agent.critique',
           timestamp: 1_500_000_000,
           attributes: {
-            'agent.critique.target': 'writer',
-            'agent.critique.result': 'Needs more evidence',
+            'gen_ai.agent.critique.target': 'writer',
+            'gen_ai.agent.critique.result': 'Needs more evidence',
           },
         }],
       }),
@@ -207,13 +207,13 @@ describe('buildGraphSnapshot', () => {
   it('creates review edges', () => {
     const snapshot = buildGraphSnapshot([
       span({
-        attributes: { 'agent.id': 'reviewer' },
+        attributes: { 'gen_ai.agent.id': 'reviewer' },
         events: [{
           name: 'agent.review',
           timestamp: 1_500_000_000,
           attributes: {
-            'agent.review.target': 'writer',
-            'agent.review.result': 'approved',
+            'gen_ai.agent.review.target': 'writer',
+            'gen_ai.agent.review.result': 'approved',
           },
         }],
       }),
@@ -229,13 +229,13 @@ describe('buildGraphSnapshot', () => {
   it('creates human nodes and escalation edges', () => {
     const snapshot = buildGraphSnapshot([
       span({
-        attributes: { 'agent.id': 'bot' },
+        attributes: { 'gen_ai.agent.id': 'bot' },
         events: [{
           name: 'agent.escalation',
           timestamp: 1_500_000_000,
           attributes: {
-            'agent.escalation.target': 'human_ops',
-            'agent.escalation.reason': 'Urgent issue',
+            'gen_ai.agent.escalation.target': 'human_ops',
+            'gen_ai.agent.escalation.reason': 'Urgent issue',
           },
         }],
       }),
@@ -257,11 +257,11 @@ describe('buildGraphSnapshot', () => {
   it('creates memory nodes and data_flow edges', () => {
     const snapshot = buildGraphSnapshot([
       span({
-        attributes: { 'agent.id': 'writer' },
+        attributes: { 'gen_ai.agent.id': 'writer' },
         events: [{
           name: 'agent.memory.write',
           timestamp: 1_500_000_000,
-          attributes: { 'agent.memory.key': 'draft_v1' },
+          attributes: { 'gen_ai.agent.memory.key': 'draft_v1' },
         }],
       }),
     ], 'm1');
@@ -280,7 +280,7 @@ describe('buildGraphSnapshot', () => {
   it('creates artifact nodes and produces edges', () => {
     const snapshot = buildGraphSnapshot([
       span({
-        attributes: { 'agent.id': 'writer' },
+        attributes: { 'gen_ai.agent.id': 'writer' },
         events: [{
           name: 'agent.artifact.created',
           timestamp: 1_500_000_000,
@@ -314,7 +314,7 @@ describe('buildGraphSnapshot', () => {
 
     const snapshot = buildGraphSnapshot([
       span({
-        attributes: { 'agent.id': 'new-agent', 'agent.name': 'New' },
+        attributes: { 'gen_ai.agent.id': 'new-agent', 'gen_ai.agent.name': 'New' },
       }),
     ], 'm1', base);
 
@@ -334,7 +334,7 @@ describe('buildGraphSnapshot', () => {
     };
 
     const snapshot = buildGraphSnapshot([
-      span({ attributes: { 'agent.id': 'agent-1', 'agent.name': 'Renamed' } }),
+      span({ attributes: { 'gen_ai.agent.id': 'agent-1', 'gen_ai.agent.name': 'Renamed' } }),
     ], 'm1', base);
 
     const agentNode = snapshot.nodes.find((n) => n.id === 'agent-1');
