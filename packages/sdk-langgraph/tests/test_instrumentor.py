@@ -122,8 +122,8 @@ class TestAgentLensLangGraphCallbackHandler:
         parent_agent._span.add_event.assert_called_with(
             "agent.handoff.requested",
             {
-                "agent.handoff.target": "researcher",
-                "agent.handoff.reason": "langgraph.chain_start",
+                "gen_ai.agent.handoff.target": "researcher",
+                "gen_ai.agent.handoff.reason": "langgraph.chain_start",
             },
         )
 
@@ -208,8 +208,8 @@ class TestAgentLensLangGraphCallbackHandler:
         parent_agent._span.add_event.assert_called_with(
             "agent.handoff.accepted",
             {
-                "agent.handoff.target": "researcher",
-                "agent.handoff.reason": "langgraph.chain_end",
+                "gen_ai.agent.handoff.target": "researcher",
+                "gen_ai.agent.handoff.reason": "langgraph.chain_end",
             },
         )
 
@@ -248,8 +248,8 @@ class TestAgentLensLangGraphCallbackHandler:
         parent_agent._span.add_event.assert_called_with(
             "agent.handoff.rejected",
             {
-                "agent.handoff.target": "researcher",
-                "agent.handoff.reason": "boom",
+                "gen_ai.agent.handoff.target": "researcher",
+                "gen_ai.agent.handoff.reason": "boom",
             },
         )
 
@@ -282,9 +282,9 @@ class TestAgentLensLangGraphCallbackHandler:
         )
 
         agent._span.add_event.assert_called_with("agent.tool.call", {
-            "agent.tool.name": "web_search",
-            "agent.tool.status": "active",
-            "agent.tool.input": '{"query": "AI"}',
+            "gen_ai.tool.name": "web_search",
+            "gen_ai.tool.status": "active",
+            "gen_ai.tool.input": '{"query": "AI"}',
         })
 
     def test_on_tool_start_without_parent_agent_does_nothing(self):
@@ -311,7 +311,7 @@ class TestAgentLensLangGraphCallbackHandler:
         )
 
         call_args = agent._span.add_event.call_args
-        assert call_args[0][1]["agent.tool.name"] == "unknown_tool"
+        assert call_args[0][1]["gen_ai.tool.name"] == "unknown_tool"
 
     # --- on_tool_end ---
 

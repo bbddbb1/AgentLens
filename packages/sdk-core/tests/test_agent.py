@@ -36,24 +36,24 @@ class TestAgentInstrumentor:
         agent, tracer, span = self._make_agent()
         agent.__enter__()
         attrs = tracer.start_span.call_args[1]["attributes"]
-        assert attrs["mission.id"] == "m1"
-        assert attrs["agent.id"] == "a1"
-        assert attrs["agent.name"] == "TestAgent"
-        assert attrs["agent.role"] == "worker"
-        assert attrs["agent.framework"] == "langgraph"
-        assert attrs["agent.span.kind"] == "agent.task"
+        assert attrs["gen_ai.workflow.id"] == "m1"
+        assert attrs["gen_ai.agent.id"] == "a1"
+        assert attrs["gen_ai.agent.name"] == "TestAgent"
+        assert attrs["gen_ai.agent.role"] == "worker"
+        assert attrs["gen_ai.agent.framework"] == "langgraph"
+        assert attrs["agent.span.kind"] == "invoke_agent"
 
     def test_enter_includes_team_when_present(self):
         agent, tracer, span = self._make_agent(agent_team="core")
         agent.__enter__()
         attrs = tracer.start_span.call_args[1]["attributes"]
-        assert attrs["agent.team"] == "core"
+        assert attrs["gen_ai.agent.team"] == "core"
 
     def test_enter_excludes_team_when_none(self):
         agent, tracer, span = self._make_agent(agent_team=None)
         agent.__enter__()
         attrs = tracer.start_span.call_args[1]["attributes"]
-        assert "agent.team" not in attrs
+        assert "gen_ai.agent.team" not in attrs
 
     def test_exit_success_path(self):
         agent, tracer, span = self._make_agent()
@@ -77,19 +77,19 @@ class TestAgentInstrumentor:
         agent, _, span = self._make_agent()
         agent.__enter__()
         agent.set_confidence(0.95)
-        span.set_attribute.assert_called_with("agent.confidence", "0.95")
+        span.set_attribute.assert_called_with("gen_ai.agent.confidence", "0.95")
 
     def test_set_goal(self):
         agent, _, span = self._make_agent()
         agent.__enter__()
         agent.set_goal("Analyze data")
-        span.set_attribute.assert_called_with("agent.goal", "Analyze data")
+        span.set_attribute.assert_called_with("gen_ai.agent.goal", "Analyze data")
 
     def test_set_task(self):
         agent, _, span = self._make_agent()
         agent.__enter__()
         agent.set_task("Fetch papers")
-        span.set_attribute.assert_called_with("agent.task", "Fetch papers")
+        span.set_attribute.assert_called_with("gen_ai.agent.task", "Fetch papers")
 
     def test_setters_do_nothing_when_no_span(self):
         agent, _, _ = self._make_agent()
@@ -105,9 +105,9 @@ class TestAgentInstrumentor:
         agent.record_handoff("researcher", "Find papers", "need help")
 
         span.add_event.assert_called_with("agent.handoff.requested", {
-            "agent.handoff.target": "researcher",
-            "agent.task": "Find papers",
-            "agent.handoff.reason": "need help",
+            "gen_ai.agent.handoff.target": "researcher",
+            "gen_ai.agent.task": "Find papers",
+            "gen_ai.agent.handoff.reason": "need help",
         })
 
     def test_record_delegation_calls_handoff(self):
@@ -121,8 +121,8 @@ class TestAgentInstrumentor:
         agent.__enter__()
         agent.record_critique("writer", "needs_revision", "missing sources")
         span.add_event.assert_called_with("agent.critique", {
-            "agent.critique.target": "writer",
-            "agent.critique.result": "needs_revision",
+            "gen_ai.agent.critique.target": "writer",
+            "gen_ai.agent.critique.result": "needs_revision",
             "critique.details": "missing sources",
         })
 
@@ -157,8 +157,8 @@ class TestAgentInstrumentor:
 
         call_args = span.add_event.call_args
         assert call_args[0][0] == "agent.tool.call"
-        assert call_args[0][1]["agent.tool.name"] == "web_search"
-        assert call_args[0][1]["agent.tool.status"] == "success"
+        assert call_args[0][1]["gen_ai.tool.name"] == "web_search"
+        assert call_args[0][1]["gen_ai.tool.status"] == "success"
 
     def test_record_tool_call_preserves_full_input(self):
         agent, _, span = self._make_agent()
@@ -166,22 +166,22 @@ class TestAgentInstrumentor:
         long_input = "x" * 2000
         agent.record_tool_call("big_tool", long_input, None)
         call_args = span.add_event.call_args
-        assert call_args[0][1]["agent.tool.input"] == long_input
+        assert call_args[0][1]["gen_ai.tool.input"] == long_input
 
     def test_record_tool_call_with_error_status(self):
         agent, _, span = self._make_agent()
         agent.__enter__()
         agent.record_tool_call("broken_tool", None, None, status="error")
         call_args = span.add_event.call_args
-        assert call_args[0][1]["agent.tool.status"] == "error"
+        assert call_args[0][1]["gen_ai.tool.status"] == "error"
 
     def test_record_memory_write(self):
         agent, _, span = self._make_agent()
         agent.__enter__()
         agent.record_memory_write("shared_key")
         span.add_event.assert_called_with("agent.memory.write", {
-            "agent.memory.key": "shared_key",
-            "agent.memory.operation": "write",
+            "gen_ai.agent.memory.key": "shared_key",
+            "gen_ai.agent.memory.operation": "write",
         })
 
     def test_record_memory_read(self):
@@ -189,8 +189,8 @@ class TestAgentInstrumentor:
         agent.__enter__()
         agent.record_memory_read("shared_key")
         span.add_event.assert_called_with("agent.memory.read", {
-            "agent.memory.key": "shared_key",
-            "agent.memory.operation": "read",
+            "gen_ai.agent.memory.key": "shared_key",
+            "gen_ai.agent.memory.operation": "read",
         })
 
     def test_record_escalation(self):
@@ -198,8 +198,8 @@ class TestAgentInstrumentor:
         agent.__enter__()
         agent.record_escalation("human_reviewer", "needs approval")
         span.add_event.assert_called_with("agent.escalation", {
-            "agent.escalation.target": "human_reviewer",
-            "agent.escalation.reason": "needs approval",
+            "gen_ai.agent.escalation.target": "human_reviewer",
+            "gen_ai.agent.escalation.reason": "needs approval",
         })
 
     def test_record_reflection(self):
@@ -264,8 +264,8 @@ class TestAgentInstrumentor:
         calls = span.add_event.call_args_list
         decision_call = calls[0]
         assert decision_call[0][0] == "agent.human.decision"
-        assert decision_call[0][1]["agent.human.decision"] == "approve"
-        assert decision_call[0][1]["agent.interrupt.id"] == "int-1"
+        assert decision_call[0][1]["gen_ai.agent.human.decision"] == "approve"
+        assert decision_call[0][1]["gen_ai.agent.interrupt.id"] == "int-1"
 
         # Since decision is not "resume", only one add_event call
         assert len(calls) == 1

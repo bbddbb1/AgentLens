@@ -32,18 +32,17 @@ class TestMission:
         mission, tracer, span = self._make_mission()
         mission.__enter__()
         attrs = tracer.start_span.call_args[1]["attributes"]
-        assert attrs["mission.id"] == "m1"
-        assert attrs["mission.objective"] == "Research AI trends"
-        assert attrs["mission.status"] == "active"
-        assert attrs["mission.phase"] == "planning"
-        assert attrs["mission.phase"] == "planning"
+        assert attrs["gen_ai.workflow.id"] == "m1"
+        assert attrs["gen_ai.workflow.name"] == "Research AI trends"
+        assert attrs["gen_ai.workflow.status"] == "active"
+        assert attrs["gen_ai.workflow.phase"] == "planning"
         assert attrs["agent.span.kind"] == "mission"
 
     def test_enter_sets_branch_id_if_provided(self):
         mission, tracer, span = self._make_mission(branch_id="b123")
         mission.__enter__()
         attrs = tracer.start_span.call_args[1]["attributes"]
-        assert attrs["mission.branch_id"] == "b123"
+        assert attrs["gen_ai.workflow.branch_id"] == "b123"
 
     def test_enter_records_started_event(self):
         mission, tracer, span = self._make_mission()
@@ -65,7 +64,7 @@ class TestMission:
 
         span.set_status.assert_called()
         span.add_event.assert_called_with("mission.completed")
-        span.set_attribute.assert_called_with("mission.status", "completed")
+        span.set_attribute.assert_called_with("gen_ai.workflow.status", "completed")
         span.end.assert_called_once()
 
     def test_exit_failure_path(self):
@@ -75,15 +74,15 @@ class TestMission:
         mission.__exit__(RuntimeError, error, None)
 
         span.add_event.assert_called_with("mission.failed", ANY)
-        span.set_attribute.assert_called_with("mission.status", "failed")
+        span.set_attribute.assert_called_with("gen_ai.workflow.status", "failed")
 
     def test_set_phase(self):
         mission, tracer, span = self._make_mission()
         mission.__enter__()
         mission.set_phase("executing")
-        span.set_attribute.assert_called_with("mission.phase", "executing")
+        span.set_attribute.assert_called_with("gen_ai.workflow.phase", "executing")
         span.add_event.assert_called_with("mission.phase.changed", {
-            "mission.phase": "executing",
+            "gen_ai.workflow.phase": "executing",
         })
 
     def test_set_phase_does_nothing_without_span(self):

@@ -294,7 +294,7 @@ class TestAgentLensOtlpJsonExporter:
 
     def test_serialize_span_attributes(self):
         exporter = AgentLensOtlpJsonExporter(endpoint="http://localhost:8001")
-        span = self._make_mock_span(attributes={"agent.id": "agent-1", "count": 42})
+        span = self._make_mock_span(attributes={"gen_ai.agent.id": "agent-1", "count": 42})
 
         mock_response = MagicMock(status_code=200)
         with patch.object(exporter, '_client') as mock_client:
