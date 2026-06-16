@@ -11,152 +11,152 @@ These follow the OpenTelemetry naming conventions:
 class AgentAttributes:
     """Attributes describing an agent within a multi-agent system."""
 
-    # 鈹€鈹€鈹€ Identity 鈹€鈹€鈹€
-    ID = "agent.id"
+    # ─── Identity ───
+    ID = "gen_ai.agent.id"
     """Unique identifier for the agent instance."""
 
-    NAME = "agent.name"
+    NAME = "gen_ai.agent.name"
     """Human-readable display name of the agent."""
 
-    ROLE = "agent.role"
+    ROLE = "gen_ai.agent.role"
     """Functional role of the agent (e.g., planner, researcher, critic, executor)."""
 
-    TEAM = "agent.team"
+    TEAM = "gen_ai.agent.team"
     """Team or group the agent belongs to."""
 
-    FRAMEWORK = "agent.framework"
+    FRAMEWORK = "gen_ai.agent.framework"
     """Source framework (langgraph, crewai, autogen, openai_agents, ms_agent_framework)."""
 
-    # 鈹€鈹€鈹€ Objective 鈹€鈹€鈹€
-    GOAL = "agent.goal"
+    # ─── Objective ───
+    GOAL = "gen_ai.agent.goal"
     """Current high-level objective of the agent."""
 
-    TASK = "agent.task"
+    TASK = "gen_ai.agent.task"
     """Specific task being executed."""
 
-    TASK_DESCRIPTION = "agent.task.description"
+    TASK_DESCRIPTION = "gen_ai.agent.task.description"
     """Human-readable description of the current task."""
 
-    # 鈹€鈹€鈹€ State 鈹€鈹€鈹€
-    CONFIDENCE = "agent.confidence"
+    # ─── State ───
+    CONFIDENCE = "gen_ai.agent.confidence"
     """Agent's confidence score in its output (0.0 to 1.0)."""
 
-    STATUS = "agent.status"
+    STATUS = "gen_ai.agent.status"
     """Current agent status (active, waiting, completed, failed)."""
 
-    ITERATION = "agent.iteration"
+    ITERATION = "gen_ai.agent.iteration"
     """Current iteration number (for retry/loop detection)."""
 
-    # 鈹€鈹€鈹€ Communication 鈹€鈹€鈹€
-    DELEGATION_TARGET = "agent.delegation.target"
+    # ─── Communication ───
+    DELEGATION_TARGET = "gen_ai.agent.delegation.target"
     """Agent ID that work is being delegated to."""
 
-    DELEGATION_REASON = "agent.delegation.reason"
+    DELEGATION_REASON = "gen_ai.agent.delegation.reason"
     """Reason for delegation."""
 
-    CRITIQUE_TARGET = "agent.critique.target"
+    CRITIQUE_TARGET = "gen_ai.agent.critique.target"
     """Agent ID being critiqued."""
 
-    CRITIQUE_RESULT = "agent.critique.result"
+    CRITIQUE_RESULT = "gen_ai.agent.critique.result"
     """Result of critique (approved, rejected, needs_revision)."""
 
-    REVIEW_RESULT = "agent.review.result"
+    REVIEW_RESULT = "gen_ai.agent.review.result"
     """Result of review (approved, changes_requested, rejected)."""
 
-    REVIEW_TARGET = "agent.review.target"
+    REVIEW_TARGET = "gen_ai.agent.review.target"
     """Agent ID or span ID being reviewed."""
 
-    ESCALATION_TARGET = "agent.escalation.target"
+    ESCALATION_TARGET = "gen_ai.agent.escalation.target"
     """Target of escalation (human ID or supervisor agent ID)."""
 
-    ESCALATION_REASON = "agent.escalation.reason"
+    ESCALATION_REASON = "gen_ai.agent.escalation.reason"
     """Reason for escalation."""
 
-    HANDOFF_TARGET = "agent.handoff.target"
+    HANDOFF_TARGET = "gen_ai.agent.handoff.target"
     """Target agent ID for a handoff/transfer of control."""
 
-    HANDOFF_REASON = "agent.handoff.reason"
+    HANDOFF_REASON = "gen_ai.agent.handoff.reason"
     """Reason for the handoff/transfer of control."""
 
-    # 鈹€鈹€鈹€ Memory 鈹€鈹€鈹€
-    MEMORY_KEY = "agent.memory.key"
+    # ─── Memory ───
+    MEMORY_KEY = "gen_ai.agent.memory.key"
     """Key of memory being read or written."""
 
-    MEMORY_VALUE = "agent.memory.value"
+    MEMORY_VALUE = "gen_ai.agent.memory.value"
     """Opaque serialized value written to memory."""
 
-    MEMORY_OPERATION = "agent.memory.operation"
+    MEMORY_OPERATION = "gen_ai.agent.memory.operation"
     """Memory operation type (read, write, delete)."""
 
-    # 鈹€鈹€鈹€ Tool Usage 鈹€鈹€鈹€
-    TOOL_NAME = "agent.tool.name"
+    # ─── Tool Usage ───
+    TOOL_NAME = "gen_ai.tool.name"
     """Name of the tool being invoked."""
 
-    TOOL_INPUT = "agent.tool.input"
+    TOOL_INPUT = "gen_ai.tool.input"
     """Serialized input to the tool."""
 
-    TOOL_OUTPUT = "agent.tool.output"
+    TOOL_OUTPUT = "gen_ai.tool.output"
     """Serialized output from the tool."""
 
-    TOOL_STATUS = "agent.tool.status"
+    TOOL_STATUS = "gen_ai.tool.status"
     """Tool execution status (success, error, timeout)."""
 
-    INTERRUPT_ID = "agent.interrupt.id"
+    INTERRUPT_ID = "gen_ai.agent.interrupt.id"
     """Unique identifier for a human-review interrupt request."""
 
-    INTERRUPT_REASON = "agent.interrupt.reason"
+    INTERRUPT_REASON = "gen_ai.agent.interrupt.reason"
     """Why the agent requires human review or approval."""
 
-    INTERRUPT_RESUME_URL = "agent.interrupt.resume_url"
+    INTERRUPT_RESUME_URL = "gen_ai.agent.interrupt.resume_url"
     """Optional resume URL associated with the interrupt."""
 
-    RESUME_TOKEN = "agent.resume.token"
+    RESUME_TOKEN = "gen_ai.agent.resume.token"
     """Opaque token that can be used to resume execution after review."""
 
-    HUMAN_DECISION = "agent.human.decision"
+    HUMAN_DECISION = "gen_ai.agent.human.decision"
     """Human decision captured for an interrupt (approve, reject, resume)."""
 
-    HUMAN_INPUT = "agent.human.input"
+    HUMAN_INPUT = "gen_ai.agent.human.input"
     """Free-form human input associated with an interrupt decision."""
 
-    TIMEOUT_AT = "agent.timeout_at"
+    TIMEOUT_AT = "gen_ai.agent.timeout_at"
     """Absolute timeout for a pending interrupt."""
 
-    POLICY_REQUIRED_REVIEW = "agent.policy.required_review"
+    POLICY_REQUIRED_REVIEW = "gen_ai.agent.policy.required_review"
     """Whether policy or governance requires explicit human review."""
 
 
 class MissionAttributes:
     """Attributes describing a mission (top-level multi-agent objective)."""
 
-    ID = "mission.id"
+    ID = "gen_ai.workflow.id"
     """Unique identifier for the mission."""
 
-    BRANCH_ID = "mission.branch_id"
+    BRANCH_ID = "gen_ai.workflow.branch_id"
     """The active execution branch ID of the mission."""
 
-    OBJECTIVE = "mission.objective"
+    OBJECTIVE = "gen_ai.workflow.name"
     """Human-readable objective of the mission."""
 
-    PHASE = "mission.phase"
+    PHASE = "gen_ai.workflow.phase"
     """Current mission phase (planning, executing, reviewing, completed, failed)."""
 
-    STATUS = "mission.status"
+    STATUS = "gen_ai.workflow.status"
     """Mission status (active, paused, completed, failed, cancelled)."""
 
-    OWNER = "mission.owner"
+    OWNER = "gen_ai.workflow.owner"
     """User ID of the mission owner."""
 
-    TEAM_SIZE = "mission.team_size"
+    TEAM_SIZE = "gen_ai.workflow.team_size"
     """Number of agents participating in the mission."""
 
-    ENCRYPTION_ENABLED = "mission.encryption.enabled"
+    ENCRYPTION_ENABLED = "gen_ai.workflow.encryption.enabled"
     """Whether the mission data is end-to-end encrypted."""
 
-    FRAMEWORK = "mission.framework"
+    FRAMEWORK = "gen_ai.workflow.framework"
     """Primary framework used for the mission."""
 
-    VERSION = "mission.version"
+    VERSION = "gen_ai.workflow.version"
     """Version or revision number of the mission execution."""
 
 

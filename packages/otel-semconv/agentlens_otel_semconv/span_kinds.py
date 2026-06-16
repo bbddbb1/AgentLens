@@ -20,7 +20,7 @@ class AgentSpanKind:
     ORCHESTRATION = "agent.orchestration"
     """Framework-level orchestration, routing, or state management."""
 
-    AGENT_TASK = "agent.task"
+    AGENT_TASK = "invoke_agent"
     """An individual agent executing a discrete task."""
 
     TASK = AGENT_TASK
@@ -29,7 +29,7 @@ class AgentSpanKind:
     DELEGATION = "agent.delegation"
     """A delegation handoff from one agent to another."""
 
-    TOOL_CALL = "agent.tool.call"
+    TOOL_CALL = "execute_tool"
     """An agent invoking an external tool or API."""
 
     REVIEW = "agent.review"

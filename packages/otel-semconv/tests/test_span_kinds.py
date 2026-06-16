@@ -56,13 +56,13 @@ class TestAgentSpanKindConstants:
         assert AgentSpanKind.MISSION == "mission"
 
     def test_agent_task_constant(self):
-        assert AgentSpanKind.AGENT_TASK == "agent.task"
+        assert AgentSpanKind.AGENT_TASK == "invoke_agent"
 
     def test_task_alias(self):
         assert AgentSpanKind.TASK == AgentSpanKind.AGENT_TASK
 
     def test_tool_call_constant(self):
-        assert AgentSpanKind.TOOL_CALL == "agent.tool.call"
+        assert AgentSpanKind.TOOL_CALL == "execute_tool"
 
     def test_memory_op_alias(self):
         assert AgentSpanKind.MEMORY == AgentSpanKind.MEMORY_OP
