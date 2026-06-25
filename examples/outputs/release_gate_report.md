@@ -14,7 +14,7 @@ Verifier findings:
 Blocking issue: the rollout would transfer customer support data to an external model vendor without recorded approval, so the release gate must stay closed until a human reviewer decides.
 
 Human comment:
-Reviewed by human
+Auto-approved by automation script.
 
 System state after review:
 Release gate: open

@@ -191,7 +191,7 @@ function buildDisplayGraph(state: GraphStore): Pick<
     visibility.satelliteCounts,
     state.layoutPositions,
   );
-  let flowEdges = graphEdgesToFlowEdges(visibility.edges, pathOffsetById).map((edge) => ({
+  let flowEdges: Edge[] = graphEdgesToFlowEdges(visibility.edges, pathOffsetById).map((edge) => ({
     ...edge,
     data: {
       ...edge.data,

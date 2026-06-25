@@ -17,11 +17,24 @@ export interface GraphNode {
   agent_id?: string;
   agent_role?: string;
   agent_team?: string;
+  agent_type?: string;
+  framework?: string;
+  iteration?: number;
   confidence?: number;
   summary?: string;
   span_id?: string;
   trace_id?: string;
+  start_time?: string;
+  end_time?: string;
+  duration_ms?: number;
+  error_count?: number;
   metadata?: Record<string, unknown>;
+  maturityTier?: 'L1' | 'L2' | 'L3';
+  maturity_tier?: 'L1' | 'L2' | 'L3';
+  evidenceSpanId?: string;
+  evidence_span_id?: string;
+  source_span_id?: string;
+  source_event_id?: string;
 }
 
 export interface GraphEdge {
@@ -33,6 +46,10 @@ export interface GraphEdge {
   status: EdgeStatus;
   animated?: boolean;
   metadata?: Record<string, unknown>;
+  evidenceSpanId?: string;
+  evidence_span_id?: string;
+  source_span_id?: string;
+  source_event_id?: string;
 }
 
 export interface GraphSnapshot {
@@ -180,10 +197,20 @@ export interface NodeProjectionFacts {
   status: NodeStatus;
   status_label: string;
   produced_outputs: ProducedOutput[];
-  next_transition?: { target: string; kind: 'handoff' | 'delegation' };
+  next_transition?: { target: string; kind: 'handoff' | 'delegation'; reason?: string };
   pending?: string | null;
   warnings: RuntimeFactWarning[];
   requires_human: boolean;
+  agent_id?: string;
+  agent_type?: string;
+  framework?: string;
+  iteration?: number;
+  start_time?: string;
+  end_time?: string;
+  duration_ms?: number;
+  error_count?: number;
+  source_span_id?: string;
+  source_event_id?: string;
 }
 
 export interface NodeProjectionGenerated {
@@ -328,6 +355,7 @@ export type RuntimeEventType =
   | 'review.rejected'
   | 'escalation'
   | 'memory.written'
+  | 'memory.read'
   | 'observation.recorded'
   | 'artifact.created'
   | 'artifact.updated'

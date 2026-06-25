@@ -38,6 +38,16 @@ function scratchToFacts(agent: AgentNodeScratch): NodeProjectionFacts {
     pending: agent.pending ?? null,
     warnings: agent.warnings,
     requires_human: agent.requires_human,
+    agent_id: agent.agent_id,
+    agent_type: agent.agent_type,
+    framework: agent.framework,
+    iteration: agent.iteration,
+    start_time: agent.start_time,
+    end_time: agent.end_time,
+    duration_ms: agent.duration_ms,
+    error_count: agent.error_count,
+    source_span_id: agent.source_span_id,
+    source_event_id: agent.source_event_id,
   };
 }
 

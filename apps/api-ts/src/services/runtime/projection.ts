@@ -1,0 +1,618 @@
+import type { GraphSnapshot, GraphNode, GraphEdge, MissionEventRecord, ReplayStateResponse } from '@agentlens/protocol';
+import { applyHierarchicalLayout } from '../graphLayout.js';
+
+export type MaturityTier = 'L1' | 'L2' | 'L3';
+
+function parseAttrJson(val: any): any {
+  if (val === undefined || val === null) return undefined;
+  if (typeof val === 'string') {
+    try {
+      return JSON.parse(val);
+    } catch {
+      return val;
+    }
+  }
+  return val;
+}
+
+function findAgentSpanId(agentId: string, spans: any[], currentSpanStartTime?: number): string | undefined {
+  let bestSpan: any = undefined;
+  let minDiff = Infinity;
+
+  for (const span of spans) {
+    const attrs = span.attributes ?? {};
+    const sAgentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+    if (sAgentId === agentId) {
+      if (currentSpanStartTime !== undefined) {
+        const start = Number(span.start_time_unix_nano);
+        const diff = start - currentSpanStartTime;
+        if (diff >= 0 && diff < minDiff) {
+          minDiff = diff;
+          bestSpan = span;
+        }
+      } else {
+        return span.span_id;
+      }
+    }
+  }
+
+  if (!bestSpan) {
+    const fallback = spans.find((span) => {
+      const attrs = span.attributes ?? {};
+      const sAgentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+      return sAgentId === agentId;
+    });
+    return fallback?.span_id;
+  }
+
+  return bestSpan.span_id;
+}
+
+function resolveNodeId(id: string, spans: any[], currentSpanStartTime?: number): string {
+  if (spans.some((s) => s.span_id === id)) {
+    return id;
+  }
+  const resolved = findAgentSpanId(id, spans, currentSpanStartTime);
+  return resolved ?? id;
+}
+
+/**
+ * Classifies a span into L1, L2, or L3 based on its attributes.
+ */
+export function classifySpan(span: any): MaturityTier {
+  const attrs = span.attributes ?? {};
+  const keys = Object.keys(attrs);
+
+  // L3: Custom AgentLens or BSOps attributes, or agent.span.kind
+  const hasL3 = keys.some(
+    (k) =>
+      k.startsWith('gen_ai.agent.') ||
+      k.startsWith('basestation.aiops.') ||
+      k.startsWith('agentlens.') ||
+      k === 'agent.span.kind'
+  );
+  if (hasL3) return 'L3';
+
+  // L2: Standard gen_ai.* attributes
+  const hasL2 = keys.some((k) => k.startsWith('gen_ai.'));
+  if (hasL2) return 'L2';
+
+  // Default: L1 Auto Discovery
+  return 'L1';
+}
+
+/**
+ * Projects a set of spans into a single GraphSnapshot at a specific moment in time (maxTimeNs).
+ * Stateless, pure function.
+ */
+export function projectTraceSnapshot(
+  missionId: string,
+  branchId: string,
+  spans: any[],
+  maxTimeNs?: number
+): GraphSnapshot {
+  // 1. Filter visible spans based on maxTimeNs
+  let visibleSpans = spans;
+  if (maxTimeNs !== undefined) {
+    visibleSpans = spans.filter((s) => Number(s.start_time_unix_nano) <= maxTimeNs);
+  }
+
+  // 2. Adjust active spans (started but not finished at maxTimeNs)
+  if (maxTimeNs !== undefined) {
+    visibleSpans = visibleSpans.map((s) => {
+      const start = Number(s.start_time_unix_nano);
+      const end = Number(s.end_time_unix_nano);
+      if ((end > maxTimeNs || !s.end_time_unix_nano) && start <= maxTimeNs) {
+        return {
+          ...s,
+          end_time_unix_nano: 0, // In progress
+          status_code: 'UNSET',
+        };
+      }
+      return s;
+    });
+  }
+
+  const nodes: GraphNode[] = [];
+  const edges: GraphEdge[] = [];
+  const addedNodes = new Set<string>();
+
+  // 3. Process spans
+  for (const span of visibleSpans) {
+    const tier = classifySpan(span);
+    const attrs = span.attributes ?? {};
+
+    // G7 & G8: Handoff & Review Edge projection from span.events (PR-3)
+    if (Array.isArray(span.events)) {
+      let eventIdx = 0;
+      for (const event of span.events) {
+        const eventAttrs = event.attributes ?? {};
+        const eventName = event.name;
+
+        if (eventName === 'agent.handoff.requested' || eventName === 'agent.delegation') {
+          const source = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+          const target = eventAttrs['gen_ai.agent.handoff.target'] ?? eventAttrs['target_agent_id'] ?? eventAttrs['gen_ai.agent.delegation.target'];
+          if (source && target) {
+            const resolvedSource = span.span_id;
+            const resolvedTarget = resolveNodeId(String(target), visibleSpans, Number(span.start_time_unix_nano));
+            edges.push({
+              id: `edge-${span.span_id}-handoff-${eventIdx++}`,
+              source: resolvedSource,
+              target: resolvedTarget,
+              type: 'delegation',
+              status: 'completed',
+              evidenceSpanId: span.span_id,
+              evidence_span_id: span.span_id,
+              source_span_id: span.span_id,
+              source_event_id: eventName,
+              metadata: { ...eventAttrs },
+            });
+          }
+        } else if (
+          eventName === 'agent.review' ||
+          eventName === 'agent.review.approved' ||
+          eventName === 'agent.review.changes_requested' ||
+          eventName === 'agent.review.rejected'
+        ) {
+          const source = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+          const target = eventAttrs['gen_ai.agent.review.target'] ?? eventAttrs['target_agent_id'];
+          // STRICT RULE: If target is missing, do NOT create the edge (no fallback)
+          if (source && target) {
+            const resolvedSource = span.span_id;
+            const resolvedTarget = resolveNodeId(String(target), visibleSpans, Number(span.start_time_unix_nano));
+            edges.push({
+              id: `edge-${span.span_id}-review-${eventIdx++}`,
+              source: resolvedSource,
+              target: resolvedTarget,
+              type: 'review',
+              status: 'completed',
+              evidenceSpanId: span.span_id,
+              evidence_span_id: span.span_id,
+              source_span_id: span.span_id,
+              source_event_id: eventName,
+              metadata: { ...eventAttrs },
+            });
+          }
+        }
+      }
+    }
+
+    // L3 Edges (span-based): only draw if explicitly instructed by agentlens.edge.* or basestation.aiops.edge.*
+    if (tier === 'L3') {
+      const source = attrs['agentlens.edge.source'] ?? attrs['basestation.aiops.edge.source'] ?? attrs['basestation.aiops.workflow.transition.source'] ?? attrs['gen_ai.agent.delegation.source'];
+      const target = attrs['agentlens.edge.target'] ?? attrs['basestation.aiops.edge.target'] ?? attrs['basestation.aiops.workflow.transition.target'] ?? attrs['gen_ai.agent.delegation.target'] ?? attrs['gen_ai.agent.review.target'];
+      const edgeType = attrs['agentlens.edge.type'] ?? attrs['basestation.aiops.edge.type'] ?? attrs['basestation.aiops.workflow.transition.type'] ?? attrs['gen_ai.agent.delegation.type'] ?? (attrs['agent.span.kind'] === 'agent.review' ? 'review' : 'transition');
+
+      // STRICT RULE: If it's a review span kind and review target is missing, we must NOT project the edge!
+      const isReviewSpan = attrs['agent.span.kind'] === 'agent.review';
+      const hasValidTarget = !isReviewSpan || !!attrs['gen_ai.agent.review.target'];
+
+      if (source && target && hasValidTarget) {
+        const resolvedSource = resolveNodeId(String(source), visibleSpans, Number(span.start_time_unix_nano));
+        const resolvedTarget = resolveNodeId(String(target), visibleSpans, Number(span.start_time_unix_nano));
+        edges.push({
+          id: `edge-${span.span_id}`,
+          source: resolvedSource,
+          target: resolvedTarget,
+          type: String(edgeType) as any,
+          status: span.status_code === 'ERROR' ? 'failed' : span.status_code === 'OK' ? 'completed' : 'active',
+          evidenceSpanId: span.span_id,
+          evidence_span_id: span.span_id,
+          source_span_id: span.span_id,
+          metadata: { ...attrs },
+        });
+        continue; // Edge spans are not nodes
+      }
+    }
+
+    // Nodes
+    const nodeId = span.span_id;
+    let nodeType: any = 'task';
+    let label = span.operation_name;
+    const status: any = span.status_code === 'ERROR' ? 'failed' : span.status_code === 'OK' ? 'completed' : 'active';
+    let agentId: string | undefined;
+    let agentRole: string | undefined;
+    let agentTeam: string | undefined;
+    let confidence: number | undefined;
+    let summary: string | undefined;
+
+    if (tier === 'L3') {
+      const customType = attrs['agent.span.kind'] ?? attrs['agentlens.node.type'] ?? attrs['basestation.aiops.node.type'];
+      if (customType === 'agent' || customType === 'agent.orchestration' || customType === 'invoke_agent') {
+        nodeType = 'agent';
+      } else if (customType === 'tool' || customType === 'execute_tool') {
+        nodeType = 'tool';
+      } else if (customType === 'human' || customType === 'agent.human.input') {
+        nodeType = 'human';
+      } else if (customType === 'memory' || customType === 'agent.memory.op') {
+        nodeType = 'memory';
+      } else if (customType === 'artifact') {
+        nodeType = 'artifact';
+      } else {
+        nodeType = 'task';
+      }
+
+      agentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+      agentRole = attrs['gen_ai.agent.role'] ?? attrs['agentlens.agent.role'] ?? attrs['basestation.aiops.agent.role'];
+      agentTeam = attrs['gen_ai.agent.team'] ?? attrs['agentlens.agent.team'] ?? attrs['basestation.aiops.agent.team'];
+      const name = attrs['gen_ai.agent.name'] ?? attrs['agentlens.agent.name'] ?? attrs['basestation.aiops.agent.name'];
+      if (name) {
+        label = String(name);
+      }
+
+      const conf = attrs['gen_ai.agent.confidence'] ?? attrs['agentlens.agent.confidence'] ?? attrs['basestation.aiops.agent.confidence'];
+      if (conf !== undefined) {
+        confidence = Number(conf);
+      }
+
+      summary = attrs['gen_ai.agent.goal'] ?? attrs['gen_ai.agent.task'] ?? attrs['agentlens.agent.goal'] ?? attrs['basestation.aiops.agent.goal'];
+    } else if (tier === 'L2') {
+      nodeType = 'tool';
+      label = attrs['gen_ai.system'] ? `${attrs['gen_ai.system']} (${attrs['gen_ai.request.model'] || 'LLM'})` : span.operation_name;
+      const tokensIn = attrs['gen_ai.usage.input_tokens'];
+      const tokensOut = attrs['gen_ai.usage.output_tokens'];
+      if (tokensIn !== undefined || tokensOut !== undefined) {
+        summary = `Prompt tokens: ${tokensIn ?? 0}, Completion tokens: ${tokensOut ?? 0}`;
+      }
+    } else {
+      nodeType = 'task';
+      label = span.operation_name;
+    }
+
+    if (!addedNodes.has(nodeId)) {
+      addedNodes.add(nodeId);
+      nodes.push({
+        id: nodeId,
+        type: nodeType,
+        label,
+        status,
+        position: { x: 0, y: 0 },
+        agent_id: agentId,
+        agent_role: agentRole,
+        agent_team: agentTeam,
+        agent_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
+        framework: attrs['gen_ai.agent.framework'] ?? attrs['agentlens.origin_framework'] ?? attrs['origin_framework'],
+        iteration: attrs['gen_ai.agent.iteration'] !== undefined ? Number(attrs['gen_ai.agent.iteration']) : undefined,
+        confidence,
+        summary: summary ? String(summary) : undefined,
+        span_id: span.span_id,
+        trace_id: span.trace_id,
+        start_time: new Date(Number(span.start_time_unix_nano) / 1e6).toISOString(),
+        end_time: span.end_time_unix_nano ? new Date(Number(span.end_time_unix_nano) / 1e6).toISOString() : undefined,
+        duration_ms: span.end_time_unix_nano ? (Number(span.end_time_unix_nano) - Number(span.start_time_unix_nano)) / 1e6 : undefined,
+        error_count: span.status_code === 'ERROR' ? 1 : 0,
+        metadata: {
+          ...attrs,
+        },
+        maturityTier: tier,
+        maturity_tier: tier,
+        evidenceSpanId: span.span_id,
+        evidence_span_id: span.span_id,
+        source_span_id: span.span_id,
+        source_event_id: undefined,
+      });
+    }
+  }
+
+  // 4. L1/L2 Hierarchy dependencies (parent_span_id fallback)
+  for (const node of nodes) {
+    const span = visibleSpans.find((s) => s.span_id === node.id);
+    if (span && span.parent_span_id) {
+      const parentNode = nodes.find((n) => n.id === span.parent_span_id);
+      if (parentNode) {
+        const tier = classifySpan(span);
+        if (tier === 'L1' || tier === 'L2' || tier === 'L3') {
+          edges.push({
+            id: `dep-${span.parent_span_id}-${node.id}`,
+            source: span.parent_span_id,
+            target: node.id,
+            type: 'dependency',
+            status: node.status === 'failed' ? 'failed' : node.status === 'completed' ? 'completed' : 'active',
+            evidenceSpanId: span.span_id,
+            evidence_span_id: span.span_id,
+          });
+        }
+      }
+    }
+  }
+
+  const snapshot: GraphSnapshot = {
+    id: `snap-${maxTimeNs ?? 'latest'}`,
+    mission_id: missionId,
+    sequence_num: maxTimeNs ?? 0,
+    timestamp: maxTimeNs ? new Date(maxTimeNs / 1e6).toISOString() : new Date().toISOString(),
+    nodes,
+    edges,
+    branch_id: branchId,
+    phase: 'executing',
+  };
+
+  return applyHierarchicalLayout(snapshot);
+}
+
+/**
+ * Ephemeral Time-Sliced Projection for Replay/Time-Travel.
+ * Stateless, pure function.
+ */
+export function projectReplay(
+  missionId: string,
+  branchId: string,
+  spans: any[],
+  interrupts: any[] = []
+): ReplayStateResponse {
+  const sortedSpans = [...spans].sort((a, b) => Number(a.start_time_unix_nano) - Number(b.start_time_unix_nano));
+  const timestamps = Array.from(new Set(sortedSpans.map((s) => Number(s.start_time_unix_nano)))).sort((a, b) => a - b);
+
+  const snapshots = timestamps.map((ts, idx) => {
+    const snap = projectTraceSnapshot(missionId, branchId, sortedSpans, ts);
+    snap.sequence_num = idx;
+    const currentSpan = sortedSpans.find((s) => Number(s.start_time_unix_nano) === ts);
+    if (currentSpan) {
+      snap.event_description = `Span started: ${currentSpan.operation_name}`;
+      snap.source_event_id = currentSpan.span_id;
+      snap.source_event_sequence_num = idx;
+    }
+    return snap;
+  });
+
+  if (snapshots.length === 0) {
+    const emptySnap = projectTraceSnapshot(missionId, branchId, []);
+    emptySnap.sequence_num = 0;
+    snapshots.push(emptySnap);
+  }
+
+  // Pre-build a map from span_id to trace_id (PR-4, G14)
+  const spanTraceMap = new Map<string, string>();
+  for (const s of sortedSpans) {
+    if (s.span_id && s.trace_id) {
+      spanTraceMap.set(s.span_id, s.trace_id);
+    }
+  }
+
+  // Generate compatible events for the timeline
+  const events: MissionEventRecord[] = [];
+  let seq = 0;
+
+  // Add span-based events
+  for (const span of sortedSpans) {
+    const tier = classifySpan(span);
+    const startIso = new Date(Number(span.start_time_unix_nano) / 1e6).toISOString();
+    const attrs = span.attributes ?? {};
+    const agentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+
+    events.push({
+      id: span.span_id,
+      mission_id: missionId,
+      branch_id: branchId,
+      sequence_num: seq++,
+      branch_sequence_num: seq,
+      event_type: tier === 'L3' ? (attrs['agent.span.kind'] === 'execute_tool' ? 'tool.called' : 'task.started') : 'span.started',
+      timestamp: startIso,
+      agent_id: agentId,
+      span_id: span.span_id,
+      trace_id: span.trace_id,
+      parent_span_id: span.parent_span_id ?? undefined,
+      payload: {
+        ...attrs,
+        operation_name: span.operation_name,
+        duration_ms: span.end_time_unix_nano ? (Number(span.end_time_unix_nano) - Number(span.start_time_unix_nano)) / 1e6 : undefined,
+      },
+      metadata: {
+        maturity_tier: tier,
+      },
+      actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
+      actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
+      origin_framework: attrs['agentlens.origin_framework'] ?? attrs['origin_framework'] ?? undefined,
+      causal: parseAttrJson(attrs['agentlens.causal'] ?? attrs['causal']) ?? (span.parent_span_id ? { parent_span_id: span.parent_span_id } : undefined),
+      model: parseAttrJson(attrs['agentlens.model'] ?? attrs['model']) ?? (attrs['gen_ai.request.model'] ? { model_name: attrs['gen_ai.request.model'] } : undefined),
+      error: parseAttrJson(attrs['agentlens.error'] ?? attrs['error'] ?? attrs['error_attribution']) ?? (span.status_code === 'ERROR' ? { message: span.status_message } : undefined),
+      policy: parseAttrJson(attrs['agentlens.policy'] ?? attrs['policy'] ?? attrs['policy_decision']) ?? undefined,
+      source_span_id: span.span_id,
+      source_event_id: undefined,
+    } as any);
+
+    // Unpack internal span.events (PR-4, G1-G6, G13)
+    if (Array.isArray(span.events)) {
+      let eventIdx = 0;
+      for (const otelEvent of span.events) {
+        const eventTimeIso = otelEvent.time
+          ? new Date(otelEvent.time).toISOString()
+          : startIso;
+
+        const eventAttrs = otelEvent.attributes ?? {};
+        events.push({
+          id: `${span.span_id}-event-${eventIdx++}`,
+          mission_id: missionId,
+          branch_id: branchId,
+          sequence_num: seq++,
+          branch_sequence_num: seq,
+          event_type: otelEvent.name,
+          timestamp: eventTimeIso,
+          agent_id: agentId,
+          span_id: span.span_id,
+          trace_id: span.trace_id,
+          parent_span_id: span.parent_span_id ?? undefined,
+          payload: {
+            ...eventAttrs,
+          },
+          metadata: {
+            maturity_tier: tier,
+          },
+          actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
+          actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
+          source_span_id: span.span_id,
+          source_event_id: otelEvent.name,
+        } as any);
+      }
+    }
+
+    if (span.end_time_unix_nano) {
+      const endIso = new Date(Number(span.end_time_unix_nano) / 1e6).toISOString();
+      events.push({
+        id: `${span.span_id}-end`,
+        mission_id: missionId,
+        branch_id: branchId,
+        sequence_num: seq++,
+        branch_sequence_num: seq,
+        event_type: span.status_code === 'ERROR' ? 'span.failed' : 'span.completed',
+        timestamp: endIso,
+        agent_id: agentId,
+        span_id: span.span_id,
+        trace_id: span.trace_id,
+        parent_span_id: span.parent_span_id ?? undefined,
+        payload: {
+          ...attrs,
+          operation_name: span.operation_name,
+          status_code: span.status_code,
+        },
+        metadata: {
+          maturity_tier: tier,
+        },
+        actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
+        actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
+        origin_framework: attrs['agentlens.origin_framework'] ?? attrs['origin_framework'] ?? undefined,
+        causal: parseAttrJson(attrs['agentlens.causal'] ?? attrs['causal']) ?? (span.parent_span_id ? { parent_span_id: span.parent_span_id } : undefined),
+        model: parseAttrJson(attrs['agentlens.model'] ?? attrs['model']) ?? (attrs['gen_ai.request.model'] ? { model_name: attrs['gen_ai.request.model'] } : undefined),
+        error: parseAttrJson(attrs['agentlens.error'] ?? attrs['error'] ?? attrs['error_attribution']) ?? (span.status_code === 'ERROR' ? { message: span.status_message } : undefined),
+        policy: parseAttrJson(attrs['agentlens.policy'] ?? attrs['policy'] ?? attrs['policy_decision']) ?? undefined,
+        source_span_id: span.span_id,
+        source_event_id: undefined,
+      } as any);
+    }
+  }
+
+  // Add interrupt-based events
+  for (const intr of interrupts) {
+    const createdIso = new Date(intr.created_at).toISOString();
+    const traceId = intr.span_id ? spanTraceMap.get(intr.span_id) : undefined;
+
+    events.push({
+      id: `interrupt-${intr.interrupt_id}-requested`,
+      mission_id: missionId,
+      branch_id: branchId,
+      sequence_num: seq++,
+      branch_sequence_num: seq,
+      event_type: 'interrupt.requested',
+      timestamp: createdIso,
+      agent_id: intr.agent_id ?? undefined,
+      span_id: intr.span_id ?? undefined,
+      trace_id: traceId,
+      payload: {
+        agent_id: intr.agent_id,
+        interrupt_id: intr.interrupt_id,
+        reason: intr.reason,
+        resume_url: intr.resume_url,
+        ...(intr.payload ?? {}),
+      },
+      metadata: {},
+      source_span_id: intr.span_id ?? undefined,
+      source_event_id: 'interrupt.requested',
+    } as any);
+
+    if (intr.decided_at && intr.decision && intr.decision !== 'resume') {
+      const decidedIso = new Date(intr.decided_at).toISOString();
+      events.push({
+        id: `interrupt-${intr.interrupt_id}-decision`,
+        mission_id: missionId,
+        branch_id: branchId,
+        sequence_num: seq++,
+        branch_sequence_num: seq,
+        event_type: 'interrupt.decision',
+        timestamp: decidedIso,
+        agent_id: intr.agent_id ?? undefined,
+        span_id: intr.span_id ?? undefined,
+        trace_id: traceId,
+        payload: {
+          agent_id: intr.agent_id,
+          interrupt_id: intr.interrupt_id,
+          decision: intr.decision,
+          comment: intr.decision_comment,
+          ...(intr.decision_payload ?? {}),
+        },
+        metadata: {},
+        source_span_id: intr.span_id ?? undefined,
+        source_event_id: 'interrupt.decision',
+      } as any);
+    }
+
+    if (intr.status === 'resumed' && intr.resumed_at) {
+      const resumedIso = new Date(intr.resumed_at).toISOString();
+      events.push({
+        id: `interrupt-${intr.interrupt_id}-resumed`,
+        mission_id: missionId,
+        branch_id: branchId,
+        sequence_num: seq++,
+        branch_sequence_num: seq,
+        event_type: 'interrupt.resumed',
+        timestamp: resumedIso,
+        agent_id: intr.agent_id ?? undefined,
+        span_id: intr.span_id ?? undefined,
+        trace_id: traceId,
+        payload: {
+          agent_id: intr.agent_id,
+          interrupt_id: intr.interrupt_id,
+          ...(intr.decision_payload ?? {}),
+        },
+        metadata: {},
+        source_span_id: intr.span_id ?? undefined,
+        source_event_id: 'interrupt.resumed',
+      } as any);
+    }
+  }
+
+  // Sort events chronologically
+  events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime() || a.sequence_num - b.sequence_num);
+
+  const lastSnapshot = snapshots[snapshots.length - 1];
+  const durationSeconds = timestamps.length >= 2
+    ? (timestamps[timestamps.length - 1] - timestamps[0]) / 1e9
+    : null;
+
+  const interruptsRecord: Record<string, any> = {};
+  for (const intr of interrupts) {
+    interruptsRecord[intr.interrupt_id] = {
+      interrupt_id: intr.interrupt_id,
+      status: intr.status,
+      reason: intr.reason,
+      agent_id: intr.agent_id ?? undefined,
+      span_id: intr.span_id ?? undefined,
+      decision: intr.decision ?? undefined,
+      decision_comment: intr.decision_comment ?? undefined,
+      resume_url: intr.resume_url ?? undefined,
+      payload: intr.payload ?? {},
+      decision_payload: intr.decision_payload ?? undefined,
+      updated_at: intr.updated_at ? new Date(intr.updated_at).toISOString() : new Date().toISOString(),
+    };
+  }
+
+  return {
+    mission_id: missionId,
+    branch_id: branchId,
+    total_frames: snapshots.length,
+    duration_seconds: durationSeconds,
+    branches: [
+      {
+        id: branchId,
+        name: branchId,
+        mission_id: missionId,
+        status: 'active',
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ],
+    events,
+    snapshots,
+    current_state: {
+      mission_id: missionId,
+      branch_id: branchId,
+      sequence_num: lastSnapshot?.sequence_num ?? 0,
+      agents: {},
+      interrupts: interruptsRecord,
+      status: lastSnapshot?.nodes.some((n) => n.status === 'failed') ? 'failed' : 'completed',
+      phase: 'completed',
+      nodes: lastSnapshot?.nodes ?? [],
+      edges: lastSnapshot?.edges ?? [],
+    },
+  };
+}

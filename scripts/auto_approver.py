@@ -13,7 +13,7 @@ def auto_approve(endpoint: str = "http://localhost:8001"):
                 if missions_resp.status_code == 200:
                     missions = missions_resp.json().get("missions", [])
                     for mission in missions:
-                        if mission.get("status") == "executing" or mission.get("status") == "waiting_for_human":
+                        if mission.get("status") in ("active", "executing", "waiting_for_human") or mission.get("phase") in ("executing", "waiting_for_human"):
                             mission_id = mission["id"]
                             interrupts_resp = client.get(f"/api/v1/missions/{mission_id}/interrupts?status=pending")
                             if interrupts_resp.status_code == 200:

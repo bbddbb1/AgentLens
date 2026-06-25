@@ -88,6 +88,10 @@ export function describeRuntimeEvent(event: MissionEventRecord): string | null {
       const key = payloadString(payload, 'memory_key') ?? payloadString(payload, 'key') ?? 'memory';
       return `${agent} wrote to ${key}`;
     }
+    case 'memory.read': {
+      const key = payloadString(payload, 'memory_key') ?? payloadString(payload, 'key') ?? 'memory';
+      return `${agent} read from ${key}`;
+    }
     case 'observation.recorded':
       return `${agent} recorded an observation`;
     case 'artifact.created':
@@ -144,6 +148,7 @@ function classifyEvent(
       buckets.decisions.push({ text, ...base });
       break;
     case 'memory.written':
+    case 'memory.read':
       buckets.evidence.push({
         text,
         source: payloadString(event.payload, 'memory_key') ?? payloadString(event.payload, 'key'),

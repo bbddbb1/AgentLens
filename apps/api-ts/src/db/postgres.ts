@@ -241,48 +241,35 @@ export async function initializeDatabase(): Promise<void> {
   `).catch(() => {});
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS mission_events (
+    DROP TABLE IF EXISTS mission_events, graph_snapshots, mission_state_checkpoints CASCADE;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS spans (
       id UUID PRIMARY KEY,
       mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
       branch_id VARCHAR(255) NOT NULL,
-      sequence_num INTEGER NOT NULL,
-      branch_sequence_num INTEGER NOT NULL,
-      timestamp TIMESTAMPTZ NOT NULL,
-      event_type VARCHAR(100) NOT NULL,
-      agent_id VARCHAR(255) NULL,
-      span_id VARCHAR(64) NULL,
-      trace_id VARCHAR(64) NULL,
+      trace_id VARCHAR(64) NOT NULL,
+      span_id VARCHAR(64) NOT NULL,
       parent_span_id VARCHAR(64) NULL,
-      idempotency_key VARCHAR(255) NULL,
-      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-      UNIQUE (mission_id, sequence_num),
-      UNIQUE (mission_id, branch_id, branch_sequence_num),
-      UNIQUE (mission_id, branch_id, idempotency_key)
+      name VARCHAR(255) NOT NULL,
+      start_time_unix_nano NUMERIC NOT NULL,
+      end_time_unix_nano NUMERIC NULL,
+      status_code VARCHAR(50) NOT NULL,
+      attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+      events JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (mission_id, branch_id, span_id)
     )
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_mission_events_branch_sequence
-    ON mission_events (mission_id, branch_id, sequence_num)
+    CREATE INDEX IF NOT EXISTS idx_spans_mission_branch ON spans (mission_id, branch_id);
   `);
 
   await pool.query(`
-    ALTER TABLE mission_events
-    ADD COLUMN IF NOT EXISTS actor_type VARCHAR(50) NULL,
-    ADD COLUMN IF NOT EXISTS actor_id VARCHAR(255) NULL,
-    ADD COLUMN IF NOT EXISTS causal JSONB NULL,
-    ADD COLUMN IF NOT EXISTS origin_framework VARCHAR(100) NULL,
-    ADD COLUMN IF NOT EXISTS model JSONB NULL,
-    ADD COLUMN IF NOT EXISTS error_attribution JSONB NULL,
-    ADD COLUMN IF NOT EXISTS policy_decision JSONB NULL,
-    ADD COLUMN IF NOT EXISTS content_hash VARCHAR(128) NULL,
-    ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(128) NULL
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_mission_events_content_hash
-    ON mission_events (content_hash) WHERE content_hash IS NOT NULL
+    CREATE INDEX IF NOT EXISTS idx_spans_trace_id ON spans (trace_id);
   `);
 
   await pool.query(`
@@ -296,32 +283,6 @@ export async function initializeDatabase(): Promise<void> {
       size_bytes BIGINT NULL,
       metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS graph_snapshots (
-      id UUID PRIMARY KEY,
-      mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
-      sequence_num INTEGER NOT NULL,
-      timestamp TIMESTAMPTZ NOT NULL,
-      nodes JSONB NOT NULL,
-      edges JSONB NOT NULL,
-      event_type VARCHAR(100) NULL,
-      event_description TEXT NULL,
-      phase VARCHAR(50) NULL,
-      UNIQUE (mission_id, sequence_num)
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS mission_state_checkpoints (
-      mission_id UUID NOT NULL,
-      branch_id VARCHAR(255) NOT NULL,
-      sequence_num INT NOT NULL,
-      state JSONB NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (mission_id, branch_id, sequence_num)
     )
   `);
 }

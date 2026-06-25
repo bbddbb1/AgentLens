@@ -10,6 +10,7 @@ const RENDERERS: Record<string, (ref: RuntimeEventRef, mode: EventRenderMode) =>
   'tool.completed': (ref) => `finished ${ref.object ?? 'tool'}`,
   'tool.failed': (ref) => `tool failed: ${ref.object ?? 'tool'}`,
   'memory.written': (ref) => `wrote ${ref.object ?? 'memory'}`,
+  'memory.read': (ref) => `read ${ref.object ?? 'memory'}`,
   'artifact.created': (ref) => `created ${ref.object ?? 'artifact'}`,
   'artifact.updated': (ref) => `updated ${ref.object ?? 'artifact'}`,
   'handoff.requested': (ref) => `requested handoff${ref.object ? ` to ${ref.object}` : ''}`,

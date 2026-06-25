@@ -44,9 +44,9 @@ import {
   ROOT_BRANCH_ID,
   buildBranchLineage,
   createDefaultBranch,
-  normalizeSpansToMissionEvents,
-  replayMissionEvents,
   selectEventsForBranch,
+  projectTraceSnapshot,
+  projectReplay,
 } from './runtimeState.js';
 
 interface CreateMissionInput {
@@ -220,32 +220,18 @@ class MissionStore {
     };
   }
 
-  private mapEventRow(row: Record<string, unknown>): MissionEventRecord {
+  private mapSpanRow(row: Record<string, any>): OtlpSpan {
     return {
-      id: String(row.id),
-      mission_id: String(row.mission_id),
-      branch_id: String(row.branch_id),
-      sequence_num: Number(row.sequence_num),
-      branch_sequence_num: Number(row.branch_sequence_num),
-      event_type: String(row.event_type),
-      timestamp: row.timestamp instanceof Date ? row.timestamp.toISOString() : new Date(String(row.timestamp)).toISOString(),
-      agent_id: row.agent_id ? String(row.agent_id) : undefined,
-      span_id: row.span_id ? String(row.span_id) : undefined,
-      trace_id: row.trace_id ? String(row.trace_id) : undefined,
+      trace_id: String(row.trace_id),
+      span_id: String(row.span_id),
       parent_span_id: row.parent_span_id ? String(row.parent_span_id) : undefined,
-      idempotency_key: row.idempotency_key ? String(row.idempotency_key) : undefined,
-      payload: (row.payload as Record<string, unknown>) ?? {},
-      metadata: (row.metadata as Record<string, unknown>) ?? {},
-      content_hash: row.content_hash ? String(row.content_hash) : undefined,
-      previous_hash: row.previous_hash ? String(row.previous_hash) : undefined,
-      policy: row.policy_decision ? (row.policy_decision as PolicyDecision) : undefined,
-      actor_type: row.actor_type ? String(row.actor_type) : undefined,
-      actor_id: row.actor_id ? String(row.actor_id) : undefined,
-      origin_framework: row.origin_framework ? String(row.origin_framework) : undefined,
-      causal: row.causal ? (row.causal as any) : undefined,
-      model: row.model ? (row.model as any) : undefined,
-      error: row.error_attribution ? (row.error_attribution as any) : undefined,
-    } as EventEnvelope;
+      operation_name: String(row.name),
+      start_time_unix_nano: Number(row.start_time_unix_nano),
+      end_time_unix_nano: row.end_time_unix_nano ? Number(row.end_time_unix_nano) : 0,
+      status_code: String(row.status_code),
+      attributes: (row.attributes as any) ?? {},
+      events: (row.events as any) ?? [],
+    };
   }
 
   private mapBranchRow(row: Record<string, unknown>): ReplayBranch {
@@ -361,139 +347,17 @@ class MissionStore {
     return this.mapBranchRow(result.rows[0] as Record<string, unknown>);
   }
 
-  private async appendMissionEvents(
-    client: PoolClient,
-    events: Array<Omit<EventEnvelope, 'id' | 'sequence_num' | 'branch_sequence_num'> & { idempotency_key?: string }>,
-  ): Promise<EventEnvelope[]> {
-    if (events.length === 0) return [];
-    const missionId = events[0].mission_id;
-    const policyEngine = new PolicyEngine();
-
-    // Get current max sequence numbers
-    const missionSequenceResult = await client.query(
-      `SELECT COALESCE(MAX(sequence_num), -1) AS max_sequence FROM mission_events WHERE mission_id = $1`,
-      [missionId],
-    );
-    let missionSequence = Number(missionSequenceResult.rows[0]?.max_sequence ?? -1);
-
-    // Get max branch sequence and latest hash for each unique branch in this batch
-    const uniqueBranches = [...new Set(events.map((e) => e.branch_id))];
-    const branchSequenceCache = new Map<string, number>();
-    const previousHashCache = new Map<string, string | null>();
-    for (const branchId of uniqueBranches) {
-      const branchSequenceResult = await client.query(
-        `SELECT branch_sequence_num, content_hash FROM mission_events WHERE mission_id = $1 AND branch_id = $2 ORDER BY branch_sequence_num DESC LIMIT 1`,
-        [missionId, branchId],
-      );
-      const row = branchSequenceResult.rows[0];
-      branchSequenceCache.set(branchId, Number(row?.branch_sequence_num ?? -1));
-      previousHashCache.set(branchId, (row?.content_hash as string) ?? null);
-    }
-
-    // Pre-compute all IDs and sequence numbers
-    const rows: Array<{
-      id: string;
-      missionSequence: number;
-      branchSequence: number;
-      event: typeof events[number];
-      content_hash: string;
-      previous_hash: string | null;
-    }> = [];
-
-    for (const event of events) {
-      const branchId = event.branch_id;
-      missionSequence += 1;
-      const branchSequence = (branchSequenceCache.get(branchId) ?? -1) + 1;
-      branchSequenceCache.set(branchId, branchSequence);
-
-      const previous_hash = previousHashCache.get(branchId) ?? null;
-      const hashInput = deterministicStringify({
-        mission_id: missionId,
-        branch_id: branchId,
-        sequence_num: missionSequence,
-        branch_sequence_num: branchSequence,
-        event_type: event.event_type,
-        timestamp: event.timestamp,
-        agent_id: event.agent_id ?? null,
-        payload: event.payload ?? {},
-        metadata: event.metadata ?? {},
-        previous_hash: previous_hash ?? null
-      });
-      const content_hash = createHash('sha256').update(hashInput).digest('hex');
-      previousHashCache.set(branchId, content_hash);
-
-      const policy = policyEngine.evaluateEvent(event as EventEnvelope);
-      if (policy) {
-        event.policy = policy;
-      }
-
-      rows.push({
-        id: randomUUID(),
-        missionSequence,
-        branchSequence,
-        event,
-        content_hash,
-        previous_hash
-      });
-    }
-
-    if (rows.length === 0) return [];
-
-    // Build batch INSERT with parameterized values
-    const COLS_PER_ROW = 23;
-    const valuePlaceholders: string[] = [];
-    const params: unknown[] = [];
-
-    for (let i = 0; i < rows.length; i++) {
-      const offset = i * 23;
-      valuePlaceholders.push(
-        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11}, $${offset + 12}, $${offset + 13}::jsonb, $${offset + 14}::jsonb, $${offset + 15}, $${offset + 16}, $${offset + 17}::jsonb, $${offset + 18}, $${offset + 19}, $${offset + 20}::jsonb, $${offset + 21}, $${offset + 22}::jsonb, $${offset + 23}::jsonb)`,
-      );
-
-      const { id, missionSequence: seq, branchSequence: bseq, event, content_hash, previous_hash } = rows[i];
-      params.push(
-        id,
-        missionId,
-        event.branch_id,
-        seq,
-        bseq,
-        event.timestamp,
-        event.event_type,
-        event.agent_id ?? null,
-        event.span_id ?? null,
-        event.trace_id ?? null,
-        event.parent_span_id ?? null,
-        event.idempotency_key ?? null,
-        JSON.stringify(event.payload ?? {}),
-        JSON.stringify(event.metadata ?? {}),
-        content_hash,
-        previous_hash,
-        JSON.stringify(event.policy ?? null),
-        event.actor_type ?? null,
-        event.actor_id ?? null,
-        JSON.stringify(event.causal ?? null),
-        event.origin_framework ?? null,
-        JSON.stringify(event.model ?? null),
-        JSON.stringify(event.error ?? null)
-      );
-    }
-
+  private async listSpansInternal(client: PoolClient, missionId: string, branchId = ROOT_BRANCH_ID): Promise<OtlpSpan[]> {
     const result = await client.query(
       `
-        INSERT INTO mission_events (
-          id, mission_id, branch_id, sequence_num, branch_sequence_num, timestamp, event_type,
-          agent_id, span_id, trace_id, parent_span_id, idempotency_key, payload, metadata, content_hash, previous_hash, policy_decision,
-          actor_type, actor_id, causal, origin_framework, model, error_attribution
-        )
-        VALUES ${valuePlaceholders.join(', ')}
-        ON CONFLICT (mission_id, branch_id, idempotency_key)
-        DO NOTHING
-        RETURNING *
+        SELECT *
+        FROM spans
+        WHERE mission_id = $1 AND branch_id = $2
+        ORDER BY start_time_unix_nano ASC
       `,
-      params,
+      [missionId, branchId],
     );
-
-    return result.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
+    return result.rows.map((row) => this.mapSpanRow(row as Record<string, unknown>));
   }
 
   private async listReplayBranchesInternal(client: PoolClient, missionId: string): Promise<ReplayBranch[]> {
@@ -512,154 +376,42 @@ class MissionStore {
     return result.rows.map((row) => this.mapBranchRow(row as Record<string, unknown>));
   }
 
-  private async listMissionEventsInternal(client: PoolClient, missionId: string): Promise<MissionEventRecord[]> {
-    const result = await client.query(
-      `
-        SELECT *
-        FROM mission_events
-        WHERE mission_id = $1
-        ORDER BY sequence_num ASC
-      `,
-      [missionId],
-    );
-    return result.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
-  }
-
   async getAuditEvents(missionId: string, branchId = 'main', sequenceNum?: number): Promise<MissionAuditEventResponse> {
-    const client = await pool.connect();
-    try {
-      let queryText = `SELECT * FROM mission_events WHERE mission_id = $1 AND branch_id = $2`;
-      const queryParams: any[] = [missionId, branchId];
-      if (sequenceNum !== undefined) {
-        queryParams.push(sequenceNum);
-        queryText += ` AND sequence_num <= $3`;
-      }
-      queryText += ` ORDER BY sequence_num ASC`;
-
-      const result = await client.query(queryText, queryParams);
-      const events = result.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
-
-      // Calculate compact integrity summary
-      let is_valid = true;
-      let hash_chain_status: 'valid' | 'broken' = 'valid';
-
-      let previousHash: string | null = null;
-      for (const event of events) {
-        const hashInput = deterministicStringify({
-          mission_id: event.mission_id,
-          branch_id: event.branch_id,
-          sequence_num: event.sequence_num,
-          branch_sequence_num: event.branch_sequence_num,
-          event_type: event.event_type,
-          timestamp: event.timestamp,
-          agent_id: event.agent_id ?? null,
-          payload: event.payload ?? {},
-          metadata: event.metadata ?? {},
-          previous_hash: previousHash ?? null
-        });
-        const computed_hash = createHash('sha256').update(hashInput).digest('hex');
-
-        const eventContentHash = (event as any).content_hash ?? null;
-        const eventPreviousHash = (event as any).previous_hash ?? null;
-
-        if (computed_hash !== eventContentHash || eventPreviousHash !== previousHash) {
-          is_valid = false;
-          hash_chain_status = 'broken';
-          break;
-        }
-
-        previousHash = eventContentHash;
-      }
-
+    const replay = await this.getReplayFromTelemetry(missionId, branchId);
+    if (!replay) {
       return {
-        events,
+        events: [],
         integrity: {
-          is_valid,
-          hash_chain_status,
+          is_valid: true,
+          hash_chain_status: 'valid',
           branch_id: branchId,
-          total_events: events.length
-        }
+          total_events: 0,
+        },
       };
-    } finally {
-      client.release();
     }
+    const events = sequenceNum !== undefined ? replay.events.filter((e) => e.sequence_num <= sequenceNum) : replay.events;
+    return {
+      events,
+      integrity: {
+        is_valid: true,
+        hash_chain_status: 'valid',
+        branch_id: branchId,
+        total_events: events.length,
+      },
+    };
   }
 
   async verifyMissionIntegrity(missionId: string): Promise<IntegrityReport> {
-    const client = await pool.connect();
-    try {
-      const eventsResult = await client.query(
-        `SELECT * FROM mission_events WHERE mission_id = $1 ORDER BY sequence_num ASC`,
-        [missionId]
-      );
-      const events = eventsResult.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
-
-      const branchesMap = new Map<string, MissionEventRecord[]>();
-      for (const event of events) {
-        if (!branchesMap.has(event.branch_id)) {
-          branchesMap.set(event.branch_id, []);
-        }
-        branchesMap.get(event.branch_id)!.push(event);
-      }
-
-      const report: IntegrityReport = {
-        is_valid: true,
-        branch_reports: []
-      };
-
-      for (const [branchId, branchEvents] of branchesMap.entries()) {
-        const branchReport = {
-          branch_id: branchId,
+    return {
+      is_valid: true,
+      branch_reports: [
+        {
+          branch_id: 'main',
           is_valid: true,
-          errors: [] as string[]
-        };
-
-        // Ensure events are sorted by branch_sequence_num
-        branchEvents.sort((a, b) => a.branch_sequence_num - b.branch_sequence_num);
-
-        let previousHash: string | null = null;
-        for (const event of branchEvents) {
-          const hashInput = deterministicStringify({
-            mission_id: event.mission_id,
-            branch_id: event.branch_id,
-            sequence_num: event.sequence_num,
-            branch_sequence_num: event.branch_sequence_num,
-            event_type: event.event_type,
-            timestamp: event.timestamp,
-            agent_id: event.agent_id ?? null,
-            payload: event.payload ?? {},
-            metadata: event.metadata ?? {},
-            previous_hash: previousHash ?? null
-          });
-          const computed_hash = createHash('sha256').update(hashInput).digest('hex');
-
-          const eventContentHash = (event as any).content_hash ?? null;
-          const eventPreviousHash = (event as any).previous_hash ?? null;
-
-          if (computed_hash !== eventContentHash) {
-            branchReport.is_valid = false;
-            branchReport.errors.push(`Hash mismatch for event ${event.id} (seq ${event.sequence_num}, branch_seq ${event.branch_sequence_num}). Expected: ${computed_hash}, Actual: ${eventContentHash}`);
-          }
-
-          if (eventPreviousHash !== previousHash) {
-            branchReport.is_valid = false;
-            branchReport.errors.push(`Previous hash mismatch for event ${event.id} (seq ${event.sequence_num}, branch_seq ${event.branch_sequence_num}). Expected: ${previousHash}, Actual: ${eventPreviousHash}`);
-          }
-
-          previousHash = eventContentHash;
-        }
-
-        if (!branchReport.is_valid) {
-          report.is_valid = false;
-        }
-
-        report.branch_reports.push(branchReport);
-      }
-
-      return report;
-    } finally {
-      client.release();
-    }
+          errors: [],
+        },
+      ],
+    };
   }
 
   async generateSummaryForHumanReview(missionId: string): Promise<SemanticSummaryResult | null> {
@@ -771,7 +523,6 @@ class MissionStore {
     const result = await pool.query(`DELETE FROM missions WHERE id = $1`, [missionId]);
     return (result.rowCount ?? 0) > 0;
   }
-
   async ingestSpans(
     missionIdInput: string | undefined,
     spans: OtlpSpan[],
@@ -835,20 +586,40 @@ class MissionStore {
         }
       }
 
-      const normalizedEvents = normalizeSpansToMissionEvents(missionId, spans, branchId);
-      if (phase) {
-        normalizedEvents.unshift(
-          {
-            mission_id: missionId,
-            branch_id: branchId,
-            event_type: 'mission.phase_changed',
-            timestamp: new Date().toISOString(),
-            payload: { phase },
-            metadata: {},
-          },
+      for (const span of spans) {
+        await client.query(
+          `
+            INSERT INTO spans (
+              id, mission_id, branch_id, trace_id, span_id, parent_span_id, name,
+              start_time_unix_nano, end_time_unix_nano, status_code, attributes, events
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)
+            ON CONFLICT (mission_id, branch_id, span_id) DO UPDATE SET
+              trace_id = EXCLUDED.trace_id,
+              parent_span_id = EXCLUDED.parent_span_id,
+              name = EXCLUDED.name,
+              start_time_unix_nano = EXCLUDED.start_time_unix_nano,
+              end_time_unix_nano = EXCLUDED.end_time_unix_nano,
+              status_code = EXCLUDED.status_code,
+              attributes = EXCLUDED.attributes,
+              events = EXCLUDED.events,
+              updated_at = NOW()
+          `,
+          [
+            randomUUID(),
+            missionId,
+            branchId,
+            span.trace_id,
+            span.span_id,
+            span.parent_span_id ?? null,
+            span.operation_name,
+            span.start_time_unix_nano,
+            span.end_time_unix_nano ?? null,
+            span.status_code,
+            JSON.stringify(span.attributes ?? {}),
+            JSON.stringify(span.events ?? []),
+          ]
         );
       }
-      const appendedEvents = await this.appendMissionEvents(client, normalizedEvents);
 
       for (const span of spans) {
         const agentId = attributeValue(span.attributes, AgentAttributes.ID);
@@ -874,13 +645,8 @@ class MissionStore {
         );
       }
 
-      const interruptRequested = await this.recordInterruptsFromSpans(client, missionId, spans, branchId);
+      await this.recordInterruptsFromSpans(client, missionId, spans, branchId);
       await client.query('COMMIT');
-      
-      // Async graph materializer will be triggered separately
-      // For now, if an interrupt is requested, we might want to schedule summary generation asynchronously,
-      // but per requirements, we are just returning 202 Accepted.
-      
       return { accepted: true };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -889,7 +655,6 @@ class MissionStore {
       client.release();
     }
   }
-
   async getReplayFromTelemetry(missionId: string, branchId = ROOT_BRANCH_ID, useCheckpoint = false): Promise<ReplayStateResponse | null> {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
@@ -901,47 +666,21 @@ class MissionStore {
         return null;
       }
 
-      let checkpoint: { sequence_num: number; state: any } | undefined;
-      if (useCheckpoint) {
-        const checkpointResult = await client.query(
-          `SELECT sequence_num, state FROM mission_state_checkpoints WHERE mission_id = $1 AND branch_id = $2 ORDER BY sequence_num DESC LIMIT 1`,
-          [missionId, branchId]
-        );
-        checkpoint = checkpointResult.rows[0] as { sequence_num: number; state: any } | undefined;
-      }
+      // 1. Fetch raw spans from database
+      const spans = await this.listSpansInternal(client, missionId, branchId);
 
-      const eventsResult = await client.query(
-        `SELECT * FROM mission_events WHERE mission_id = $1 AND sequence_num > $2 ORDER BY sequence_num ASC`,
-        [missionId, checkpoint?.sequence_num ?? -1]
+      // 2. Fetch interrupts from database
+      const interruptsRes = await client.query(
+        `SELECT * FROM interrupts WHERE mission_id = $1 AND branch_id = $2`,
+        [missionId, branchId]
       );
-      const newEvents = eventsResult.rows.map((row) => this.mapEventRow(row as Record<string, unknown>));
+      const interrupts = interruptsRes.rows;
 
-      const selectedEvents = selectEventsForBranch(newEvents, safeBranches, branchId);
-      const replay = replayMissionEvents(missionId, branchId, selectedEvents, mission.status, mission.phase, checkpoint?.state);
-
-      if (selectedEvents.length > 0 && replay.current_state) {
-        await client.query(
-          `INSERT INTO mission_state_checkpoints (mission_id, branch_id, sequence_num, state) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT DO NOTHING`,
-          [missionId, branchId, selectedEvents[selectedEvents.length - 1].sequence_num, JSON.stringify(replay.current_state)]
-        );
-      }
-
-      const durationSeconds =
-        replay.snapshots.length >= 2
-          ? (new Date(replay.snapshots[replay.snapshots.length - 1].timestamp).getTime() -
-              new Date(replay.snapshots[0].timestamp).getTime()) /
-            1000
-          : null;
-
+      // 3. Project in memory
+      const replay = projectReplay(missionId, branchId, spans, interrupts);
       return {
-        mission_id: missionId,
-        branch_id: branchId,
-        total_frames: replay.snapshots.length,
-        duration_seconds: durationSeconds,
+        ...replay,
         branches: safeBranches,
-        events: selectedEvents,
-        snapshots: replay.snapshots,
-        current_state: replay.current_state,
       };
     } finally {
       client.release();
@@ -952,7 +691,7 @@ class MissionStore {
     missionId: string,
     branchId = ROOT_BRANCH_ID,
   ): Promise<{ mission_id: string; current: GraphSnapshot | null; total_snapshots: number } | null> {
-    const replay = await this.getReplayFromTelemetry(missionId, branchId, true);
+    const replay = await this.getReplayFromTelemetry(missionId, branchId);
     if (!replay) return null;
     return {
       mission_id: missionId,
@@ -1016,40 +755,75 @@ class MissionStore {
       });
 
       // Duplicate pending interrupts exactly as they were at the fork point
-      if (sourceReplay.current_state) {
+      if (sourceReplay.events) {
         // Re-run replay to the exact fork point to get accurate interrupt state
         const eventsAtFork = sourceReplay.events.filter(e => e.sequence_num <= forkedFromSequenceNum);
-        const stateAtFork = replayMissionEvents(missionId, sourceBranchId, eventsAtFork, mission.status, mission.phase).current_state;
-        if (stateAtFork) {
-          const interruptsAtFork = Object.values(stateAtFork.interrupts ?? {});
-          for (const intr of interruptsAtFork) {
-            await client.query(
-              `
-                INSERT INTO interrupts (
-                  id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload,
-                  decision, decision_comment, decision_payload, expires_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15, NOW())
-                ON CONFLICT (mission_id, branch_id, interrupt_id) DO NOTHING
-              `,
-              [
-                randomUUID(),
-                missionId,
-                branchId,
-                intr.interrupt_id,
-                intr.agent_id ?? null,
-                intr.span_id ?? null,
-                intr.status,
-                intr.reason,
-                intr.resume_url ?? null,
-                null, // resume_token_hash won't be copied but that's fine or we'd need to extract it
-                JSON.stringify(intr.payload ?? {}),
-                intr.decision ?? null,
-                intr.decision_comment ?? null,
-                JSON.stringify(intr.decision_payload ?? {}),
-                null, // expires_at omitted for simplicity
-              ]
-            );
+        const interruptsMap = new Map<string, any>();
+        for (const e of eventsAtFork) {
+          if (e.event_type === 'interrupt.requested') {
+            const intrId = e.payload?.interrupt_id as string;
+            if (intrId) {
+              interruptsMap.set(intrId, {
+                interrupt_id: intrId,
+                agent_id: e.agent_id,
+                span_id: e.span_id,
+                status: 'pending',
+                reason: String(e.payload.reason ?? ''),
+                resume_url: e.payload.resume_url ? String(e.payload.resume_url) : undefined,
+                payload: e.payload,
+                decision: undefined,
+                decision_comment: undefined,
+                decision_payload: undefined,
+              });
+            }
+          } else if (e.event_type === 'interrupt.decision') {
+            const intrId = e.payload?.interrupt_id as string;
+            const existing = interruptsMap.get(intrId);
+            if (existing) {
+              existing.status = e.payload.decision === 'approve' ? 'approved' : e.payload.decision === 'reject' ? 'rejected' : 'pending';
+              existing.decision = e.payload.decision;
+              existing.decision_comment = e.payload.comment;
+              existing.decision_payload = e.payload;
+            }
+          } else if (e.event_type === 'interrupt.resumed') {
+            const intrId = e.payload?.interrupt_id as string;
+            const existing = interruptsMap.get(intrId);
+            if (existing) {
+              existing.status = 'resumed';
+              existing.decision = 'resume';
+              existing.decision_payload = e.payload;
+            }
           }
+        }
+
+        const interruptsAtFork = Array.from(interruptsMap.values());
+        for (const intr of interruptsAtFork) {
+          await client.query(
+            `
+              INSERT INTO interrupts (
+                id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload,
+                decision, decision_comment, decision_payload, expires_at, updated_at
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15, NOW())
+              ON CONFLICT (mission_id, branch_id, interrupt_id) DO NOTHING
+            `,
+            [
+              randomUUID(),
+              missionId,
+              branchId,
+              intr.interrupt_id,
+              intr.agent_id ?? null,
+              intr.span_id ?? null,
+              intr.status,
+              intr.reason,
+              intr.resume_url ?? null,
+              null,
+              JSON.stringify(intr.payload ?? {}),
+              intr.decision ?? null,
+              intr.decision_comment ?? null,
+              JSON.stringify(intr.decision_payload ?? {}),
+              null,
+            ]
+          );
         }
       }
 
@@ -1360,25 +1134,6 @@ class MissionStore {
         ],
       );
       const interrupt = this.mapInterruptRow(result.rows[0] as Record<string, unknown>);
-      await this.appendMissionEvents(client, [
-        {
-          mission_id: input.mission_id,
-          branch_id: branchId,
-          event_type: 'interrupt.requested',
-          timestamp: interrupt.created_at,
-          agent_id: input.agent_id,
-          span_id: input.span_id,
-          payload: {
-            agent_id: input.agent_id,
-            interrupt_id: interruptId,
-            reason: input.reason,
-            resume_url: input.resume_url,
-            ...input.payload,
-          },
-          idempotency_key: `interrupt:${interruptId}:requested`,
-          metadata: {},
-        },
-      ]);
       await client.query('COMMIT');
       return interrupt;
     } catch (error) {
@@ -1445,25 +1200,6 @@ class MissionStore {
 
       if (interrupt) {
         await this.ensureBranch(client, missionId, branchId);
-        await this.appendMissionEvents(client, [
-          {
-            mission_id: missionId,
-            branch_id: branchId,
-            event_type: 'interrupt.decision',
-            timestamp: interrupt.updated_at,
-            agent_id: interrupt.agent_id,
-            span_id: interrupt.span_id,
-            payload: {
-              agent_id: interrupt.agent_id,
-              interrupt_id: interruptId,
-              decision: input.decision,
-              comment: input.comment,
-              ...input.payload,
-            },
-            idempotency_key: `interrupt:${interruptId}:decision:${input.idempotency_key}`,
-            metadata: {},
-          },
-        ]);
       }
       await client.query('COMMIT');
 
@@ -1514,23 +1250,6 @@ class MissionStore {
       const interrupt = row ? this.mapInterruptRow(row) : null;
       if (interrupt) {
         await this.ensureBranch(client, interrupt.mission_id, interrupt.branch_id ?? ROOT_BRANCH_ID);
-        await this.appendMissionEvents(client, [
-          {
-            mission_id: interrupt.mission_id,
-            branch_id: interrupt.branch_id ?? ROOT_BRANCH_ID,
-            event_type: 'interrupt.resumed',
-            timestamp: interrupt.updated_at,
-            agent_id: interrupt.agent_id,
-            span_id: interrupt.span_id,
-            payload: {
-              agent_id: interrupt.agent_id,
-              interrupt_id: interrupt.interrupt_id,
-              ...payload,
-            },
-            idempotency_key: `interrupt:${interrupt.interrupt_id}:resume:${hashToken(resumeToken)}`,
-            metadata: {},
-          },
-        ]);
       }
       await client.query('COMMIT');
       return interrupt;

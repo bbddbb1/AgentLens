@@ -40,6 +40,6 @@ describe('postgres database initialization', () => {
     expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS branch_sandbox_logs'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS interrupts'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS mission_replay_branches'))).toBe(true);
-    expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS mission_events'))).toBe(true);
+    expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS spans'))).toBe(true);
   });
 });

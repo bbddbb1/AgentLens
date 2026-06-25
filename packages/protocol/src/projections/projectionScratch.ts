@@ -17,10 +17,21 @@ export interface AgentNodeScratch {
   requires_human: boolean;
   produced_outputs: ProducedOutput[];
   recent_runtime_events: RuntimeEventRef[];
-  next_transition?: { target: string; kind: 'handoff' | 'delegation' };
+  next_transition?: { target: string; kind: 'handoff' | 'delegation'; reason?: string };
   warnings: RuntimeFactWarning[];
   completed_tasks: number;
   active_task?: string;
+  agent_id?: string;
+  agent_type?: string;
+  framework?: string;
+  iteration?: number;
+  start_time?: string;
+  end_time?: string;
+  duration_ms?: number;
+  error_count: number;
+  source_span_id?: string;
+  source_event_id?: string;
+  active_tool_input?: unknown;
 }
 
 export interface InterruptScratch {
@@ -62,6 +73,7 @@ function createAgentScratch(agentId: string, name?: string): AgentNodeScratch {
     recent_runtime_events: [],
     warnings: [],
     completed_tasks: 0,
+    error_count: 0,
   };
 }
 
@@ -95,6 +107,7 @@ export function buildEventRef(event: MissionEventRecord): RuntimeEventRef | null
       object = payloadString(payload, 'tool_name');
       break;
     case 'memory.written':
+    case 'memory.read':
       object = payloadString(payload, 'memory_key') ?? payloadString(payload, 'key');
       break;
     case 'artifact.created':
@@ -154,26 +167,63 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
   if (agentId) {
     const agent = ensureAgent(scratch, agentId);
 
-    if (event.event_type === 'task.started') {
+    // Track identity attributes (PR-1) & lineage (PR-4)
+    agent.agent_id = agentId;
+    if (event.span_id) agent.source_span_id = event.span_id;
+    if (event.id) agent.source_event_id = event.id;
+
+    const role = payloadString(payload, 'gen_ai.agent.role') ?? payloadString(payload, 'role') ?? payloadString(payload, 'agent_role');
+    if (role) agent.role = role;
+
+    const framework = payloadString(payload, 'gen_ai.agent.framework') ?? payloadString(payload, 'framework') ?? payloadString(payload, 'agent_framework');
+    if (framework) agent.framework = framework;
+
+    const agentType = payloadString(payload, 'agentlens.actor.type') ?? payloadString(payload, 'actor_type') ?? payloadString(payload, 'agent_type');
+    if (agentType) agent.agent_type = agentType;
+
+    const iteration = payloadValue(payload, 'gen_ai.agent.iteration') ?? payloadValue(payload, 'agent.iteration') ?? payloadValue(payload, 'iteration');
+    if (iteration !== undefined) agent.iteration = Number(iteration);
+
+    if (!agent.start_time) {
+      agent.start_time = event.timestamp;
+    }
+
+    if (event.event_type === 'task.started' || event.event_type === 'span.started') {
       agent.status = 'active';
-      agent.active_task = payloadString(payload, 'task');
+      if (event.event_type === 'task.started') {
+        agent.active_task = payloadString(payload, 'task');
+      }
       agent.pending = undefined;
-    } else if (event.event_type === 'task.completed') {
-      agent.completed_tasks += 1;
-      agent.active_task = undefined;
+    } else if (event.event_type === 'task.completed' || event.event_type === 'span.completed') {
+      if (event.event_type === 'task.completed') {
+        agent.completed_tasks += 1;
+        agent.active_task = undefined;
+      }
       agent.status = 'completed';
-    } else if (event.event_type === 'task.failed') {
+      agent.end_time = event.timestamp;
+      if (agent.start_time) {
+        agent.duration_ms = new Date(agent.end_time).getTime() - new Date(agent.start_time).getTime();
+      }
+    } else if (event.event_type === 'task.failed' || event.event_type === 'span.failed') {
       agent.status = 'failed';
       agent.active_task = undefined;
+      agent.error_count += 1;
       agent.warnings.push({
-        code: 'task.failed',
-        message: `Task failed: ${payloadString(payload, 'task') ?? 'unknown'}`,
+        code: event.event_type,
+        message: event.event_type === 'task.failed'
+          ? `Task failed: ${payloadString(payload, 'task') ?? 'unknown'}`
+          : 'Span execution failed',
         sequence_num: event.sequence_num,
         severity: 'high',
       });
-    } else if (event.event_type === 'tool.called') {
+      agent.end_time = event.timestamp;
+      if (agent.start_time) {
+        agent.duration_ms = new Date(agent.end_time).getTime() - new Date(agent.start_time).getTime();
+      }
+    } else if (event.event_type === 'tool.called' || event.event_type === 'tool.call') {
       agent.status = 'active';
-    } else if (event.event_type === 'tool.completed') {
+      agent.active_tool_input = payloadValue(payload, 'gen_ai.tool.input') ?? payloadValue(payload, 'tool_input') ?? payloadValue(payload, 'input');
+    } else if (event.event_type === 'tool.completed' || event.event_type === 'tool.result') {
       const toolName = payloadString(payload, 'tool_name') ?? 'tool';
       const toolOutput = payloadValue(payload, 'tool_output') ?? payloadValue(payload, 'output');
       addProducedOutput(agent, {
@@ -181,21 +231,38 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
         source: event.event_type,
         type: 'tool',
         name: toolName,
-        value: toolOutput,
+        value: {
+          input: agent.active_tool_input,
+          output: toolOutput,
+        },
         sequence_num: event.sequence_num,
         timestamp: event.timestamp,
       });
-    } else if (event.event_type === 'tool.failed') {
+      agent.active_tool_input = undefined;
+    } else if (event.event_type === 'tool.failed' || event.event_type === 'tool.error') {
+      agent.error_count += 1;
       agent.warnings.push({
         code: 'tool.failed',
         message: `Tool failed: ${payloadString(payload, 'tool_name') ?? 'unknown'}`,
         sequence_num: event.sequence_num,
         severity: 'high',
       });
+      agent.active_tool_input = undefined;
     } else if (event.event_type === 'memory.written') {
       const key = payloadString(payload, 'memory_key') ?? payloadString(payload, 'key') ?? 'memory';
       addProducedOutput(agent, {
         id: key,
+        source: event.event_type,
+        type: 'memory',
+        name: key,
+        value: payloadValue(payload, 'value') ?? payloadValue(payload, 'memory_value'),
+        sequence_num: event.sequence_num,
+        timestamp: event.timestamp,
+      });
+    } else if (event.event_type === 'memory.read') {
+      const key = payloadString(payload, 'memory_key') ?? payloadString(payload, 'key') ?? 'memory';
+      addProducedOutput(agent, {
+        id: `${key}-read-${event.sequence_num}`,
         source: event.event_type,
         type: 'memory',
         name: key,
@@ -230,9 +297,10 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
       agent.pending = payloadString(payload, 'reason') ?? 'Awaiting human decision';
       agent.requires_human = true;
     } else if (event.event_type === 'handoff.requested') {
-      const targetId = payloadString(payload, 'target_agent_id');
+      const targetId = payloadString(payload, 'target_agent_id') ?? payloadString(payload, 'gen_ai.agent.handoff.target');
+      const reason = payloadString(payload, 'reason') ?? payloadString(payload, 'gen_ai.agent.handoff.reason');
       if (targetId) {
-        agent.next_transition = { target: targetId, kind: 'handoff' };
+        agent.next_transition = { target: targetId, kind: 'handoff', reason };
         const target = ensureAgent(scratch, targetId);
         target.status = 'waiting';
         target.pending = agentId;
@@ -254,18 +322,33 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
       }
     } else if (event.event_type === 'review.started') {
       agent.status = 'reviewing';
+    } else if (
+      event.event_type === 'review.approved' ||
+      event.event_type === 'review.changes_requested' ||
+      event.event_type === 'review.rejected' ||
+      event.event_type === 'agent.review.approved' ||
+      event.event_type === 'agent.review.changes_requested' ||
+      event.event_type === 'agent.review.rejected'
+    ) {
+      const targetAgentId = payloadString(payload, 'target_agent_id') ?? payloadString(payload, 'gen_ai.agent.review.target');
+      const result = payloadString(payload, 'result') ?? payloadString(payload, 'gen_ai.agent.review.result') ?? event.event_type.split('.').pop() ?? 'reviewed';
+      addProducedOutput(agent, {
+        id: `review-${event.sequence_num}`,
+        source: event.event_type,
+        type: 'reflection',
+        name: `Review: ${result}`,
+        value: {
+          target: targetAgentId,
+          result: result,
+          details: payloadValue(payload, 'details') ?? payloadValue(payload, 'comment') ?? payloadValue(payload, 'review.details')
+        },
+        sequence_num: event.sequence_num,
+        timestamp: event.timestamp,
+      });
     } else if (event.event_type === 'interrupt.resumed') {
       agent.status = 'active';
       agent.pending = undefined;
       agent.requires_human = false;
-    } else if (event.event_type === 'span.failed') {
-      agent.status = 'failed';
-      agent.warnings.push({
-        code: 'span.failed',
-        message: 'Span execution failed',
-        sequence_num: event.sequence_num,
-        severity: 'high',
-      });
     } else if (event.event_type === 'escalation') {
       agent.warnings.push({
         code: 'escalation',

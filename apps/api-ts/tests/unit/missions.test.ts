@@ -403,34 +403,36 @@ describe('missionStore — createInterrupt', () => {
 
 describe('missionStore — getAuditEvents and EventEnvelope', () => {
   it('hydrates EventEnvelope correctly with actor, model, error, causal, and policy fields', async () => {
-    const rawRow = {
-      id: 'e1',
+    const now = '2026-05-31T00:00:00.000Z';
+    const rawSpan = {
+      id: '550e8400-e29b-41d4-a716-446655440000',
       mission_id: '550e8400-e29b-41d4-a716-446655440000',
       branch_id: 'main',
-      sequence_num: 0,
-      branch_sequence_num: 0,
-      event_type: 'tool.called',
-      timestamp: new Date('2026-05-31T00:00:00Z'),
-      agent_id: 'agent1',
-      span_id: 'span1',
       trace_id: 'trace1',
+      span_id: 'span1',
       parent_span_id: 'parent1',
-      idempotency_key: 'key1',
-      payload: { tool_name: 'test_tool' },
-      metadata: {},
-      content_hash: 'somehash',
-      previous_hash: 'prevhash',
-      policy_decision: { rule_id: 'rule1', decision: 'allow' },
-      actor_type: 'tool',
-      actor_id: 'test_tool',
-      origin_framework: 'langgraph',
-      causal: { parent_span_id: 'parent1' },
-      model: { model_name: 'gemini-3.5-flash' },
-      error_attribution: { source: 'model', cause: 'hallucination' }
+      name: 'test',
+      start_time_unix_nano: '1717113600000000000',
+      end_time_unix_nano: null,
+      status_code: 'OK',
+      attributes: {
+        'agent.span.kind': 'execute_tool',
+        'gen_ai.agent.id': 'agent1',
+        actor_type: 'tool',
+        actor_id: 'test_tool',
+        origin_framework: 'langgraph',
+        causal: { parent_span_id: 'parent1' },
+        model: { model_name: 'gemini-3.5-flash' },
+        error_attribution: { source: 'model', cause: 'hallucination' },
+        policy_decision: { rule_id: 'rule1', decision: 'allow' }
+      },
+      events: []
     };
 
-    mockClient.query
-      .mockResolvedValueOnce({ rows: [rawRow], rowCount: 1 }); // SELECT in getAuditEvents
+    mockQuery.mockResolvedValueOnce({ rows: [fakeRow()], rowCount: 1 }); // getMission
+    mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'main', name: 'Main', status: 'active', created_at: now, updated_at: now }], rowCount: 1 }); // branches
+    mockClient.query.mockResolvedValueOnce({ rows: [rawSpan], rowCount: 1 }); // spans
+    mockClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // interrupts
 
     const response = await missionStore.getAuditEvents('550e8400-e29b-41d4-a716-446655440000', 'main');
 
@@ -446,13 +448,48 @@ describe('missionStore — getAuditEvents and EventEnvelope', () => {
   });
 
   it('filters by branch and sequence number in getAuditEvents query', async () => {
-    mockClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const now = '2026-05-31T00:00:00.000Z';
+    mockQuery.mockResolvedValueOnce({ rows: [fakeRow()], rowCount: 1 }); // getMission
+    mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'dev-branch', name: 'Dev', status: 'active', created_at: now, updated_at: now }], rowCount: 1 }); // branches
+    
+    mockClient.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          mission_id: '550e8400-e29b-41d4-a716-446655440000',
+          branch_id: 'dev-branch',
+          trace_id: 't1',
+          span_id: 'span1',
+          name: 'span1',
+          start_time_unix_nano: '1000000',
+          end_time_unix_nano: '2000000',
+          status_code: 'OK',
+          attributes: {},
+          events: [],
+        },
+        {
+          id: '550e8400-e29b-41d4-a716-446655440001',
+          mission_id: '550e8400-e29b-41d4-a716-446655440000',
+          branch_id: 'dev-branch',
+          trace_id: 't1',
+          span_id: 'span2',
+          name: 'span2',
+          start_time_unix_nano: '3000000',
+          end_time_unix_nano: '4000000',
+          status_code: 'OK',
+          attributes: {},
+          events: [],
+        }
+      ],
+      rowCount: 2,
+    }); // spans
+    mockClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // interrupts
 
-    await missionStore.getAuditEvents('550e8400-e29b-41d4-a716-446655440000', 'dev-branch', 10);
-
-    expect(mockClient.query).toHaveBeenCalledWith(
-      expect.stringContaining('AND sequence_num <= $3'),
-      ['550e8400-e29b-41d4-a716-446655440000', 'dev-branch', 10]
-    );
+    const result = await missionStore.getAuditEvents('550e8400-e29b-41d4-a716-446655440000', 'dev-branch', 1);
+    
+    // Each finished span has started + completed event. Sequence number 1 corresponds to the completed event of the first span.
+    expect(result.events).toHaveLength(2);
+    expect(result.events[0].sequence_num).toBe(0);
+    expect(result.events[1].sequence_num).toBe(1);
   });
 });
