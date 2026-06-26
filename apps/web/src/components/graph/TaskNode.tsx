@@ -11,6 +11,8 @@ import { CheckCircle2, Circle, XCircle, Loader2 } from 'lucide-react';
 import { Tooltip } from '@/components/common/Tooltip';
 import { RopsHover } from '@/components/rops/RopsHover';
 import { useGraphStore } from '@/stores/graphStore';
+import { useAuditStore } from '@/stores/auditStore';
+import { collectNodeEvidence } from '@/lib/rops/nodeEvidence';
 import { formatDurationMs } from '@/lib/rops/provenance';
 
 const statusIcons: Record<string, React.ReactNode> = {
@@ -44,10 +46,11 @@ function TaskNodeComponent({ data, selected }: NodeProps) {
   const [isHoverOpen, setIsHoverOpen] = useState(false);
   const baseNodes = useGraphStore((s) => s.baseNodes);
   const baseEdges = useGraphStore((s) => s.baseEdges);
+  const auditEvents = useAuditStore((s) => s.events);
   const hoverModel = (() => {
     const gn = baseNodes.find((n) => n.label === label && n.type === 'task') ?? null;
     if (!gn) return null;
-    return { node: gn, edges: baseEdges, agentProjection: null };
+    return { node: gn, edges: baseEdges, agentProjection: null, evidence: collectNodeEvidence(gn, auditEvents) };
   })();
 
   const isHighlighted = nodeData.highlighted === true;

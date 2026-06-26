@@ -40,9 +40,11 @@ import {
   envelopeProvenance,
   formatDurationMs,
   formatTimestamp,
+  packEvidence,
   splitPayload,
   type AgentView,
 } from '@/lib/rops/provenance';
+import { collectNodeEvidence, type NodeCorrelatedEvidence } from '@/lib/rops/nodeEvidence';
 import { RopsFieldRow, RopsSection, ProvenanceTag } from './primitives';
 import { safePreview } from '@/lib/safePreview';
 
@@ -59,6 +61,9 @@ export interface RopsInspectorInput {
   mission: import('@agentlens/protocol').Mission | null;
   /** The selected event envelope (for the Provenance section + L4 jump). */
   eventEnvelope: EventEnvelope | null;
+  /** The full event-envelope stream for the current frame (Evidence source
+   *  for correlating a non-agent node to its tool I/O / failure reason). */
+  eventEnvelopes: readonly EventEnvelope[];
   /** The runtime agent state (in-memory replay) when available. */
   runtimeAgentState: import('@agentlens/protocol').RuntimeAgentState | null;
   /** The interrupt record (for Interrupt object type). */
@@ -71,6 +76,76 @@ export interface RopsInspectorInput {
   onViewEvidence?: (sequenceNum: number) => void;
   /** Callback to jump the timeline to an event (spec 11 Jump to Event/Timeline). */
   onJumpToEvent?: (sequenceNum: number) => void;
+}
+
+// ---------------------------------------------------------------------------
+// Presentation priority (display order only — spec: evidence-first, no
+// interpretation). These constants govern the order in which correlated
+// runtime evidence rows render inside the Payload section. They never affect
+// evidence content or provenance: every value is packed as Evidence via
+// `packEvidence` and rendered with the shared `RopsFieldRow` primitive.
+// Operationally valuable evidence (tool, query, I/O, failure, artifacts) is
+// shown before the remaining recognized metadata keys.
+// ---------------------------------------------------------------------------
+
+/** Render order for tool/memory/artifact Payload evidence. */
+const TOOL_EVIDENCE_ORDER = [
+  'tool_name',
+  'tool_input',
+  'tool_output',
+  'tool_status',
+  'search_query',
+  'result_count',
+  'retrieval_backend',
+  'failure_reason',
+  'failure_cause',
+] as const;
+
+/** Render order for task (workflow step) Payload evidence. */
+const TASK_EVIDENCE_ORDER = [
+  'task',
+  'gen_ai.agent.task.description',
+  'progress',
+  'failure_reason',
+  'failure_cause',
+] as const;
+
+/** No-schema fields omitted entirely when absent (never fabricated). */
+const OMIT_WHEN_ABSENT: ReadonlySet<string> = new Set<string>([
+  'search_query',
+  'result_count',
+  'retrieval_backend',
+]);
+
+/**
+ * Build the ordered list of Evidence rows for a tool/memory/artifact node from
+ * the raw correlated evidence bundle + node metadata. Returns rows in
+ * presentation-priority order; the caller renders them with `RopsFieldRow`.
+ */
+function buildToolEvidenceRows(
+  evidence: NodeCorrelatedEvidence,
+): Array<{ label: string; field: ReturnType<typeof packEvidence> }> {
+  const rows: Array<{ label: string; field: ReturnType<typeof packEvidence> }> = [];
+  const push = (label: string, value: unknown) => {
+    const field = packEvidence(label, value);
+    if (field.absent && OMIT_WHEN_ABSENT.has(label)) return;
+    rows.push({ label, field });
+  };
+
+  for (const key of TOOL_EVIDENCE_ORDER) {
+    switch (key) {
+      case 'tool_name': push('tool_name', evidence.toolName); break;
+      case 'tool_input': push('tool_input', evidence.toolInput); break;
+      case 'tool_output': push('tool_output', evidence.toolOutput); break;
+      case 'tool_status': push('tool_status', evidence.toolStatus); break;
+      case 'search_query': push('search_query', evidence.searchQuery); break;
+      case 'result_count': push('result_count', evidence.resultCount); break;
+      case 'retrieval_backend': push('retrieval_backend', evidence.retrievalBackend); break;
+      case 'failure_reason': push('failure_reason', evidence.failureReason); break;
+      case 'failure_cause': push('failure_cause', evidence.failureCause); break;
+    }
+  }
+  return rows;
 }
 
 export function RopsInspector(input: RopsInspectorInput) {
@@ -255,7 +330,7 @@ function RuntimeAgentStateInspector({ input }: { input: RopsInspectorInput }) {
 // ---------------------------------------------------------------------------
 
 function PayloadObjectInspector({ input }: { input: RopsInspectorInput }) {
-  const { node, edges, eventEnvelope } = input;
+  const { node, edges, eventEnvelope, eventEnvelopes, agentProjection } = input;
   if (!node) return <EmptyInspector />;
   const view = buildGraphNodeView(node);
   const rels = deriveRelationships(node.id, edges);
@@ -266,6 +341,27 @@ function PayloadObjectInspector({ input }: { input: RopsInspectorInput }) {
   const search = node.type === 'tool'
     ? classifySearch((payload.tool_name as string) ?? node.label, payload)
     : { isSearch: false } as const;
+
+  // Correlate runtime evidence (tool I/O, search query, result count,
+  // retrieval backend, failure reason) from the envelopes sharing this node's
+  // span_id. Pure correlation — the rows below own packing + display order.
+  const evidence = collectNodeEvidence(node, eventEnvelopes, agentProjection);
+  const evidenceRows = buildToolEvidenceRows(evidence);
+  // Metadata keys already surfaced as structured Evidence rows above are
+  // excluded from the remaining recognized list to avoid duplication.
+  const evidenceLabels = new Set(evidenceRows.map((r) => r.label));
+  const metadataAliasKeys = new Set([
+    'tool_name', 'gen_ai.tool.name', 'name',
+    'tool_input', 'gen_ai.tool.input', 'input',
+    'tool_output', 'gen_ai.tool.output', 'output',
+    'tool_status', 'gen_ai.tool.status', 'status',
+    'search_query', 'search.query', 'query',
+    'result_count', 'search.result_count', 'resultCount',
+    'retrieval_backend', 'retrieval.backend', 'retrievalBackend',
+  ]);
+  const remainingRecognized = recognized.filter(
+    ([k]) => !evidenceLabels.has(k) && !metadataAliasKeys.has(k),
+  );
 
   return (
     <PanelShell objectType={view.objectType} name={view.label.value ?? '—'}>
@@ -297,10 +393,22 @@ function PayloadObjectInspector({ input }: { input: RopsInspectorInput }) {
       </RopsSection>
 
       <RopsSection title="Payload">
-        {recognized.length === 0 ? (
+        {evidenceRows.length === 0 && remainingRecognized.length === 0 ? (
           <span className="text-[10px] text-[#5d6180] italic">no recognized payload keys</span>
         ) : (
-          <KeyValueList entries={recognized} />
+          <div className="space-y-1.5">
+            {evidenceRows.map((r) => (
+              <EvidenceRow key={r.label} label={r.label} field={r.field} />
+            ))}
+            {remainingRecognized.length > 0 && (
+              <div className={evidenceRows.length > 0 ? 'pt-1.5' : ''}>
+                {remainingRecognized.length > 0 && evidenceRows.length > 0 && (
+                  <div className="text-[9px] uppercase tracking-[0.12em] text-[#5d6180] mb-1">Other payload</div>
+                )}
+                <KeyValueList entries={remainingRecognized} />
+              </div>
+            )}
+          </div>
         )}
       </RopsSection>
 
@@ -334,12 +442,43 @@ function PayloadObjectInspector({ input }: { input: RopsInspectorInput }) {
 // ---------------------------------------------------------------------------
 
 function WorkflowStepInspector({ input }: { input: RopsInspectorInput }) {
-  const { node, edges, eventEnvelope } = input;
+  const { node, edges, eventEnvelope, eventEnvelopes } = input;
   if (!node) return <EmptyInspector />;
   const view = buildGraphNodeView(node);
   const rels = deriveRelationships(node.id, edges);
   const prov = envelopeProvenance(eventEnvelope);
   const payload = (node.metadata ?? {}) as Record<string, unknown>;
+
+  // Correlate runtime evidence (failure reason from the span.failed envelope
+  // sharing this node's span_id). Tool I/O is not expected for task nodes,
+  // but the correlation is harmless and the rows are omitted when absent.
+  const evidence = collectNodeEvidence(node, eventEnvelopes);
+
+  // Presentation-priority rows: task description fields from metadata, then
+  // failure reason/cause from correlated evidence. Schema-backed absent
+  // fields keep the existing "not recorded" marker; no-schema fields are
+  // omitted (none in the task order today).
+  const taskRows: Array<{ label: string; field: ReturnType<typeof packEvidence> }> = [];
+  for (const key of TASK_EVIDENCE_ORDER) {
+    let value: unknown;
+    switch (key) {
+      case 'task': value = payload.task; break;
+      case 'gen_ai.agent.task.description': value = payload['gen_ai.agent.task.description']; break;
+      case 'progress': value = payload.progress; break;
+      case 'failure_reason': value = evidence.failureReason; break;
+      case 'failure_cause': value = evidence.failureCause; break;
+      default: value = undefined;
+    }
+    taskRows.push({ label: key, field: packEvidence(key, value) });
+  }
+  const { recognized, unrecognized } = splitPayload(payload);
+  const shownKeys: Set<string> = new Set<string>(TASK_EVIDENCE_ORDER);
+  const remainingRecognized = recognized.filter(([k]) => !shownKeys.has(k));
+  const hasAnyPayload =
+    taskRows.some((r) => !r.field.absent) ||
+    remainingRecognized.length > 0 ||
+    unrecognized.length > 0;
+
   return (
     <PanelShell objectType={view.objectType} name={view.label.value ?? '—'}>
       <RopsSection title="Identity">
@@ -357,8 +496,28 @@ function WorkflowStepInspector({ input }: { input: RopsInspectorInput }) {
         <RopsFieldRow label="error_count" field={view.errorCount} />
       </RopsSection>
       <RopsSection title="Payload">
-        {(payload.task || payload['gen_ai.agent.task.description']) ? (
-          <KeyValueList entries={Object.entries(payload).filter(([k]) => k === 'task' || k === 'gen_ai.agent.task.description' || k === 'progress')} />
+        {hasAnyPayload ? (
+          <div className="space-y-1.5">
+            {taskRows.map((r) => (
+              <EvidenceRow key={r.label} label={r.label} field={r.field} />
+            ))}
+            {remainingRecognized.length > 0 && (
+              <div className={taskRows.some((r) => !r.field.absent) ? 'pt-1.5' : ''}>
+                {taskRows.some((r) => !r.field.absent) && (
+                  <div className="text-[9px] uppercase tracking-[0.12em] text-[#5d6180] mb-1">Other payload</div>
+                )}
+                <KeyValueList entries={remainingRecognized} />
+              </div>
+            )}
+            {unrecognized.length > 0 && (
+              <div className="pt-1.5">
+                <div className="text-[9px] text-[#6b708a] mb-1">
+                  Payload keys not in the ROPS whitelist (spec 8.2). Shown verbatim, never interpreted.
+                </div>
+                <KeyValueList entries={unrecognized} />
+              </div>
+            )}
+          </div>
         ) : (
           <span className="text-[10px] text-[#5d6180] italic">no task payload</span>
         )}
@@ -698,6 +857,35 @@ function KeyValueList({ entries }: { entries: ReadonlyArray<readonly [string, un
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Render one correlated Evidence row in presentation-priority order. Scalar
+ * values use the shared `RopsFieldRow` (with `not recorded` + provenance tag);
+ * object/array values render the value via `JsonBlock` with a labeled header
+ * and an Evidence provenance tag. All provenance is Evidence — packed by the
+ * caller via `packEvidence`.
+ */
+function EvidenceRow({
+  label,
+  field,
+}: {
+  label: string;
+  field: ReturnType<typeof packEvidence>;
+}) {
+  const v = field.value;
+  if (v === undefined || v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+    return <RopsFieldRow label={label} field={field} />;
+  }
+  return (
+    <div className="space-y-1 border-b border-[rgba(255,255,255,0.04)] pb-1.5">
+      <div className="flex items-center gap-1.5">
+        <span className="text-[#8f95b2] text-[10px] font-semibold shrink-0">{label}</span>
+        <ProvenanceTag provenance="evidence" />
+      </div>
+      <JsonBlock value={v} />
+    </div>
   );
 }
 

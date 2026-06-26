@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGraphStore } from '@/stores/graphStore';
 import { useReplayStore } from '@/stores/replayStore';
+import { useAuditStore } from '@/stores/auditStore';
 import { BranchExplorer } from '@/components/replay/BranchExplorer';
 import { api } from '@/lib/api';
 import type { MissionAuditEventResponse } from '@agentlens/protocol';
@@ -46,30 +47,34 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
   const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
 
-  // Compact audit events & integrity state
-  const [auditData, setAuditData] = useState<MissionAuditEventResponse | null>(null);
-  const [isAuditLoading, setIsAuditLoading] = useState(false);
+  // Compact audit events & integrity state — owned by the shared audit store
+  // so graph node components (hover popovers) can read the same envelopes.
+  // The store performs the existing fetch (filtered to sequence_num <= frame)
+  // and caches by (missionId, branchId, sequenceNum).
+  const auditEvents = useAuditStore((s) => s.events);
+  const auditIntegrity = useAuditStore((s) => s.integrity);
+  const isAuditLoading = useAuditStore((s) => s.isLoading);
+  const loadAudit = useAuditStore((s) => s.load);
+  const refreshAudit = useAuditStore((s) => s.refresh);
+  // Memoized so its reference is stable across renders when the underlying
+  // store values are unchanged (avoids recomputing selectedEventEnvelope).
+  const auditData = useMemo<MissionAuditEventResponse | null>(() => {
+    if (auditEvents.length === 0 && !auditIntegrity) return null;
+    return {
+      events: auditEvents,
+      integrity: auditIntegrity ?? {
+        is_valid: true,
+        hash_chain_status: 'valid',
+        branch_id: currentBranchId ?? 'main',
+        total_events: auditEvents.length,
+      },
+    };
+  }, [auditEvents, auditIntegrity, currentBranchId]);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const fetchAuditData = useCallback(() => {
-    if (!missionId || missionId === 'demo-mission') return;
-    Promise.resolve().then(() => setIsAuditLoading(true));
-    api.audit.events(missionId, currentBranchId ?? undefined, events[currentFrame]?.sequence_num ?? undefined)
-      .then(res => {
-        setTimeout(() => {
-          setAuditData(res);
-          setIsAuditLoading(false);
-        }, 0);
-      })
-      .catch(err => {
-        console.error(err);
-        setTimeout(() => setIsAuditLoading(false), 0);
-      });
-  }, [missionId, currentBranchId, currentFrame, events]);
-
   useEffect(() => {
-    fetchAuditData();
-  }, [fetchAuditData]);
+    loadAudit(missionId, currentBranchId ?? null, events[currentFrame]?.sequence_num);
+  }, [loadAudit, missionId, currentBranchId, currentFrame, events]);
 
   // Tab auto-selection rules
   useEffect(() => {
@@ -107,7 +112,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
         idempotency_key: crypto.randomUUID(),
       }, currentBranchId ?? undefined);
       setDecisionComment('');
-      fetchAuditData();
+      refreshAudit();
       if (onBranchChange && currentBranchId) {
         await onBranchChange(currentBranchId);
       }
@@ -190,6 +195,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     edges: currentSnapshotForInspector?.edges ?? [],
     mission: null as import('@agentlens/protocol').Mission | null,
     eventEnvelope: selectedEventEnvelope ?? null,
+    eventEnvelopes: auditEvents,
     runtimeAgentState: runtimeAgentState ?? null,
     interrupt: selectedInterrupt,
     branch: null as import('@agentlens/protocol').ReplayBranch | null,

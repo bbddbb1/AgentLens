@@ -90,6 +90,15 @@ function evidence<T>(key: string, value: T | undefined | null): RopsField<T> {
   };
 }
 
+/**
+ * Public Evidence packer for presentation components that receive raw values
+ * from a pure correlation layer (e.g. `collectNodeEvidence`). The caller is
+ * responsible for guaranteeing the value is verbatim runtime evidence; this
+ * helper only classifies and packs it. Never use it for inferred/projection
+ * values — use `projection(...)` / `heuristic(...)` for those.
+ */
+export const packEvidence = evidence;
+
 /** Pack a deterministic projection; the caller must guarantee pure derivation. */
 function projection<T>(key: string, value: T | undefined | null): RopsField<T> {
   return {
@@ -394,6 +403,19 @@ export const PAYLOAD_WHITELIST: readonly string[] = [
   'gen_ai.agent.policy.required_review',
   'gen_ai.agent.interrupt.id',
   'gen_ai.agent.interrupt.reason',
+  // No-schema Evidence keys: these have no semconv/SDK/projection, so they are
+  // only present when an emitter set them verbatim. Whitelisting classifies
+  // them as recognized Evidence (L2+ presentable) rather than unrecognized
+  // (L4-only). They are never fabricated or inferred when absent.
+  'search.query',
+  'search_query',
+  'query',
+  'search.result_count',
+  'result_count',
+  'resultCount',
+  'retrieval.backend',
+  'retrieval_backend',
+  'retrievalBackend',
 ];
 
 /** Split a payload bag into (recognized, unrecognized) entries (spec 8.1/8.2). */

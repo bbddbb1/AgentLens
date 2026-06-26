@@ -13,6 +13,8 @@ import { Tooltip } from '@/components/common/Tooltip';
 import { getAgentColor } from '@/lib/agentColors';
 import { RopsHover } from '@/components/rops/RopsHover';
 import { useGraphStore } from '@/stores/graphStore';
+import { useAuditStore } from '@/stores/auditStore';
+import { collectNodeEvidence } from '@/lib/rops/nodeEvidence';
 import { formatDurationMs } from '@/lib/rops/provenance';
 
 const roleIcons: Record<string, React.ReactNode> = {
@@ -80,10 +82,11 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
   // The store is the existing source of truth; we only read, never infer.
   const baseNodes = useGraphStore((s) => s.baseNodes);
   const baseEdges = useGraphStore((s) => s.baseEdges);
+  const auditEvents = useAuditStore((s) => s.events);
   const hoverModel = (() => {
     const gn = baseNodes.find((n) => n.id === agentId) ?? baseNodes.find((n) => n.label === label);
     if (!gn) return null;
-    return { node: gn, edges: baseEdges, agentProjection: null };
+    return { node: gn, edges: baseEdges, agentProjection: null, evidence: collectNodeEvidence(gn, auditEvents) };
   })();
 
   // Use deterministic color for agent type, otherwise fallback to standard colors

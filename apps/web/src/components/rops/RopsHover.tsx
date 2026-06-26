@@ -25,6 +25,8 @@ import {
   formatDurationMs,
   nodeStatusLabel,
 } from '@/lib/rops/provenance';
+import type { NodeCorrelatedEvidence } from '@/lib/rops/nodeEvidence';
+import { safePreview } from '@/lib/safePreview';
 import { ProvenanceTag } from './primitives';
 
 export interface RopsHoverModel {
@@ -32,16 +34,22 @@ export interface RopsHoverModel {
   readonly edges: readonly import('@agentlens/protocol').GraphEdge[];
   /** Optional agent projection facts (only for agent nodes). */
   readonly agentProjection?: RuntimeNodeProjection | null;
+  /** Optional correlated runtime evidence (tool I/O / failure reason). */
+  readonly evidence?: NodeCorrelatedEvidence | null;
 }
 
 export function RopsHover({ model }: { model: RopsHoverModel }) {
-  const { node, edges, agentProjection } = model;
+  const { node, edges, agentProjection, evidence } = model;
   const nodeView = buildGraphNodeView(node);
   const rels = deriveRelationships(node.id, edges);
   const isAgent = node.type === 'agent';
   const agentView = isAgent && agentProjection ? buildAgentView(agentProjection) : null;
 
   const headlinePayload = pickHeadlinePayload(node, agentProjection?.facts);
+  // L2 compact operational Evidence line — presentation chooses the fields
+  // and order; the correlation helper only supplies raw values. One line,
+  // truncated via safePreview; no full I/O JSON (L2 limit, spec 4/5).
+  const operationalLine = pickOperationalLine(evidence);
 
   return (
     <div className="w-[260px] rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#1a1b25] p-3 shadow-xl space-y-2.5 text-left">
@@ -80,10 +88,15 @@ export function RopsHover({ model }: { model: RopsHoverModel }) {
       </div>
 
       {/* Key payload metadata (L2 only) */}
-      {headlinePayload && (
+      {(operationalLine || headlinePayload) && (
         <div className="border-t border-[rgba(255,255,255,0.05)] pt-2 space-y-1">
           <div className="text-[9px] uppercase tracking-wider text-[#6b708a]">Payload</div>
-          <div className="text-[10px] text-[#d0d4ea] break-words">{headlinePayload}</div>
+          {operationalLine && (
+            <div className="text-[10px] text-[#d0d4ea] break-words">{operationalLine}</div>
+          )}
+          {headlinePayload && headlinePayload !== operationalLine && (
+            <div className="text-[10px] text-[#9498b0] break-words">{headlinePayload}</div>
+          )}
         </div>
       )}
 
@@ -145,4 +158,24 @@ function pickHeadlinePayload(
     default:
       return null;
   }
+}
+
+/**
+ * Pick a single compact operational Evidence line for L2 (spec 5.1). The
+ * presentation chooses field priority: tool name, then search query, then
+ * tool input preview, then failure reason. Values are raw Evidence from the
+ * correlation helper, truncated via `safePreview` (deterministic, no
+ * interpretation). Returns null when no operational evidence is present.
+ */
+function pickOperationalLine(evidence: NodeCorrelatedEvidence | null | undefined): string | null {
+  if (!evidence) return null;
+  const parts: string[] = [];
+  if (evidence.toolName) parts.push(`tool: ${evidence.toolName}`);
+  if (evidence.searchQuery) parts.push(`query: ${safePreview(evidence.searchQuery, 80).text}`);
+  else if (evidence.toolInput !== undefined) parts.push(`input: ${safePreview(evidence.toolInput, 80).text}`);
+  if (evidence.resultCount !== undefined) parts.push(`results: ${evidence.resultCount}`);
+  if (evidence.retrievalBackend) parts.push(`backend: ${evidence.retrievalBackend}`);
+  if (evidence.failureReason) parts.push(`failed: ${safePreview(evidence.failureReason, 80).text}`);
+  if (parts.length === 0) return null;
+  return parts.join(' · ');
 }

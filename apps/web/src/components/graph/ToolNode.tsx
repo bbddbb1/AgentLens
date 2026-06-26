@@ -10,6 +10,8 @@ import { motion } from 'framer-motion';
 import { Wrench, Database, FileText, Globe } from 'lucide-react';
 import { RopsHover } from '@/components/rops/RopsHover';
 import { useGraphStore } from '@/stores/graphStore';
+import { useAuditStore } from '@/stores/auditStore';
+import { collectNodeEvidence } from '@/lib/rops/nodeEvidence';
 
 const toolIcons: Record<string, React.ReactNode> = {
   memory: <Database size={14} />,
@@ -29,10 +31,11 @@ function ToolNodeComponent({ data, selected }: NodeProps) {
   const [isHoverOpen, setIsHoverOpen] = useState(false);
   const baseNodes = useGraphStore((s) => s.baseNodes);
   const baseEdges = useGraphStore((s) => s.baseEdges);
+  const auditEvents = useAuditStore((s) => s.events);
   const hoverModel = (() => {
     const gn = baseNodes.find((n) => n.label === label) ?? null;
     if (!gn) return null;
-    return { node: gn, edges: baseEdges, agentProjection: null };
+    return { node: gn, edges: baseEdges, agentProjection: null, evidence: collectNodeEvidence(gn, auditEvents) };
   })();
 
   const isHighlighted = nodeData.highlighted === true;
