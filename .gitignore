@@ -56,6 +56,14 @@ logs/
 # Claude Code
 .claude/settings.local.json
 
+# Personal / local agent & IDE tooling
+.cursor/
+.gemini/
+.agents/
+.firecrawl/
+ORIGINAL_REQUEST.md
+PROJECT.md
+
 # Misc
 nul
 *.tsbuildinfo
