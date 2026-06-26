@@ -9,10 +9,10 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Telescope, Plus, Search, Filter, Clock, Users,
+  Telescope, Plus, Search, Clock, Users,
   CheckCircle2, XCircle, Loader2, PauseCircle,
-  Shield, Eye, Lock, ArrowRight, Zap, GitBranch,
-  BarChart3, Activity,
+  Shield, Lock, ArrowRight, Zap, GitBranch,
+  Activity,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Mission } from '@agentlens/protocol';

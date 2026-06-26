@@ -99,12 +99,13 @@ export function RuntimeSummaryPanel({
           >
             <div className="px-4 pb-3 space-y-3">
               <div>
-                <div className="text-[13px] font-medium text-[#eef1fa] leading-snug">
+                {/* ROPS P4: `summary.narrative` is forbidden ("projection-only, never
+                    authoritative"). It is no longer rendered. `headline` is a
+                    deterministic projection (buildHeadline) and is shown labelled. */}
+                <div className="text-[13px] font-medium text-[#eef1fa] leading-snug flex items-center gap-1.5">
                   {summary.headline}
+                  <span className="text-[8px] font-mono uppercase tracking-wider text-[#6b708a]">[projection]</span>
                 </div>
-                <p className="mt-1.5 text-[11px] leading-relaxed text-[#9498b0]">
-                  {summary.narrative}
-                </p>
               </div>
 
               {recentProgress.length > 0 && (
@@ -152,8 +153,10 @@ export function RuntimeSummaryPanel({
                             <span className="text-[10px] font-medium text-[#d0d4ea] truncate">{agent.name}</span>
                             <span className="text-[9px] text-[#5d6180] shrink-0">{agent.facts.status_label}</span>
                           </div>
+                          {/* ROPS P4: `agent.generated.current_understanding` is forbidden.
+                              Render only Evidence: `agent.facts.role` (absent when not emitted, P7). */}
                           <p className="mt-0.5 text-[10px] text-[#9498b0] leading-relaxed line-clamp-2">
-                            {agent.generated?.current_understanding ?? agent.facts.role ?? '—'}
+                            {agent.facts.role ?? '—'}
                           </p>
                           {agent.facts.pending && agent.facts.status !== 'idle' && (
                             <p className="mt-0.5 text-[9px] text-[#6b708a] leading-relaxed line-clamp-1">

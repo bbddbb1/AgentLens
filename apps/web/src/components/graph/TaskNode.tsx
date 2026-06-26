@@ -4,11 +4,14 @@
  * Custom Task Node for React Flow.
  */
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { motion } from 'framer-motion';
 import { CheckCircle2, Circle, XCircle, Loader2 } from 'lucide-react';
 import { Tooltip } from '@/components/common/Tooltip';
+import { RopsHover } from '@/components/rops/RopsHover';
+import { useGraphStore } from '@/stores/graphStore';
+import { formatDurationMs } from '@/lib/rops/provenance';
 
 const statusIcons: Record<string, React.ReactNode> = {
   idle: <Circle size={14} className="text-[#5d6180]" />,
@@ -27,16 +30,45 @@ function TaskNodeComponent({ data, selected }: NodeProps) {
   const progress = typeof metadata.progress === 'number' ? metadata.progress : undefined;
   const color = '#67e8f9';
 
+  // ROPS R-4: L1 headline metric — duration_ms (projection) when completed,
+  // else error_count (evidence) when >0, else progress if present.
+  const durationMs = typeof nodeData.durationMs === 'number' ? nodeData.durationMs : undefined;
+  const errorCount = typeof nodeData.errorCount === 'number' ? nodeData.errorCount : undefined;
+  const headlineMetric =
+    status === 'completed' && durationMs !== undefined
+      ? { display: formatDurationMs(durationMs), provenance: 'projection' as const }
+      : errorCount !== undefined && errorCount > 0
+        ? { display: `${errorCount} error${errorCount === 1 ? '' : 's'}`, provenance: 'evidence' as const }
+        : null;
+
+  const [isHoverOpen, setIsHoverOpen] = useState(false);
+  const baseNodes = useGraphStore((s) => s.baseNodes);
+  const baseEdges = useGraphStore((s) => s.baseEdges);
+  const hoverModel = (() => {
+    const gn = baseNodes.find((n) => n.label === label && n.type === 'task') ?? null;
+    if (!gn) return null;
+    return { node: gn, edges: baseEdges, agentProjection: null };
+  })();
+
+  const isHighlighted = nodeData.highlighted === true;
+
   return (
     <motion.div
       initial={false}
       layout={false}
+      onHoverStart={() => setIsHoverOpen(true)}
+      onHoverEnd={() => setIsHoverOpen(false)}
       style={{
-        borderColor: selected ? color : 'rgba(255,255,255,0.06)',
-        boxShadow: selected ? `0 0 20px ${color}22` : '0 2px 8px rgba(0,0,0,0.2)',
+        borderColor: isHighlighted ? color : (selected ? color : 'rgba(255,255,255,0.06)'),
+        boxShadow: isHighlighted ? `0 0 20px ${color}` : (selected ? `0 0 20px ${color}22` : '0 2px 8px rgba(0,0,0,0.2)'),
       }}
       className="rounded-lg border bg-[#151620] px-3 py-2.5 min-w-[160px] max-w-[200px] transition-all duration-200 hover:border-[rgba(255,255,255,0.1)]"
     >
+      {isHoverOpen && hoverModel && (
+        <div className="absolute left-1/2 top-full z-30 mt-2 -translate-x-1/2 pointer-events-none">
+          <RopsHover model={hoverModel} />
+        </div>
+      )}
       <Handle
         type="target"
         position={Position.Top}
@@ -59,16 +91,24 @@ function TaskNodeComponent({ data, selected }: NodeProps) {
               </div>
             </Tooltip>
           )}
+          {headlineMetric && (
+            <div className="mt-1 flex items-center gap-1.5">
+              <span className="text-[9px] text-[#9498b0]">{headlineMetric.display}</span>
+              {headlineMetric.provenance !== 'evidence' && (
+                <span className="text-[8px] font-mono uppercase tracking-wider text-[#6b708a]">[projection]</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
       {progress !== undefined && (
         <div className="mt-2 h-1 w-full rounded-full bg-[rgba(255,255,255,0.06)] overflow-hidden">
-          <motion.div 
+          <motion.div
             initial={{ width: 0 }}
             animate={{ width: `${progress}%` }}
             transition={{ duration: 0.5 }}
-            className="h-full bg-[#67e8f9] rounded-full" 
+            className="h-full bg-[#67e8f9] rounded-full"
           />
         </div>
       )}

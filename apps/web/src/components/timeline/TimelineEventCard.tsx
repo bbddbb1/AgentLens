@@ -5,6 +5,28 @@ import { EventEnvelope } from '@agentlens/protocol';
 import { AgentAvatar } from '@/components/common/AgentAvatar';
 import { isEventBranchable } from '@/components/replay/BranchExplorer';
 
+export function getTopologyBadge(eventType: string): string | null {
+  switch (eventType) {
+    case 'agent.registered':
+    case 'task.started':
+      return '+Node';
+    case 'delegation':
+    case 'handoff.requested':
+    case 'handoff.accepted':
+      return '+Edge';
+    case 'tool.called':
+    case 'tool.call':
+      return '+Tool';
+    case 'tool.completed':
+    case 'tool.result':
+    case 'tool.failed':
+    case 'tool.error':
+      return '-Tool';
+    default:
+      return null;
+  }
+}
+
 export function eventTone(eventType: string): string {
   if (eventType === 'interrupt.decision' || eventType === 'interrupt.resumed') return 'text-[#34d399]';
   if (eventType.includes('interrupt')) return 'text-[#fbbf24]';
@@ -92,6 +114,11 @@ export function TimelineEventCard({ event, isCurrent, onSelect, description }: T
             <span className="rounded-full bg-[rgba(255,255,255,0.05)] px-2 py-0.5 text-[9px] text-[#7c83a3]">
               #{event.sequence_num}
             </span>
+            {getTopologyBadge(event.event_type) && (
+              <span className="rounded-full bg-[rgba(139,92,246,0.15)] border border-[rgba(139,92,246,0.3)] px-1.5 py-0.5 text-[9px] text-[#a78bfa] font-bold">
+                {getTopologyBadge(event.event_type)}
+              </span>
+            )}
             {isBranchable && (
               <span className="flex items-center gap-1 rounded-full bg-[rgba(103,232,249,0.08)] px-1.5 py-0.5 text-[9px] text-[#67e8f9] border border-[rgba(103,232,249,0.12)]">
                 <GitBranch size={9} />
@@ -117,7 +144,7 @@ export function TimelineEventCard({ event, isCurrent, onSelect, description }: T
               className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-[#9498b0] hover:text-[#e8eaf0] transition-colors"
             >
               <Bot size={12} />
-              Inner Monologue
+              Agent Trace Output
               {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             </button>
             <AnimatePresence>

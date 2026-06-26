@@ -1,15 +1,10 @@
 'use client';
 
 import { useMemo } from 'react';
-import { motion } from 'framer-motion';
 import {
   AlertTriangle,
-  Bot,
   CheckCircle2,
   Clock,
-  FileText,
-  GitBranch,
-  GitCommit,
   PauseCircle,
   Play as PlayIcon,
   Shield,

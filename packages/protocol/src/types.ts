@@ -211,6 +211,8 @@ export interface NodeProjectionFacts {
   error_count?: number;
   source_span_id?: string;
   source_event_id?: string;
+  confidence?: number;
+  drift_score?: number;
 }
 
 export interface NodeProjectionGenerated {

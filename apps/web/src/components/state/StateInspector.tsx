@@ -1,23 +1,23 @@
 import { useReplayStore } from '@/stores/replayStore';
 import { useGraphStore } from '@/stores/graphStore';
-import { getRuntimeNodeProjection } from '@agentlens/protocol';
-import { useRuntimeSummary } from '@/hooks/useRuntimeSummary';
 import { AgentStateCard } from './AgentStateCard';
 import { InterruptBadge } from './InterruptBadge';
-import { WhyThisState } from '@/components/replay/WhyThisState';
-import { PanelHeader } from '@/components/layout/PanelHeader';
-import { Activity } from 'lucide-react';
 
-export function StateInspector({ missionId }: { missionId: string }) {
+/**
+ * State inspector (left panel).
+ *
+ * ROPS compliance: this surface no longer pipes `generated.current_understanding`
+ * into AgentStateCard (forbidden, P4) and no longer mounts `WhyThisState`
+ * (forbidden AI narrative, P4). It renders only Evidence:
+ *   - pending interrupts (`RuntimeInterruptState`, Evidence)
+ *   - per-agent identity/lifecycle (`RuntimeAgentState`, Evidence)
+ *
+ * The `behavior` prop is no longer passed; AgentStateCard renders `agent.summary`
+ * (Evidence) only when present, else shows nothing (P7 absence).
+ */
+export function StateInspector({ missionId: _missionId }: { missionId: string }) {
   const { currentState } = useReplayStore();
   const { selectedNodeId, setSelectedNodeId } = useGraphStore();
-
-  const runtimeSummary = useRuntimeSummary({
-    missionId,
-    objective: 'Mission overview',
-    missionStatus: currentState?.status ?? 'active',
-    missionPhase: currentState?.phase ?? 'executing',
-  });
 
   const agents = Object.values(currentState?.agents ?? {});
   const pendingInterrupts = Object.values(currentState?.interrupts ?? {}).filter(i => i.status === 'pending');
@@ -40,22 +40,17 @@ export function StateInspector({ missionId }: { missionId: string }) {
             <div className="grid gap-2">
               {agents.map(agent => {
                 const isSelected = selectedNodeId === agent.agent_id || selectedNodeId === agent.name;
-                
+
                 return (
-                  <AgentStateCard 
-                    key={agent.agent_id} 
+                  <AgentStateCard
+                    key={agent.agent_id}
                     agent={agent}
-                    behavior={runtimeSummary ? getRuntimeNodeProjection(runtimeSummary, agent.agent_id)?.generated?.current_understanding : undefined}
                     isSelected={isSelected}
                     onClick={() => setSelectedNodeId(agent.agent_id)}
                   />
                 );
               })}
             </div>
-          </div>
-          
-          <div>
-            <WhyThisState missionId={missionId} />
           </div>
         </div>
       </div>

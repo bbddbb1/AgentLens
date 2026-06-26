@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GitBranch, Plus, RefreshCw, Waypoints, Bot, AlertTriangle, Sparkles, Loader2, ChevronDown, ChevronUp, X, Settings } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { GitBranch, Plus, Waypoints, Bot, AlertTriangle, Sparkles, Loader2, ChevronDown, ChevronUp, X, Settings } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useGraphStore } from '@/stores/graphStore';
 import { useReplayStore } from '@/stores/replayStore';
@@ -11,6 +11,22 @@ interface BranchExplorerProps {
   onBranchChange: (branchId: string) => Promise<void>;
   isCollapsed: boolean;
   onToggleCollapsed: () => void;
+}
+
+interface BranchJob {
+  id: string;
+  branch_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | string;
+}
+
+interface Injection {
+  type: string;
+  target?: string;
+  decision?: 'approve' | 'reject';
+  comment?: string;
+  payload?: unknown;
+  task?: string;
+  goal?: string;
 }
 
 function formatEventLabel(eventType: string): string {
@@ -28,30 +44,7 @@ export function isEventBranchable(eventType?: string): boolean {
   ].includes(eventType);
 }
 
-async function mockFetchAiOverview(stateJson: string): Promise<string> {
-  await new Promise((resolve) => setTimeout(resolve, 800)); // simulate network delay
-  try {
-    const parsed = JSON.parse(stateJson);
-    const keys = Object.keys(parsed);
-    if (keys.length === 0) return "This node state is empty and contains no active data channels.";
-    
-    const summaryParts: string[] = [];
-    if (parsed.change_plan) summaryParts.push("Contains a detailed operational rollout plan with 4 staging steps.");
-    if (parsed.risk_summary) summaryParts.push("Specifies a high-level blocking review warning for customer support exports.");
-    if (parsed.evidence_summary) summaryParts.push("Identifies active support export inventory evidence containing direct customer PII.");
-    if (parsed.verification_gate) summaryParts.push(`Controls the gate decision for review block "${parsed.verification_gate}".`);
-    
-    if (summaryParts.length > 0) {
-      return summaryParts.join(" ") + " AI recommends using strict data masking remediations on the child branch.";
-    }
-    
-    return `Active state channels detected: ${keys.join(", ")}. Evaluated and ready for runtime override injection.`;
-  } catch (e) {
-    return "Failed to parse state structure. Please verify the target node state is in a valid JSON format.";
-  }
-}
-
-export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggleCollapsed }: BranchExplorerProps) {
+export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: BranchExplorerProps) {
   const { snapshots, selectedNodeId } = useGraphStore();
   const {
     branches,
@@ -59,10 +52,9 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
     events,
     currentFrame,
     currentState,
-    setSelectedEventId,
     optimisticBranchCreated,
   } = useReplayStore();
-  const [jobs, setJobs] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<BranchJob[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -90,48 +82,32 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
   const [targetGateId, setTargetGateId] = useState('');
   const [isPayloadOpen, setIsPayloadOpen] = useState(false);
   const [payloadJson, setPayloadJson] = useState('');
-  const [jsonError, setJsonError] = useState<string | null>(null);
 
   // State Payload Override state
   const [stateOverrideEnabled, setStateOverrideEnabled] = useState(false);
   const [stateTarget, setStateTarget] = useState('');
   const [statePayloadJson, setStatePayloadJson] = useState('');
-  const [stateJsonError, setStateJsonError] = useState<string | null>(null);
   const [isCurrentStatePanelOpen, setIsCurrentStatePanelOpen] = useState(false);
-  const [aiOverview, setAiOverview] = useState<string | null>(null);
-  const [isLoadingAi, setIsLoadingAi] = useState(false);
 
-  // Reset AI summary when target node selection changes
-  useEffect(() => {
-    setAiOverview(null);
-    setIsLoadingAi(false);
-  }, [stateTarget]);
-
-  // JSON Validation Effect for Human Decision Return Payload
-  useEffect(() => {
-    if (!payloadJson.trim()) {
-      setJsonError(null);
-      return;
-    }
+  // JSON Validation for Human Decision Return Payload
+  const jsonError = useMemo(() => {
+    if (!payloadJson.trim()) return null;
     try {
       JSON.parse(payloadJson);
-      setJsonError(null);
+      return null;
     } catch (e) {
-      setJsonError(e instanceof Error ? e.message : 'Invalid JSON format');
+      return e instanceof Error ? e.message : 'Invalid JSON format';
     }
   }, [payloadJson]);
 
-  // JSON Validation Effect for State Override Payload
-  useEffect(() => {
-    if (!statePayloadJson.trim()) {
-      setStateJsonError(null);
-      return;
-    }
+  // JSON Validation for State Override Payload
+  const stateJsonError = useMemo(() => {
+    if (!statePayloadJson.trim()) return null;
     try {
       JSON.parse(statePayloadJson);
-      setStateJsonError(null);
+      return null;
     } catch (e) {
-      setStateJsonError(e instanceof Error ? e.message : 'Invalid JSON format');
+      return e instanceof Error ? e.message : 'Invalid JSON format';
     }
   }, [statePayloadJson]);
 
@@ -154,7 +130,7 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
     // 2. Scan events timeline for any event that matches the target node ID, agent ID, span ID, or tool name
     const activeEvents = events.slice(0, currentFrame + 1);
     const matchedEvent = [...activeEvents].reverse().find((e) => {
-      const payload = e.payload as any;
+      const payload = e.payload as Record<string, unknown>;
       if (e.agent_id?.toLowerCase() === target) return true;
       if (payload?.agent_id?.toLowerCase() === target) return true;
       if (payload?.task_id?.toLowerCase() === target) return true;
@@ -210,7 +186,11 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
 
   const prefillStatePayload = () => {
     if (fetchedNodeState) {
-      const { event_type, sequence_num, timestamp, node_id, ...cleanState } = fetchedNodeState as any;
+      const cleanState = { ...(fetchedNodeState as Record<string, unknown>) };
+      delete cleanState.event_type;
+      delete cleanState.sequence_num;
+      delete cleanState.timestamp;
+      delete cleanState.node_id;
       setStatePayloadJson(JSON.stringify(cleanState, null, 2));
     }
   };
@@ -298,7 +278,7 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
     const pendingInt = Object.values(currentState?.interrupts ?? {}).find((i) => i.status === 'pending');
     const isInterrupt = visibleEvent?.event_type === 'interrupt.requested';
     setMockDecisionEnabled(isInterrupt || !!pendingInt);
-    const detectedId = pendingInt?.interrupt_id || (visibleEvent?.payload as any)?.interrupt_id || '';
+    const detectedId = pendingInt?.interrupt_id || (visibleEvent?.payload as Record<string, unknown>)?.interrupt_id || '';
     setTargetGateId(String(detectedId));
 
     setMockDecision('approve');
@@ -316,8 +296,6 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
     setStatePayloadJson('');
     setStateJsonError(null);
     setIsCurrentStatePanelOpen(false);
-    setAiOverview(null);
-    setIsLoadingAi(false);
   };
 
   const handleCreateBranch = async () => {
@@ -327,13 +305,13 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
     setError(null);
     setIsModalOpen(false);
     try {
-      const injections: any[] = [];
+      const injections: Injection[] = [];
       if (mockDecisionEnabled) {
-        let parsedPayload: any = undefined;
+        let parsedPayload: unknown = undefined;
         if (isPayloadOpen && payloadJson.trim()) {
           try {
             parsedPayload = JSON.parse(payloadJson);
-          } catch (e) {
+          } catch {
             // Fallback
           }
         }
@@ -354,11 +332,11 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
         });
       }
       if (stateOverrideEnabled && stateTarget.trim()) {
-        let parsedStatePayload: any = {};
+        let parsedStatePayload: Record<string, unknown> = {};
         if (statePayloadJson.trim()) {
           try {
             parsedStatePayload = JSON.parse(statePayloadJson);
-          } catch (e) {
+          } catch {
             // Fallback
           }
         }
@@ -915,34 +893,9 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
                                   <div className="space-y-1.5">
                                     <div className="flex items-center justify-between">
                                       <span className="text-[9px] uppercase tracking-[0.05em] text-[#5d6180]">
-                                        State resolved at sequence #{(fetchedNodeState as any).sequence_num ?? fromSequence}
+                                        State resolved at sequence #{(fetchedNodeState as Record<string, unknown>).sequence_num ?? fromSequence}
                                       </span>
                                       <div className="flex items-center gap-3">
-                                        <button
-                                          type="button"
-                                          disabled={isLoadingAi}
-                                          onClick={async () => {
-                                            if (!fetchedNodeState) return;
-                                            setIsLoadingAi(true);
-                                            setAiOverview(null);
-                                            try {
-                                              const summary = await mockFetchAiOverview(JSON.stringify(fetchedNodeState));
-                                              setAiOverview(summary);
-                                            } catch (e) {
-                                              setAiOverview("Error generating state explanation.");
-                                            } finally {
-                                              setIsLoadingAi(false);
-                                            }
-                                          }}
-                                          className="flex items-center gap-1 text-[9px] font-semibold text-[#818cf8] hover:text-[#a5b4fc] transition-colors disabled:opacity-50"
-                                        >
-                                          {isLoadingAi ? (
-                                            <Loader2 size={10} className="animate-spin text-[#818cf8]" />
-                                          ) : (
-                                            <Sparkles size={10} />
-                                          )}
-                                          <span>Explain State</span>
-                                        </button>
                                         <button
                                           type="button"
                                           onClick={prefillStatePayload}
@@ -953,27 +906,15 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed, onToggl
                                       </div>
                                     </div>
 
-                                    {isLoadingAi && (
-                                      <div className="rounded-xl border border-[rgba(129,140,248,0.12)] bg-[rgba(129,140,248,0.04)] px-3 py-2 text-[11px] text-[#cfd3e6] leading-relaxed animate-pulse flex items-center gap-2">
-                                        <Loader2 size={11} className="animate-spin text-[#818cf8]" />
-                                        <span>Analyzing causal state pathways...</span>
-                                      </div>
-                                    )}
-
-                                    {aiOverview && !isLoadingAi && (
-                                      <div className="rounded-xl border border-[rgba(103,232,249,0.15)] bg-[rgba(103,232,249,0.06)] px-3 py-2 text-[11px] text-[#e8eaf0] leading-relaxed flex items-start gap-2 animate-in fade-in duration-200">
-                                        <Sparkles size={11} className="text-[#67e8f9] shrink-0 mt-0.5" />
-                                        <p className="flex-1 text-left">{aiOverview}</p>
-                                      </div>
-                                    )}
-
                                     <pre className="w-full max-h-[120px] overflow-y-auto rounded-xl border border-[rgba(255,255,255,0.06)] bg-[rgba(0,0,0,0.3)] p-2 text-[10px] font-mono text-[#a7aecb] whitespace-pre-wrap break-all">
                                       {JSON.stringify(fetchedNodeState, null, 2)}
                                     </pre>
                                   </div>
                                 ) : (
-                                  <div className="rounded-xl border border-dashed border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.01)] px-3 py-3 text-[11px] text-[#6d7392] italic">
-                                    No state found for &ldquo;{stateTarget}&rdquo;. Enter a valid node ID (e.g. planner, analyst).
+                                  <div className="flex flex-col items-center py-6 text-center bg-[rgba(255,255,255,0.01)] rounded-xl border border-dashed border-[rgba(255,255,255,0.06)] px-4">
+                                    <Bot size={20} className="text-[#5d6180] mb-1.5" />
+                                    <p className="text-[11px] text-[#9498b0] font-medium">No state found for &ldquo;{stateTarget}&rdquo;</p>
+                                    <p className="text-[9px] text-[#5d6180] mt-0.5">Enter a valid node ID (e.g. planner, analyst).</p>
                                   </div>
                                 )}
                               </div>

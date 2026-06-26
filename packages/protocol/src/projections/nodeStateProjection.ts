@@ -48,6 +48,10 @@ function scratchToFacts(agent: AgentNodeScratch): NodeProjectionFacts {
     error_count: agent.error_count,
     source_span_id: agent.source_span_id,
     source_event_id: agent.source_event_id,
+    confidence: agent.confidence !== undefined
+      ? agent.confidence
+      : Math.max(0.1, 1.0 - (agent.error_count * 0.15) - (agent.warnings.length * 0.05)),
+    drift_score: agent.drift_score,
   };
 }
 

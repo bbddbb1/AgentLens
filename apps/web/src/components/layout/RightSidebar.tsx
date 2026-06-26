@@ -5,12 +5,12 @@ import { useLayoutStore } from '@/stores/layoutStore';
 import { useGraphStore } from '@/stores/graphStore';
 import { useReplayStore } from '@/stores/replayStore';
 import { BranchExplorer } from '@/components/replay/BranchExplorer';
-import { AiAssistant } from '@/components/ai/AiAssistant';
 import { api } from '@/lib/api';
-import type { MissionAuditEventResponse, EventEnvelope } from '@agentlens/protocol';
+import type { MissionAuditEventResponse } from '@agentlens/protocol';
 import { useRuntimeSummary } from '@/hooks/useRuntimeSummary';
 import { useNodeProjection } from '@/hooks/useNodeProjection';
-import { AgentNodeProjectionPanel } from '@/components/runtime/AgentNodeProjectionPanel';
+import { RopsInspector } from '@/components/rops/RopsInspector';
+import { RopsEvidence } from '@/components/rops/RopsEvidence';
 import {
   PanelRightClose,
   Activity,
@@ -25,11 +25,9 @@ import {
   FileText,
   Copy,
   Info,
-  ShieldAlert,
-  Bot
+  ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { EdgeInspector } from '@/components/graph/EdgeInspector';
 
 interface RightSidebarProps {
   missionId: string;
@@ -43,7 +41,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
   const { snapshots, selectedNodeId } = useGraphStore();
   const { currentState, selectedEventId, currentBranchId, currentFrame, events } = useReplayStore();
 
-  const [activeTab, setActiveTab] = useState<'run' | 'govern' | 'audit' | 'ask_pi'>('run');
+  const [activeTab, setActiveTab] = useState<'run' | 'govern' | 'audit'>('run');
   const [decisionComment, setDecisionComment] = useState('');
   const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
@@ -55,7 +53,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
 
   const fetchAuditData = useCallback(() => {
     if (!missionId || missionId === 'demo-mission') return;
-    setIsAuditLoading(true);
+    Promise.resolve().then(() => setIsAuditLoading(true));
     api.audit.events(missionId, currentBranchId ?? undefined, events[currentFrame]?.sequence_num ?? undefined)
       .then(res => {
         setTimeout(() => {
@@ -124,7 +122,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
   const selectedEventEnvelope = useMemo(() => {
     const targetId = selectedEventId || events[currentFrame]?.id;
     if (!targetId || !auditData?.events) return null;
-    return auditData.events.find((e: any) => e.id === targetId) || null;
+    return auditData.events.find((e) => e.id === targetId) || null;
   }, [selectedEventId, currentFrame, events, auditData]);
 
   // Selected node details
@@ -146,7 +144,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     ? (selectedNode.agent_id ?? selectedNode.id ?? selectedNode.label)
     : null;
 
-  const { projection: nodeProjection, enhance: enhanceNodeProjection, isEnhancing: isEnhancingNode } = useNodeProjection({
+  const { projection: nodeProjection } = useNodeProjection({
     missionId,
     agentId: selectedAgentId,
     branchId: currentBranchId ?? undefined,
@@ -154,6 +152,57 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     events: events as unknown as import('@agentlens/protocol').MissionEventRecord[],
     runtimeSummary,
   });
+
+  // ROPS L4 evidence view: the operator can open the raw EventEnvelope for the
+  // selected event from the L3 inspector. The envelope comes from the already-
+  // fetched audit data (Evidence source per spec 9.4 / section 11).
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+
+  // ROPS L3 inspector input: pack the selected object's evidence. The runtime
+  // agent state is the in-memory replay source; the node projection is the
+  // authoritative L3 source for agents (spec 9.2).
+  const currentSnapshotForInspector = snapshots[currentFrame] ?? snapshots[snapshots.length - 1] ?? null;
+  const runtimeAgentState = selectedAgentId
+    ? currentState?.agents?.[selectedAgentId] ??
+      (selectedNode ? Object.values(currentState?.agents ?? {}).find((a) => a.name === selectedNode.label || a.agent_id === selectedNode.agent_id) ?? null : null)
+    : null;
+  const selectedInterrupt = useMemo(() => {
+    if (!selectedNode) return null;
+    // Interrupt selection via pending_interrupt_id on an agent state, or when
+    // the selected node id matches an interrupt id.
+    const byPending = runtimeAgentState?.pending_interrupt_id
+      ? currentState?.interrupts?.[runtimeAgentState.pending_interrupt_id] ?? null
+      : null;
+    if (byPending) return byPending;
+    return Object.values(currentState?.interrupts ?? {}).find((i) => i.interrupt_id === selectedNode.id) ?? null;
+  }, [selectedNode, runtimeAgentState, currentState]);
+
+  // Whether the agent's confidence came from an emitter attribute. The client
+  // projection cannot tell, so we conservatively treat it as heuristic (false)
+  // unless the runtime agent state explicitly carried a confidence value (which
+  // the scratch only sets from the emitter attribute path).
+  const emitterConfidencePresent = runtimeAgentState?.confidence !== undefined && runtimeAgentState?.confidence !== null;
+
+  const inspectorInput = {
+    node: selectedNode,
+    agentProjection: nodeProjection,
+    emitterConfidencePresent,
+    edges: currentSnapshotForInspector?.edges ?? [],
+    mission: null as import('@agentlens/protocol').Mission | null,
+    eventEnvelope: selectedEventEnvelope ?? null,
+    runtimeAgentState: runtimeAgentState ?? null,
+    interrupt: selectedInterrupt,
+    branch: null as import('@agentlens/protocol').ReplayBranch | null,
+    snapshot: null as import('@agentlens/protocol').GraphSnapshot | null,
+    onViewEvidence: () => setEvidenceOpen(true),
+    onJumpToEvent: (seq: number) => {
+      const ev = events.find((e) => e.sequence_num === seq);
+      if (ev) {
+        const { setSelectedEventId } = useReplayStore.getState();
+        setSelectedEventId(ev.id);
+      }
+    },
+  };
 
   // Interrupt lists
   const pendingInterrupts = useMemo(() => {
@@ -171,7 +220,6 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     { id: 'run' as const, label: 'Run', icon: Activity },
     { id: 'govern' as const, label: 'Govern', icon: Shield, count: pendingInterrupts.length },
     { id: 'audit' as const, label: 'Audit', icon: FileText, alert: auditData?.integrity?.is_valid === false },
-    { id: 'ask_pi' as const, label: 'Ask Pi', icon: Bot },
   ];
 
   return (
@@ -189,7 +237,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
                   : 'text-[#8f95b2] hover:text-[#c4c7da] hover:bg-[rgba(255,255,255,0.02)]'
               }`}
             >
-              <tab.icon size={12} className={tab.id === 'ask_pi' ? 'text-[#818cf8]' : ''} />
+              <tab.icon size={12} />
               {tab.label}
               {tab.count !== undefined && tab.count > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full bg-[#f43f5e]/15 text-[#fb7185] text-[9px] font-bold">
@@ -222,50 +270,16 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
               exit={{ opacity: 0, y: -5 }}
               className="h-full overflow-y-auto p-4 space-y-4"
             >
-              {/* Context Summary Cards */}
-              {selectedNode && <EdgeInspector />}
-
-              {selectedNode && selectedNode.type === 'agent' && nodeProjection && (
-                <AgentNodeProjectionPanel
-                  projection={nodeProjection}
-                  nodeType={selectedNode.type}
-                  onEnhance={missionId !== 'demo-mission' ? enhanceNodeProjection : undefined}
-                  isEnhancing={isEnhancingNode}
-                />
+              {/* ROPS L3 Inspector + L4 Evidence View (spec sections 9, 8, 11).
+                  Replaces the prior AgentNodeProjectionPanel which rendered the
+                  forbidden `generated.*` block (P4). The ROPS inspector reads
+                  only `facts` + `recent_runtime_events` and the EventEnvelope. */}
+              {selectedNode && (
+                <RopsInspector {...inspectorInput} />
               )}
 
-              {selectedNode && selectedNode.type !== 'agent' && (
-                <div className="rounded-xl border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.015)] hover:bg-[rgba(255,255,255,0.025)] p-3.5 relative overflow-hidden group transition-all duration-300">
-                  <div className="border-l-3 border-[#6366f1] pl-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#818cf8]" />
-                        <span className="text-[9px] uppercase tracking-[0.12em] text-[#818cf8] font-bold">Selected Node</span>
-                      </div>
-                      <span className="text-[9px] bg-[rgba(99,102,241,0.1)] text-[#a5b4fc] border border-[#6366f1]/20 px-2 py-0.5 rounded-md font-mono uppercase tracking-wide">
-                        {selectedNode.type}
-                      </span>
-                    </div>
-                    <div className="text-[13px] font-semibold text-white tracking-wide">{selectedNode.label}</div>
-                    {selectedNode.summary && (
-                      <div className="text-[11px] text-[#9498b0] leading-relaxed">{selectedNode.summary}</div>
-                    )}
-                    {selectedNode.confidence !== undefined && (
-                      <div className="space-y-1 pt-1">
-                        <div className="flex justify-between text-[10px] text-[#8f95b2]">
-                          <span>Confidence Metric</span>
-                          <span className="text-[#34d399] font-bold">{Math.round(selectedNode.confidence * 100)}%</span>
-                        </div>
-                        <div className="w-full bg-[rgba(255,255,255,0.05)] rounded-full h-1">
-                          <div
-                            className="bg-[#34d399]/40 h-1 rounded-full transition-all duration-500"
-                            style={{ width: `${Math.round(selectedNode.confidence * 100)}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
+              {evidenceOpen && selectedEventEnvelope && (
+                <RopsEvidence envelope={selectedEventEnvelope} onClose={() => setEvidenceOpen(false)} />
               )}
 
               {selectedEventEnvelope && (
@@ -636,22 +650,6 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
             </motion.div>
           )}
 
-          {activeTab === 'ask_pi' && (
-            <motion.div
-              key="ask_pi"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="h-full"
-            >
-              <AiAssistant
-                inline
-                missionId={missionId}
-                missionObjective={missionObjective}
-                missionStatus={missionStatus}
-              />
-            </motion.div>
-          )}
         </AnimatePresence>
       </div>
     </div>

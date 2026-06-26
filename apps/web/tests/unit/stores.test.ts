@@ -207,7 +207,6 @@ describe('missionStore', () => {
 
   it('does not update active mission if different id', () => {
     const m1 = { id: 'm1', objective: 'A', status: 'active' as const, phase: 'executing', created_at: '', updated_at: '', metadata: {}, is_encrypted: false, visibility: 'private' };
-    const m2 = { id: 'm2', objective: 'B', status: 'active' as const, phase: 'executing', created_at: '', updated_at: '', metadata: {}, is_encrypted: false, visibility: 'private' };
 
     useMissionStore.setState({ missions: [m1], activeMission: m1 });
     useMissionStore.getState().updateMission('m2', { objective: 'Changed' });
@@ -289,7 +288,7 @@ describe('replayStore', () => {
     useReplayStore.getState().setReplayData({
       branch_id: 'main',
       branches: [{ id: 'main', mission_id: 'm1', name: 'Main', status: 'active', metadata: {}, created_at: '', updated_at: '' }],
-      events: events as any,
+      events: events as unknown as import('@agentlens/protocol').MissionEventRecord[],
       current_state: null,
       total_frames: 2,
       duration_seconds: 10.5,

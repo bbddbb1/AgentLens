@@ -28,6 +28,7 @@ export function AgentNodeProjectionPanel({
   isEnhancing = false,
 }: AgentNodeProjectionPanelProps) {
   const [showEvents, setShowEvents] = useState(false);
+  const [showUnderstanding, setShowUnderstanding] = useState(false);
   const [expandedOutputs, setExpandedOutputs] = useState<Record<string, boolean>>({});
 
   const understanding = projection.generated?.current_understanding;
@@ -65,40 +66,6 @@ export function AgentNodeProjectionPanel({
         <Section title="Status">
           <p className="text-[11px] text-[#d0d4ea]">{projection.facts.status_label}</p>
         </Section>
-
-        {understanding && (
-          <Section
-            title="Current Understanding"
-            action={onEnhance ? (
-              <button
-                type="button"
-                onClick={() => void onEnhance()}
-                disabled={isEnhancing}
-                className="flex items-center gap-1 text-[9px] text-[#818cf8] hover:text-[#a5b4fc] disabled:opacity-50"
-              >
-                {isEnhancing ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
-                {isEnhancing ? 'Enhancing…' : 'Enhance'}
-              </button>
-            ) : undefined}
-          >
-            {isLlmEnhanced && (
-              <span className="inline-flex items-center gap-1 mb-1 px-1.5 py-0.5 rounded-full bg-[rgba(129,140,248,0.12)] text-[#a5b4fc] text-[8px] font-semibold uppercase tracking-wide">
-                AI-enhanced
-              </span>
-            )}
-            <p className="text-[11px] text-[#9498b0] leading-relaxed">{understanding}</p>
-            {projection.generated?.highlights && projection.generated.highlights.length > 0 && (
-              <ul className="mt-1.5 space-y-0.5">
-                {projection.generated.highlights.map((item, index) => (
-                  <li key={index} className="text-[10px] text-[#7b819f] flex gap-1.5">
-                    <span className="text-[#6366f1]">•</span>
-                    <span>{item}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Section>
-        )}
 
         {projection.facts.produced_outputs.length > 0 && (
           <Section title="Produced Outputs">
@@ -189,6 +156,65 @@ export function AgentNodeProjectionPanel({
                     </li>
                   ))}
                 </motion.ul>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
+        {understanding && (
+          <div className="pt-2 border-t border-[rgba(255,255,255,0.05)]">
+            <button
+              type="button"
+              onClick={() => setShowUnderstanding((v) => !v)}
+              className="flex w-full items-center justify-between text-[9px] uppercase tracking-[0.12em] text-[#818cf8] hover:text-[#a5b4fc] font-bold"
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="bg-[#f43f5e]/10 text-[#f43f5e] border border-[#f43f5e]/20 px-1.5 py-0.5 rounded text-[8px] font-mono tracking-wider font-bold">
+                  [INTERPRETATION]
+                </span>
+                <span>Current Understanding</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {onEnhance && (
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onEnhance();
+                    }}
+                    className="flex items-center gap-1 text-[9px] text-[#818cf8] hover:text-[#a5b4fc] normal-case font-normal"
+                  >
+                    {isEnhancing ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                    {isEnhancing ? 'Enhancing…' : 'Enhance'}
+                  </span>
+                )}
+                {showUnderstanding ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              </div>
+            </button>
+            <AnimatePresence initial={false}>
+              {showUnderstanding && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="mt-2 overflow-hidden space-y-1.5"
+                >
+                  {isLlmEnhanced && (
+                    <span className="inline-flex items-center gap-1 mb-1 px-1.5 py-0.5 rounded-full bg-[rgba(129,140,248,0.12)] text-[#a5b4fc] text-[8px] font-semibold uppercase tracking-wide">
+                      AI-enhanced
+                    </span>
+                  )}
+                  <p className="text-[11px] text-[#9498b0] leading-relaxed">{understanding}</p>
+                  {projection.generated?.highlights && projection.generated.highlights.length > 0 && (
+                    <ul className="mt-1.5 space-y-0.5">
+                      {projection.generated.highlights.map((item, index) => (
+                        <li key={index} className="text-[10px] text-[#7b819f] flex gap-1.5">
+                          <span className="text-[#6366f1]">•</span>
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </motion.div>
               )}
             </AnimatePresence>
           </div>

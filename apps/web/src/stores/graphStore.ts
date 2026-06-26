@@ -33,6 +33,8 @@ interface GraphStore {
   activeNodeId: string | null;
   hoveredNodeId: string | null;
   highlightedEdgeId: string | null;
+  highlightedNodeIds: string[];
+  highlightedEdgeIds: string[];
   zoomLevel: number;
   zoomBand: 'overview' | 'standard' | 'detail';
   edgeVisibility: Record<EdgeType, boolean>;
@@ -103,6 +105,7 @@ function graphNodesToFlowNodes(
   graphNodes: GraphNode[],
   satelliteCounts: Record<string, { tools: number; memory: number; artifacts: number }>,
   layoutPositions: Record<string, { x: number; y: number }>,
+  highlightedNodeIds: string[] = [],
 ): Node[] {
   return graphNodes.map((gn) => ({
     id: gn.id,
@@ -115,16 +118,36 @@ function graphNodesToFlowNodes(
       role: gn.agent_role,
       team: gn.agent_team,
       confidence: gn.confidence,
+      // ROPS: confidence on GraphNode is Evidence only when the emitter set it.
+      // The graph layer does not run the scratchToFacts inferred formula, so no
+      // heuristic flag is needed here. The inferred fallback only appears on the
+      // RuntimeNodeProjection path, handled in the inspector (L3), not the card.
+      confidenceIsEvidence: gn.confidence !== undefined,
       summary: gn.summary,
       metadata: gn.metadata,
       agentId: gn.agent_id,
+      agentType: gn.agent_type,
+      framework: gn.framework,
+      iteration: gn.iteration,
+      startTime: gn.start_time,
+      endTime: gn.end_time,
+      durationMs: gn.duration_ms,
+      errorCount: gn.error_count,
+      sourceSpanId: gn.source_span_id,
+      sourceEventId: gn.source_event_id,
+      spanId: gn.span_id,
       hasPendingInterrupt: false,
       satelliteCounts: satelliteCounts[gn.id],
+      highlighted: highlightedNodeIds.includes(gn.id),
     },
   }));
 }
 
-function graphEdgesToFlowEdges(graphEdges: GraphEdge[], pathOffsetById: Map<string, number>): Edge[] {
+function graphEdgesToFlowEdges(
+  graphEdges: GraphEdge[],
+  pathOffsetById: Map<string, number>,
+  highlightedEdgeIds: string[] = [],
+): Edge[] {
   const pairCounts = new Map<string, number>();
 
   return graphEdges.map((ge) => {
@@ -147,6 +170,7 @@ function graphEdgesToFlowEdges(graphEdges: GraphEdge[], pathOffsetById: Map<stri
         bundleCount: ge.metadata?.bundleCount as number | undefined,
         bundledEdgeIds: ge.metadata?.bundledEdgeIds as string[] | undefined,
         pathOffset: pathOffsetById.get(ge.id) ?? offsetIndex * 12,
+        highlighted: highlightedEdgeIds.includes(ge.id),
       },
     };
   });
@@ -190,8 +214,13 @@ function buildDisplayGraph(state: GraphStore): Pick<
     visibility.nodes,
     visibility.satelliteCounts,
     state.layoutPositions,
+    state.highlightedNodeIds,
   );
-  let flowEdges: Edge[] = graphEdgesToFlowEdges(visibility.edges, pathOffsetById).map((edge) => ({
+  let flowEdges: Edge[] = graphEdgesToFlowEdges(
+    visibility.edges,
+    pathOffsetById,
+    state.highlightedEdgeIds,
+  ).map((edge) => ({
     ...edge,
     data: {
       ...edge.data,
@@ -224,6 +253,8 @@ function buildDisplayGraph(state: GraphStore): Pick<
   };
 }
 
+let highlightTimeout: ReturnType<typeof setTimeout> | null = null;
+
 export const useGraphStore = create<GraphStore>((set, get) => ({
   nodes: [],
   edges: [],
@@ -235,6 +266,8 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   activeNodeId: null,
   hoveredNodeId: null,
   highlightedEdgeId: null,
+  highlightedNodeIds: [],
+  highlightedEdgeIds: [],
   zoomLevel: 1,
   zoomBand: 'standard',
   edgeVisibility: defaultEdgeVisibility(),
@@ -332,12 +365,55 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       Object.entries(get().layoutPositions).filter(([id]) => nodeIds.has(id)),
     );
 
+    const highlightedNodeIds: string[] = [];
+    const highlightedEdgeIds: string[] = [];
+
+    const currentIdx = get().snapshots.findIndex(s => s.id === snapshot.id);
+    const prevSnapshot = currentIdx > 0 ? get().snapshots[currentIdx - 1] : null;
+
+    if (prevSnapshot) {
+      // Compare nodes
+      const prevNodesMap = new Map(prevSnapshot.nodes.map(n => [n.id, n.status]));
+      for (const node of snapshot.nodes) {
+        if (!prevNodesMap.has(node.id)) {
+          highlightedNodeIds.push(node.id);
+        } else if (prevNodesMap.get(node.id) !== node.status) {
+          highlightedNodeIds.push(node.id);
+        }
+      }
+
+      // Compare edges
+      const prevEdgesMap = new Map(prevSnapshot.edges.map(e => [e.id, e.status]));
+      for (const edge of snapshot.edges) {
+        if (!prevEdgesMap.has(edge.id)) {
+          highlightedEdgeIds.push(edge.id);
+        } else if (prevEdgesMap.get(edge.id) !== edge.status) {
+          highlightedEdgeIds.push(edge.id);
+        }
+      }
+    }
+
+    if (highlightTimeout) {
+      clearTimeout(highlightTimeout);
+      highlightTimeout = null;
+    }
+
     set({
       baseNodes: laidOutNodes,
       baseEdges: snapshot.edges,
       layoutPositions,
+      highlightedNodeIds,
+      highlightedEdgeIds,
     });
     get().recomputeDisplayGraph();
+
+    highlightTimeout = setTimeout(() => {
+      set({
+        highlightedNodeIds: [],
+        highlightedEdgeIds: [],
+      });
+      get().recomputeDisplayGraph();
+    }, 2000);
   },
 
   recomputeDisplayGraph: () => {

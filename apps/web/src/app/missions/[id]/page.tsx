@@ -20,8 +20,6 @@ import type { MissionEventRecord, ReplayBranch, ReplayStateResponse, RuntimeStat
 import { AiAssistant } from '@/components/ai/AiAssistant';
 import { CanvasToolbar } from '@/components/graph/CanvasToolbar';
 import { MissionGraph } from '@/components/graph/MissionGraph';
-import { BranchExplorer } from '@/components/replay/BranchExplorer';
-import { ReplayControls } from '@/components/replay/ReplayControls';
 import { RightSidebar } from '@/components/layout/RightSidebar';
 import { MissionTimeline } from '@/components/timeline/MissionTimeline';
 import { RuntimeSummaryPanel } from '@/components/runtime/RuntimeSummaryPanel';
@@ -363,7 +361,6 @@ export default function MissionWorkspacePage() {
   const setReplayData = useReplayStore((state) => state.setReplayData);
   const setCurrentFrame = useReplayStore((state) => state.setCurrentFrame);
   const { isGraphFullscreen, setIsGraphFullscreen } = useLayoutStore();
-  const [isBranchExplorerCollapsed, setIsBranchExplorerCollapsed] = useState(false);
   const [mission, setMission] = useState<Mission | null>(null);
   const [missionLoadError, setMissionLoadError] = useState<string | null>(null);
   const [runtimeSummary, setRuntimeSummary] = useState<RuntimeSummary | null>(null);
@@ -461,7 +458,15 @@ export default function MissionWorkspacePage() {
     const ws = new WebSocket(`${websocketBaseUrl()}/ws/missions/${missionId}`);
     ws.onmessage = (event: MessageEvent<string>) => {
       try {
-        const message = JSON.parse(event.data) as any;
+        const message = JSON.parse(event.data) as {
+          type: string;
+          mission?: Mission;
+          runtime_summary?: unknown;
+          branch?: { id: string };
+          snapshot?: { branch_id: string };
+          interrupt?: { branch_id: string };
+          job?: { branch_id: string };
+        };
         if (message.type === 'mission.updated' && message.mission) {
           setMission(message.mission);
         }
@@ -630,6 +635,11 @@ export default function MissionWorkspacePage() {
             }
           />
         }
+      />
+      <AiAssistant
+        missionId={missionId}
+        missionObjective={mission?.objective ?? 'Mission overview'}
+        missionStatus={missionStatus}
       />
     </div>
   );

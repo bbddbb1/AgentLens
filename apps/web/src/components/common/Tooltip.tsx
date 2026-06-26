@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -23,10 +23,10 @@ export function Tooltip({
   const triggerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    setMounted(true);
+    Promise.resolve().then(() => setMounted(true));
   }, []);
 
-  const updatePosition = () => {
+  const updatePosition = useCallback(() => {
     const trigger = triggerRef.current;
     if (!trigger) return;
 
@@ -54,7 +54,7 @@ export function Tooltip({
     }
 
     setPosition({ top, left });
-  };
+  }, [side]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -68,7 +68,7 @@ export function Tooltip({
       window.removeEventListener('resize', handle);
       window.removeEventListener('scroll', handle, true);
     };
-  }, [isVisible, side]);
+  }, [isVisible, updatePosition]);
 
   const arrowClasses: Record<string, string> = {
     top: 'bottom-[-6px] left-1/2 -translate-x-1/2 border-l-[7px] border-r-[7px] border-t-[7px] border-l-transparent border-r-transparent',

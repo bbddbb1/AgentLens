@@ -11,6 +11,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Bot, User, Shield, Brain, Search, Pencil, Wrench, Zap, ChevronDown, ChevronUp, Bell } from 'lucide-react';
 import { Tooltip } from '@/components/common/Tooltip';
 import { getAgentColor } from '@/lib/agentColors';
+import { RopsHover } from '@/components/rops/RopsHover';
+import { useGraphStore } from '@/stores/graphStore';
+import { formatDurationMs } from '@/lib/rops/provenance';
 
 const roleIcons: Record<string, React.ReactNode> = {
   planner: <Brain size={16} />,
@@ -45,6 +48,11 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
   const role = String(nodeData.role ?? 'agent');
   const team = typeof nodeData.team === 'string' ? nodeData.team : undefined;
   const confidence = typeof nodeData.confidence === 'number' ? nodeData.confidence : undefined;
+  // ROPS 10.3: the confidence bar is shown only when confidence is emitter-set
+  // Evidence. The store sets confidenceIsEvidence=true only when GraphNode.confidence
+  // was present (the graph layer never runs the scratchToFacts inferred formula).
+  // The inferred fallback is surfaced only at L3 (inspector), labelled heuristic.
+  const confidenceIsEvidence = nodeData.confidenceIsEvidence !== false;
   const summary = typeof nodeData.summary === 'string' ? nodeData.summary : undefined;
   const agentId = typeof nodeData.agentId === 'string' ? nodeData.agentId : '';
   const metadata = (nodeData.metadata as Record<string, unknown>) || {};
@@ -54,26 +62,59 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
     | { tools: number; memory: number; artifacts: number }
     | undefined;
 
+  // ROPS R-4: exactly one L1 headline metric — duration_ms when completed,
+  // else error_count when >0, else none. Deterministic, evidence/projection only.
+  const durationMs = typeof nodeData.durationMs === 'number' ? nodeData.durationMs : undefined;
+  const errorCount = typeof nodeData.errorCount === 'number' ? nodeData.errorCount : undefined;
+  const headlineMetric =
+    status === 'completed' && durationMs !== undefined
+      ? { key: 'duration_ms', display: formatDurationMs(durationMs), provenance: 'projection' as const }
+      : errorCount !== undefined && errorCount > 0
+        ? { key: 'error_count', display: `${errorCount} error${errorCount === 1 ? '' : 's'}`, provenance: 'evidence' as const }
+        : null;
+
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isHoverOpen, setIsHoverOpen] = useState(false);
+
+  // ROPS L2: build the hover model from the current snapshot's GraphNode + edges.
+  // The store is the existing source of truth; we only read, never infer.
+  const baseNodes = useGraphStore((s) => s.baseNodes);
+  const baseEdges = useGraphStore((s) => s.baseEdges);
+  const hoverModel = (() => {
+    const gn = baseNodes.find((n) => n.id === agentId) ?? baseNodes.find((n) => n.label === label);
+    if (!gn) return null;
+    return { node: gn, edges: baseEdges, agentProjection: null };
+  })();
 
   // Use deterministic color for agent type, otherwise fallback to standard colors
   const color = nodeType === 'agent' ? getAgentColor(agentId) : (nodeTypeColors[nodeType] || '#818cf8');
   const statusColor = statusColors[status] || '#5d6180';
   const Icon = nodeType === 'human' ? <User size={16} /> : (roleIcons[role] || <Bot size={16} />);
 
+  const isHighlighted = nodeData.highlighted === true;
+
   return (
     <motion.div
       initial={false}
       layout={false}
+      onHoverStart={() => setIsHoverOpen(true)}
+      onHoverEnd={() => setIsHoverOpen(false)}
       style={{
-        borderColor: selected ? color : 'rgba(255,255,255,0.08)',
-        boxShadow: selected ? `0 0 24px ${color}33` : '0 4px 16px rgba(0,0,0,0.3)',
+        borderColor: isHighlighted ? color : (selected ? color : 'rgba(255,255,255,0.08)'),
+        boxShadow: isHighlighted ? `0 0 24px ${color}` : (selected ? `0 0 24px ${color}33` : '0 4px 16px rgba(0,0,0,0.3)'),
         '--pulse-color': `${color}66`,
         '--pulse-color-transparent': `${color}00`,
       } as React.CSSProperties}
-      className={`relative rounded-xl border bg-[#1a1b25] px-4 py-3 min-w-[180px] max-w-[220px] transition-all duration-200 hover:border-[rgba(255,255,255,0.12)] ${status === 'active' ? 'animate-[node-pulse_2s_ease-in-out_infinite]' : ''}`}
+      className={`relative rounded-xl border bg-[#1a1b25] px-4 py-3 min-w-[180px] max-w-[220px] transition-all duration-200 hover:border-[rgba(255,255,255,0.12)] ${status === 'active' || isHighlighted ? 'animate-[node-pulse_2s_ease-in-out_infinite]' : ''}`}
     >
-      {/* Interrupt Badge */}
+      {/* ROPS L2 hover popover */}
+      {isHoverOpen && hoverModel && (
+        <div className="absolute left-1/2 top-full z-30 mt-2 -translate-x-1/2 pointer-events-none">
+          <RopsHover model={hoverModel} />
+        </div>
+      )}
+
+      {/* Interrupt Badge — ROPS 10.1: shown only when Evidence (metadata.hasPendingInterrupt) */}
       {hasPendingInterrupt && (
         <div className="absolute -top-2 -right-2 z-10 flex items-center justify-center w-6 h-6 rounded-full bg-[#fbbf24] text-[#78350f] shadow-[0_4px_12px_rgba(251,191,36,0.4)] animate-bounce">
           <Bell size={12} fill="currentColor" />
@@ -108,7 +149,7 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
             <div className="text-[10px] text-[#9498b0] uppercase tracking-wider">{role}</div>
           )}
         </div>
-        {/* Status dot */}
+        {/* Status dot — ROPS 7.1 vocabulary, animation only for observed `active` (7.8) */}
         <div className="relative">
           <div
             className="w-2.5 h-2.5 rounded-full"
@@ -123,15 +164,27 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
         </div>
       </div>
 
-      {/* Team badge */}
+      {/* Team badge — Evidence */}
       {team && (
         <div className="text-[10px] px-2 py-0.5 mb-2 rounded-full bg-[rgba(255,255,255,0.04)] text-[#9498b0] w-fit">
           {team}
         </div>
       )}
 
-      {/* Confidence bar */}
-      {confidence != null && (
+      {/* ROPS R-4: single L1 headline metric */}
+      {headlineMetric && (
+        <div className="mt-0.5 flex items-center gap-1.5">
+          <span className="text-[10px] text-[#9498b0]">{headlineMetric.display}</span>
+          <span className="text-[8px] font-mono tracking-wider uppercase text-[#6b708a]">
+            {headlineMetric.provenance === 'evidence' ? '' : '[projection]'}
+          </span>
+        </div>
+      )}
+
+      {/* Confidence bar — ROPS 10.3: only when emitter-set Evidence.
+          The graph node never carries the inferred fallback, so this bar is
+          always Evidence when shown. Heuristic confidence is L3-only. */}
+      {confidence != null && confidenceIsEvidence && (
         <div className="mt-1">
           <div className="flex justify-between text-[10px] text-[#5d6180] mb-0.5">
             <span>Confidence</span>
@@ -151,17 +204,17 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
         </div>
       )}
 
-      {/* Summary (Inner Monologue toggle) */}
+      {/* Summary — Evidence, emitter-set on GraphNode.summary (verbatim, never narrative) */}
       {summary && (
         <div className="mt-2 border-t border-[rgba(255,255,255,0.05)] pt-2">
-          <button 
+          <button
             onClick={() => setIsExpanded(!isExpanded)}
             className="flex items-center justify-between w-full text-[10px] text-[#9498b0] hover:text-[#e8eaf0] transition-colors"
           >
-            <span>Inner Monologue</span>
+            <span>Event Summary</span>
             {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
           </button>
-          
+
           <AnimatePresence>
             {isExpanded && (
               <motion.div
@@ -179,6 +232,7 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
         </div>
       )}
 
+      {/* Satellite-count badges — ROPS 10.1: derived counts, muted (projection) */}
       {satelliteCounts && (satelliteCounts.tools > 0 || satelliteCounts.memory > 0 || satelliteCounts.artifacts > 0) && (
         <div className="mt-2 flex flex-wrap gap-1">
           {satelliteCounts.tools > 0 && (

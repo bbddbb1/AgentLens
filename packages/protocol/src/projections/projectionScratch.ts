@@ -32,6 +32,8 @@ export interface AgentNodeScratch {
   source_span_id?: string;
   source_event_id?: string;
   active_tool_input?: unknown;
+  confidence?: number;
+  drift_score?: number;
 }
 
 export interface InterruptScratch {
@@ -174,6 +176,15 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
 
     const role = payloadString(payload, 'gen_ai.agent.role') ?? payloadString(payload, 'role') ?? payloadString(payload, 'agent_role');
     if (role) agent.role = role;
+
+    const parsedConfidence = payloadValue(payload, 'gen_ai.agent.confidence') ?? payloadValue(payload, 'confidence');
+    if (parsedConfidence !== undefined && parsedConfidence !== null) {
+      agent.confidence = Number(parsedConfidence);
+    }
+    const parsedDrift = payloadValue(payload, 'gen_ai.agent.drift_score') ?? payloadValue(payload, 'drift_score');
+    if (parsedDrift !== undefined && parsedDrift !== null) {
+      agent.drift_score = Number(parsedDrift);
+    }
 
     const framework = payloadString(payload, 'gen_ai.agent.framework') ?? payloadString(payload, 'framework') ?? payloadString(payload, 'agent_framework');
     if (framework) agent.framework = framework;

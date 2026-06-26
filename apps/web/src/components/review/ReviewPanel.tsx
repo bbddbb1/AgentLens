@@ -9,7 +9,6 @@ import { useParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   AlertTriangle,
-  Brain,
   Check,
   CheckCircle2,
   Loader2,
@@ -22,12 +21,6 @@ import { api } from '@/lib/api';
 import { useReviewStore, type Comment } from '@/stores/reviewStore';
 import { useReplayStore } from '@/stores/replayStore';
 
-interface SummaryPayload {
-  summary: string;
-  conflicts: Array<Record<string, unknown>>;
-  anomalies: Array<Record<string, unknown>>;
-}
-
 interface InterruptPayload {
   id: string;
   interrupt_id: string;
@@ -38,22 +31,6 @@ interface InterruptPayload {
   decision_comment?: string;
   decided_at?: string;
   updated_at: string;
-}
-
-function normalizeSummaryPayload(input: unknown): SummaryPayload | null {
-  if (!input || typeof input !== 'object') return null;
-  const payload = input as Record<string, unknown>;
-  if (typeof payload.summary !== 'string') return null;
-
-  return {
-    summary: payload.summary,
-    conflicts: Array.isArray(payload.conflicts)
-      ? payload.conflicts.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
-      : [],
-    anomalies: Array.isArray(payload.anomalies)
-      ? payload.anomalies.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
-      : [],
-  };
 }
 
 function normalizeInterrupts(input: unknown): InterruptPayload[] {
@@ -74,13 +51,6 @@ function normalizeInterrupts(input: unknown): InterruptPayload[] {
     .filter((item) => item.id && item.interrupt_id);
 }
 
-function describeIssue(issue: Record<string, unknown>): string {
-  const description = issue.description;
-  if (typeof description === 'string' && description.trim()) return description;
-  const type = issue.type;
-  if (typeof type === 'string' && type.trim()) return type;
-  return 'Unlabeled issue';
-}
 
 function commentRequestsMasking(comment: string | undefined): boolean {
   const normalized = (comment ?? '').trim().toLowerCase();
@@ -126,56 +96,24 @@ function CommentBubble({ comment }: { comment: Comment }) {
 }
 
 export function ReviewPanel() {
-  const { comments, isCommentPanelOpen, setCommentPanelOpen, addComment } = useReviewStore();
+  const { comments, addComment } = useReviewStore();
   const currentBranchId = useReplayStore((state) => state.currentBranchId);
-  const [activeTab, setActiveTab] = useState<'comments' | 'interrupts' | 'summary' | 'anomalies'>('interrupts');
+  // ROPS P4: the 'summary' and 'anomalies' tabs rendered server-generated
+  // interpretation (`missionSummary.summary`, `.conflicts`, `.anomalies`) and are
+  // forbidden. They have been removed. The ReviewPanel now surfaces only Evidence:
+  // pending interrupts (`InterruptRecord`) and human comments.
+  const [activeTab, setActiveTab] = useState<'comments' | 'interrupts'>('interrupts');
   const [newComment, setNewComment] = useState('');
   const [decisionComment, setDecisionComment] = useState('');
-  const [missionSummary, setMissionSummary] = useState<SummaryPayload | null>(null);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [interrupts, setInterrupts] = useState<InterruptPayload[]>([]);
   const [interruptError, setInterruptError] = useState<string | null>(null);
-  const [isSummaryLoading, setIsSummaryLoading] = useState(false);
   const [isInterruptLoading, setIsInterruptLoading] = useState(false);
   const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
   const params = useParams<{ id?: string }>();
   const missionId = Array.isArray(params?.id) ? params.id[0] : params?.id;
 
-  const loadSummary = useCallback(async (generateIfMissing = true) => {
-    if (!missionId || missionId === 'demo-mission') {
-      setMissionSummary(null);
-      setSummaryError(null);
-      return;
-    }
-
-    setIsSummaryLoading(true);
-    setSummaryError(null);
-    try {
-      const summaries = await api.semantic.summaries(missionId, 'mission', currentBranchId ?? undefined);
-      const latestSummary = normalizeSummaryPayload(summaries[0]);
-      if (latestSummary) {
-        setMissionSummary(latestSummary);
-        return;
-      }
-
-      if (!generateIfMissing) {
-        setMissionSummary(null);
-        return;
-      }
-
-      const generated = normalizeSummaryPayload(await api.semantic.generate(missionId, currentBranchId ?? undefined));
-      if (!generated) {
-        throw new Error('Summary response was empty.');
-      }
-      setMissionSummary(generated);
-    } catch (error) {
-      setMissionSummary(null);
-      setSummaryError(error instanceof Error ? error.message : 'Failed to load summary.');
-    } finally {
-      setIsSummaryLoading(false);
-    }
-  }, [missionId, currentBranchId]);
-
+  // ROPS P4: summary/anomaly fetching removed. `api.semantic.*` drives the
+  // forbidden interpretation surfaces; it is no longer invoked from presentation.
   const loadInterrupts = useCallback(async () => {
     if (!missionId || missionId === 'demo-mission') {
       setInterrupts([]);
@@ -203,10 +141,7 @@ export function ReviewPanel() {
       if (!missionId || missionId === 'demo-mission') {
         return;
       }
-      await Promise.all([
-        loadSummary(true),
-        loadInterrupts(),
-      ]);
+      await loadInterrupts();
     };
 
     void load();
@@ -214,14 +149,13 @@ export function ReviewPanel() {
     const interval = window.setInterval(() => {
       if (cancelled || !missionId || missionId === 'demo-mission') return;
       void loadInterrupts();
-      void loadSummary(false);
     }, 5000);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [loadInterrupts, loadSummary, missionId, currentBranchId]);
+  }, [loadInterrupts, missionId, currentBranchId]);
 
   const handleSubmitComment = () => {
     if (!newComment.trim()) return;
@@ -246,7 +180,7 @@ export function ReviewPanel() {
         idempotency_key: crypto.randomUUID(),
       }, currentBranchId ?? undefined);
       setDecisionComment('');
-      await Promise.all([loadInterrupts(), loadSummary(true)]);
+      await loadInterrupts();
     } catch (error) {
       setInterruptError(error instanceof Error ? error.message : 'Failed to submit decision.');
     } finally {
@@ -267,8 +201,6 @@ export function ReviewPanel() {
     .slice(0, 3);
   const tabs = [
     { id: 'interrupts' as const, label: 'Interrupts', icon: AlertTriangle, count: pendingInterrupts.length },
-    { id: 'summary' as const, label: 'Summary', icon: Brain, count: missionSummary ? 1 : 0 },
-    { id: 'anomalies' as const, label: 'Anomalies', icon: AlertTriangle, count: missionSummary?.anomalies.length ?? 0 },
     { id: 'comments' as const, label: 'Comments', icon: MessageSquare, count: comments.length },
   ];
 
@@ -461,142 +393,6 @@ export function ReviewPanel() {
                   </div>
                 )}
               </div>
-            </motion.div>
-          )}
-
-          {activeTab === 'summary' && (
-            <motion.div
-              key="summary"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="space-y-3"
-            >
-              <div className="glass-card p-3">
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2">
-                    <Brain size={14} className="text-[#8b5cf6]" />
-                    <span className="text-[11px] font-semibold text-[#e8eaf0]">Mission Summary</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void loadSummary(true)}
-                    className="p-1.5 rounded-md text-[#9498b0] hover:text-[#e8eaf0] hover:bg-[rgba(255,255,255,0.05)]"
-                    aria-label="Refresh summary"
-                  >
-                    <RefreshCw size={12} />
-                  </button>
-                </div>
-                {isSummaryLoading ? (
-                  <div className="flex items-center gap-2 text-[12px] text-[#9498b0]">
-                    <Loader2 size={14} className="animate-spin text-[#8b5cf6]" />
-                    <span>Loading mission summary...</span>
-                  </div>
-                ) : summaryError ? (
-                  <div className="space-y-2">
-                    <p className="text-[12px] text-[#fda4af] leading-relaxed">
-                      {summaryError}
-                    </p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void loadSummary(false)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] px-2.5 py-1.5 text-[11px] text-[#d4d8e8] hover:bg-[rgba(255,255,255,0.04)]"
-                      >
-                        <RefreshCw size={11} />
-                        Retry fetch
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void loadSummary(true)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#312e81] px-2.5 py-1.5 text-[11px] text-[#e0e7ff] hover:bg-[#3730a3]"
-                      >
-                        <Brain size={11} />
-                        Generate
-                      </button>
-                    </div>
-                  </div>
-                ) : missionSummary ? (
-                  <div className="space-y-3">
-                    <p className="text-[12px] text-[#9498b0] leading-relaxed">
-                      {missionSummary.summary}
-                    </p>
-                    {missionSummary.conflicts.length > 0 && (
-                      <div className="pt-2 border-t border-[rgba(255,255,255,0.05)]">
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#fbbf24] mb-2">
-                          Conflicts
-                        </div>
-                        <div className="space-y-1.5">
-                          {missionSummary.conflicts.map((conflict, index) => (
-                            <div
-                              key={`conflict-${index}`}
-                              className="rounded-lg border border-[rgba(251,191,36,0.14)] bg-[rgba(251,191,36,0.05)] px-2.5 py-2 text-[11px] text-[#f6e7b0]"
-                            >
-                              {describeIssue(conflict)}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-[12px] text-[#9498b0] leading-relaxed">
-                      No summary has been generated for this mission yet.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void loadSummary(true)}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#312e81] px-2.5 py-1.5 text-[11px] text-[#e0e7ff] hover:bg-[#3730a3]"
-                    >
-                      <Brain size={11} />
-                      Generate summary
-                    </button>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          )}
-
-          {activeTab === 'anomalies' && (
-            <motion.div
-              key="anomalies"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              {missionSummary?.anomalies.length ? (
-                <div className="space-y-2">
-                  {missionSummary.anomalies.map((anomaly, index) => (
-                    <div
-                      key={`anomaly-${index}`}
-                      className="rounded-lg border border-[rgba(248,113,113,0.14)] bg-[rgba(248,113,113,0.05)] px-3 py-2.5"
-                    >
-                      <div className="flex items-start gap-2">
-                        <AlertTriangle size={14} className="text-[#f87171] mt-0.5 shrink-0" />
-                        <div className="space-y-1">
-                          <p className="text-[12px] text-[#f3c0c0] leading-relaxed">
-                            {describeIssue(anomaly)}
-                          </p>
-                          {typeof anomaly.severity === 'string' && (
-                            <div className="text-[10px] uppercase tracking-[0.14em] text-[#fda4af]">
-                              Severity: {anomaly.severity}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center py-8 text-center">
-                  <CheckCircle2 size={32} className="text-[#34d399]/30 mb-3" />
-                  <p className="text-[12px] text-[#5d6180]">No anomalies detected</p>
-                  <p className="text-[10px] text-[#3a3d54] mt-1">
-                    Conflicts, loops, and drift will appear here
-                  </p>
-                </div>
-              )}
             </motion.div>
           )}
 

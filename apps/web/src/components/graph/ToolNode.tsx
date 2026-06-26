@@ -4,10 +4,12 @@
  * Custom Tool Node for React Flow.
  */
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { motion } from 'framer-motion';
 import { Wrench, Database, FileText, Globe } from 'lucide-react';
+import { RopsHover } from '@/components/rops/RopsHover';
+import { useGraphStore } from '@/stores/graphStore';
 
 const toolIcons: Record<string, React.ReactNode> = {
   memory: <Database size={14} />,
@@ -24,16 +26,34 @@ function ToolNodeComponent({ data, selected }: NodeProps) {
   const color = nodeType === 'memory' ? '#34d399' : nodeType === 'artifact' ? '#fb923c' : '#fbbf24';
   const Icon = toolIcons[nodeType] || <Wrench size={14} />;
 
+  const [isHoverOpen, setIsHoverOpen] = useState(false);
+  const baseNodes = useGraphStore((s) => s.baseNodes);
+  const baseEdges = useGraphStore((s) => s.baseEdges);
+  const hoverModel = (() => {
+    const gn = baseNodes.find((n) => n.label === label) ?? null;
+    if (!gn) return null;
+    return { node: gn, edges: baseEdges, agentProjection: null };
+  })();
+
+  const isHighlighted = nodeData.highlighted === true;
+
   return (
     <motion.div
       initial={false}
       layout={false}
+      onHoverStart={() => setIsHoverOpen(true)}
+      onHoverEnd={() => setIsHoverOpen(false)}
       style={{
-        borderColor: selected ? color : 'rgba(255,255,255,0.05)',
-        boxShadow: selected ? `0 0 16px ${color}22` : 'none',
+        borderColor: isHighlighted ? color : (selected ? color : 'rgba(255,255,255,0.05)'),
+        boxShadow: isHighlighted ? `0 0 16px ${color}` : (selected ? `0 0 16px ${color}22` : 'none'),
       }}
-      className="rounded-lg border bg-[#131420] px-3 py-2 min-w-[100px] transition-all duration-200"
+      className="relative rounded-lg border bg-[#131420] px-3 py-2 min-w-[100px] transition-all duration-200"
     >
+      {isHoverOpen && hoverModel && (
+        <div className="absolute left-1/2 top-full z-30 mt-2 -translate-x-1/2 pointer-events-none">
+          <RopsHover model={hoverModel} />
+        </div>
+      )}
       <Handle
         type="target"
         position={Position.Top}
