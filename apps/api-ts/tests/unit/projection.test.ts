@@ -174,6 +174,79 @@ describe('projectReplay', () => {
     expect(replay.snapshots).toHaveLength(1); // One start timestamp for spans
   });
 
+  it('emits task.started (not tool.called) for execute_tool span start', () => {
+    const toolSpan = {
+      span_id: 'tool-span',
+      trace_id: 'trace-tool',
+      parent_span_id: null,
+      name: 'execute_tool',
+      operation_name: 'execute_tool',
+      start_time_unix_nano: '1000000000',
+      end_time_unix_nano: '2000000000',
+      status_code: 'OK',
+      attributes: {
+        'gen_ai.agent.id': 'diagnosis',
+        'agent.span.kind': 'execute_tool',
+        'gen_ai.tool.name': 'search_topology',
+      },
+      events: [
+        {
+          name: 'tool.called',
+          time: '2026-06-24T13:00:01.000Z',
+          attributes: {
+            'gen_ai.tool.name': 'search_topology',
+            'gen_ai.tool.input': '{"query":"sector-3"}',
+            'gen_ai.tool.output': '{"nodes":2}',
+          },
+        },
+      ],
+    };
+    const replay = projectReplay('m-tool', 'main', [toolSpan]);
+    const startEvent = replay.events.find((e) => e.id === 'tool-span');
+    expect(startEvent?.event_type).toBe('task.started');
+    const toolCalled = replay.events.filter((e) => e.event_type === 'tool.called');
+    expect(toolCalled).toHaveLength(1);
+    expect(toolCalled[0]?.payload?.['gen_ai.tool.input']).toBe('{"query":"sector-3"}');
+  });
+
+  it('normalizes basestation.aiops span events to AgentLens types', () => {
+    const span = {
+      span_id: 'diag-span',
+      trace_id: 'trace-diag',
+      parent_span_id: null,
+      name: 'diagnosis',
+      start_time_unix_nano: '1000000000',
+      end_time_unix_nano: '3000000000',
+      status_code: 'OK',
+      attributes: {
+        'gen_ai.agent.id': 'diagnosis',
+      },
+      events: [
+        {
+          name: 'basestation.aiops.hypothesis.proposed',
+          time: '2026-06-24T13:00:01.000Z',
+          attributes: {
+            'hypothesis.description': 'Power amplifier failure',
+            'hypothesis.confidence': 0.82,
+          },
+        },
+        {
+          name: 'basestation.aiops.decision.made',
+          time: '2026-06-24T13:00:02.000Z',
+          attributes: {
+            'decision.type': 'remediation',
+            'decision.summary': 'Replace PA module',
+          },
+        },
+      ],
+    };
+    const replay = projectReplay('m-diag', 'main', [span]);
+    const hypothesis = replay.events.find((e) => e.event_type === 'hypothesis.proposed');
+    const decision = replay.events.find((e) => e.event_type === 'decision.made');
+    expect(hypothesis?.payload?.['hypothesis.description']).toBe('Power amplifier failure');
+    expect(decision?.payload?.['decision.summary']).toBe('Replace PA module');
+  });
+
   it('Scenario 1: Planner -> Researcher -> Writer delegation chain', () => {
     const scenarioSpans = [
       {
@@ -409,7 +482,7 @@ describe('projectReplay', () => {
 
     // Verify chronological events on the timeline
     expect(replay.events).toHaveLength(7); // span start, end, 2 internal events, and 3 interrupt table events
-    
+
     const reqEvent = replay.events.find(e => e.event_type === 'interrupt.requested');
     expect(reqEvent).toBeDefined();
     expect(reqEvent!.trace_id).toBe('trace-scenario3');
@@ -420,5 +493,93 @@ describe('projectReplay', () => {
     expect(decEvent!.trace_id).toBe('trace-scenario3');
     expect(decEvent!.source_span_id).toBe('span-writer');
     expect(decEvent!.payload.decision).toBe('approve');
+  });
+});
+
+describe('projectReplay runtime agent state', () => {
+  it('populates current_state.agents from projected events', () => {
+    const spans = [
+      {
+        span_id: 'agent-span',
+        trace_id: 't1',
+        parent_span_id: null,
+        operation_name: 'invoke_agent',
+        start_time_unix_nano: '1000000',
+        end_time_unix_nano: '2000000',
+        status_code: 'OK',
+        attributes: {
+          'gen_ai.agent.id': 'diagnosis',
+          'gen_ai.agent.name': 'diagnosis',
+          'gen_ai.agent.role': 'diagnosis',
+          'gen_ai.agent.framework': 'langgraph',
+          'agent.span.kind': 'invoke_agent',
+        },
+        events: [],
+      },
+    ];
+
+    const replay = projectReplay('m-agents', 'main', spans);
+    expect(Object.keys(replay.current_state?.agents ?? {})).toContain('diagnosis');
+    expect(replay.current_state?.agents.diagnosis?.status).toBe('completed');
+    expect(replay.current_state?.agents.diagnosis?.role).toBe('diagnosis');
+    expect(replay.events.find((e) => e.event_type === 'task.started')?.origin_framework).toBe('langgraph');
+  });
+});
+
+describe('provenance assembly from verbatim attributes', () => {
+  it('assembles ModelProvenance from individual gen_ai.* attributes', () => {
+    const spans = [
+      {
+        span_id: 'llm-1',
+        trace_id: 't1',
+        parent_span_id: null,
+        name: 'llm.completion',
+        start_time_unix_nano: '1000000',
+        end_time_unix_nano: '2000000',
+        status_code: 'OK',
+        attributes: {
+          'gen_ai.system': 'openai',
+          'gen_ai.request.model': 'gpt-4o',
+          'gen_ai.model.version': '2024-08-06',
+          'gen_ai.usage.input_tokens': 42,
+          'gen_ai.usage.output_tokens': 7,
+          'gen_ai.request.temperature': 0.2,
+          'gen_ai.response.finish_reason': 'stop',
+        },
+      },
+    ];
+    const snapshot = projectTraceSnapshot('m', 'main', spans);
+    // The L2 node carries the model provenance on its envelope payload.
+    const node = snapshot.nodes.find(n => n.id === 'llm-1');
+    expect(node).toBeDefined();
+    // Node label reflects provider + model.
+    expect(node!.label).toContain('openai');
+    expect(node!.label).toContain('gpt-4o');
+  });
+
+  it('assembles ErrorAttribution from individual error.* attributes', () => {
+    const spans = [
+      {
+        span_id: 'tool-1',
+        trace_id: 't1',
+        parent_span_id: null,
+        name: 'tool.invoke',
+        start_time_unix_nano: '1000000',
+        end_time_unix_nano: '2000000',
+        status_code: 'ERROR',
+        attributes: {
+          'gen_ai.tool.name': 'ping',
+          'error.source': 'tool',
+          'error.cause': 'tool_failure',
+          'error.severity': 'high',
+          'error.original': 'connection refused',
+          'error.recovery.action': 'retry',
+        },
+      },
+    ];
+    const snapshot = projectTraceSnapshot('m', 'main', spans);
+    const node = snapshot.nodes.find(n => n.id === 'tool-1');
+    expect(node).toBeDefined();
+    expect(node!.error_count).toBe(1);
   });
 });

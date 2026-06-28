@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { ListTree } from 'lucide-react';
 import { useGraphStore } from '@/stores/graphStore';
 import { useReplayStore } from '@/stores/replayStore';
+import { eventAtFrame, findFrameForEvent } from '@/lib/replayFrame';
 
 function formatEventLabel(eventType: string): string {
   return eventType.replace(/[._]/g, ' ');
@@ -21,11 +22,11 @@ function formatEventLabel(eventType: string): string {
  */
 export function WhyThisState({ missionId: _missionId }: { missionId: string }) {
   const { snapshots, selectedNodeId } = useGraphStore();
-  const { events, currentFrame, setSelectedEventId } = useReplayStore();
+  const { events, currentFrame, setSelectedEventId, setCurrentFrame } = useReplayStore();
 
   const currentSnapshot = snapshots[currentFrame] ?? snapshots[snapshots.length - 1] ?? null;
   const selectedNode = currentSnapshot?.nodes.find((node) => node.id === selectedNodeId) ?? null;
-  const visibleEvent = events[currentFrame] ?? events[events.length - 1] ?? null;
+  const visibleEvent = eventAtFrame(snapshots, events, currentFrame);
 
   const causalEvents = useMemo(() => {
     const pivotId = selectedNode?.agent_id ?? selectedNode?.id;
@@ -61,7 +62,11 @@ export function WhyThisState({ missionId: _missionId }: { missionId: string }) {
             <button
               type="button"
               key={event.id}
-              onClick={() => setSelectedEventId(event.id)}
+              onClick={() => {
+                setSelectedEventId(event.id);
+                const frame = findFrameForEvent(snapshots, events, event.id);
+                if (frame !== null) setCurrentFrame(frame);
+              }}
               className={`w-full rounded-xl border px-3 py-2 text-left transition-colors ${
                 isCurrent
                   ? 'border-[rgba(129,140,248,0.24)] bg-[rgba(99,102,241,0.08)]'

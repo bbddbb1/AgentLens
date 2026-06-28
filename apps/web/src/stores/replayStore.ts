@@ -46,23 +46,13 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
   setIsPlaying: (isPlaying) => set({ isPlaying }),
   setCurrentFrame: (currentFrame) => {
     const safeFrame = Math.max(0, Math.min(currentFrame, Math.max(get().totalFrames - 1, 0)));
-    const event = get().events[safeFrame];
-    set({
-      currentFrame: safeFrame,
-      selectedEventId: event?.id ?? null,
-    });
+    set({ currentFrame: safeFrame });
   },
   setTotalFrames: (totalFrames) => set({ totalFrames }),
   setPlaybackSpeed: (playbackSpeed) => set({ playbackSpeed }),
   setDuration: (durationSeconds) => set({ durationSeconds }),
   setCurrentBranchId: (currentBranchId) => set({ currentBranchId }),
-  setSelectedEventId: (selectedEventId) => {
-    const eventIndex = get().events.findIndex((event) => event.id === selectedEventId);
-    set({
-      selectedEventId,
-      currentFrame: eventIndex >= 0 ? eventIndex : get().currentFrame,
-    });
-  },
+  setSelectedEventId: (selectedEventId) => set({ selectedEventId }),
   setReplayData: (data) =>
     set((state) => {
       const nextFrame = Math.max(0, Math.min(state.currentFrame, Math.max(data.total_frames - 1, 0)));
@@ -74,25 +64,23 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
         totalFrames: data.total_frames,
         durationSeconds: data.duration_seconds,
         currentFrame: nextFrame,
-        selectedEventId: data.events[nextFrame]?.id ?? data.events[data.events.length - 1]?.id ?? null,
+        selectedEventId: null,
       };
     }),
 
   nextFrame: () => {
-    const { currentFrame, totalFrames, events } = get();
+    const { currentFrame, totalFrames } = get();
     if (currentFrame < totalFrames - 1) {
-      const nextFrame = currentFrame + 1;
-      set({ currentFrame: nextFrame, selectedEventId: events[nextFrame]?.id ?? null });
+      set({ currentFrame: currentFrame + 1 });
     } else {
       set({ isPlaying: false });
     }
   },
 
   prevFrame: () => {
-    const { currentFrame, events } = get();
+    const { currentFrame } = get();
     if (currentFrame > 0) {
-      const prevFrame = currentFrame - 1;
-      set({ currentFrame: prevFrame, selectedEventId: events[prevFrame]?.id ?? null });
+      set({ currentFrame: currentFrame - 1 });
     }
   },
 
@@ -104,9 +92,9 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
     })),
 
   reset: () =>
-    set((state) => ({
+    set({
       isPlaying: false,
       currentFrame: 0,
-      selectedEventId: state.events[0]?.id ?? null,
-    })),
+      selectedEventId: null,
+    }),
 }));

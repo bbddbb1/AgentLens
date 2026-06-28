@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { TIMELINE_SUPPRESSED_EVENT_TYPES } from '@agentlens/protocol';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -49,8 +50,9 @@ export function MissionTimeline() {
   );
 
   const filteredEvents = useMemo(() => {
-    if (!selectedNodeId) return events;
-    return events.filter((event) => {
+    const list = events.filter((event) => !TIMELINE_SUPPRESSED_EVENT_TYPES.has(event.event_type));
+    if (!selectedNodeId) return list;
+    return list.filter((event) => {
       const payload = (event.payload || {}) as Record<string, unknown>;
       return (
         event.agent_id === selectedNodeId ||

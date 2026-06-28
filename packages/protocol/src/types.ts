@@ -3,6 +3,29 @@ export type NodeStatus = 'idle' | 'active' | 'completed' | 'failed' | 'waiting' 
 export type EdgeType = 'dependency' | 'uses' | 'delegation' | 'critique' | 'review' | 'escalation' | 'data_flow' | 'approval' | 'member_of' | 'produces';
 export type EdgeStatus = 'pending' | 'active' | 'completed' | 'failed';
 
+/**
+ * Presentation profile of a `GraphNode` (ROPS inspector dispatch + field
+ * surfacing). NOT runtime identity and NOT part of the runtime ontology:
+ * it never alters `NodeType`, graph topology, edges, or node merging/hiding,
+ * and it never introduces a synthetic hierarchy. It is derived purely from
+ * verbatim span attributes + `operation_name` and exists only to choose which
+ * first-class Evidence rows a profile-aware inspector renders. `NodeType` stays
+ * the stable runtime union above; the profile is a transport-efficient hint
+ * so the web does not re-derive it from `metadata`.
+ */
+export type ProjectionProfile =
+  | 'agent' // invoke_agent span
+  | 'llm' // llm.call (gen_ai.system / gen_ai.request.model)
+  | 'tool' // execute_tool with gen_ai.tool.name (non-retrieval)
+  | 'retrieval' // retrieval.search (retrieval.backend / search.query)
+  | 'memory' // memory op
+  | 'artifact' // artifact op
+  | 'workflow_step' // workflow.step / workflow.transition
+  | 'mission' // mission.execute / mission.lifecycle
+  | 'checkpoint' // runtime.checkpoint.save / load
+  | 'human' // human input
+  | 'generic'; // unrecognized — minimal identity/lifecycle view
+
 export interface NodePosition {
   x: number;
   y: number;
@@ -35,6 +58,8 @@ export interface GraphNode {
   evidence_span_id?: string;
   source_span_id?: string;
   source_event_id?: string;
+  /** Presentation profile (ROPS dispatch + field surfacing). See `ProjectionProfile`. */
+  projection_profile?: ProjectionProfile;
 }
 
 export interface GraphEdge {

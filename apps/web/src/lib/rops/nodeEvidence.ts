@@ -88,8 +88,7 @@ export function collectNodeEvidence(
         .sort((a, b) => (a.sequence_num ?? 0) - (b.sequence_num ?? 0))
     : [];
 
-  const toolCallEnvelope =
-    matched.find((e) => TOOL_CALL_EVENT_TYPES.has(e.event_type)) ?? null;
+  const toolCallEnvelope = selectRichestToolCallEnvelope(matched);
   const failureEnvelope = matched.find((e) => e.event_type === 'span.failed') ?? null;
 
   const toolPayload = (toolCallEnvelope?.payload ?? {}) as Record<string, unknown>;
@@ -131,6 +130,30 @@ export function collectNodeEvidence(
     failureCause,
     producedOutputs,
   };
+}
+
+/** Prefer the tool.called envelope that carries the most I/O evidence. */
+function selectRichestToolCallEnvelope(
+  envelopes: readonly EventEnvelope[],
+): EventEnvelope | null {
+  const candidates = envelopes.filter((e) => TOOL_CALL_EVENT_TYPES.has(e.event_type));
+  if (candidates.length === 0) return null;
+
+  return candidates.reduce<EventEnvelope | null>((best, envelope) => {
+    if (!best) return envelope;
+    return toolCallEvidenceScore(envelope) > toolCallEvidenceScore(best) ? envelope : best;
+  }, null);
+}
+
+function toolCallEvidenceScore(envelope: EventEnvelope): number {
+  const payload = (envelope.payload ?? {}) as Record<string, unknown>;
+  let score = 0;
+  if (firstValue(payload, TOOL_INPUT_KEYS) !== undefined) score += 2;
+  if (firstValue(payload, TOOL_OUTPUT_KEYS) !== undefined) score += 2;
+  if (firstString(payload, TOOL_NAME_KEYS)) score += 1;
+  if (firstString(payload, TOOL_STATUS_KEYS)) score += 1;
+  if (envelope.source_event_id) score += 1;
+  return score;
 }
 
 /** First string value found under any of `keys` in `bag`; undefined otherwise. */

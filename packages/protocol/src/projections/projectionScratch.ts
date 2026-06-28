@@ -8,6 +8,9 @@ import type {
 
 export const NOISE_EVENT_TYPES = new Set(['span.started', 'span.completed']);
 
+/** Event types hidden from the mission timeline UI (still in audit stream). */
+export const TIMELINE_SUPPRESSED_EVENT_TYPES: ReadonlySet<string> = NOISE_EVENT_TYPES;
+
 export interface AgentNodeScratch {
   name: string;
   role?: string;
@@ -106,7 +109,7 @@ export function buildEventRef(event: MissionEventRecord): RuntimeEventRef | null
     case 'tool.called':
     case 'tool.completed':
     case 'tool.failed':
-      object = payloadString(payload, 'tool_name');
+      object = payloadString(payload, 'tool_name') ?? payloadString(payload, 'gen_ai.tool.name');
       break;
     case 'memory.written':
     case 'memory.read':
@@ -235,7 +238,7 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
       agent.status = 'active';
       agent.active_tool_input = payloadValue(payload, 'gen_ai.tool.input') ?? payloadValue(payload, 'tool_input') ?? payloadValue(payload, 'input');
     } else if (event.event_type === 'tool.completed' || event.event_type === 'tool.result') {
-      const toolName = payloadString(payload, 'tool_name') ?? 'tool';
+      const toolName = payloadString(payload, 'tool_name') ?? payloadString(payload, 'gen_ai.tool.name') ?? 'tool';
       const toolOutput = payloadValue(payload, 'tool_output') ?? payloadValue(payload, 'output');
       addProducedOutput(agent, {
         id: `tool-${event.span_id ?? event.sequence_num}`,
@@ -254,7 +257,7 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
       agent.error_count += 1;
       agent.warnings.push({
         code: 'tool.failed',
-        message: `Tool failed: ${payloadString(payload, 'tool_name') ?? 'unknown'}`,
+        message: `Tool failed: ${payloadString(payload, 'tool_name') ?? payloadString(payload, 'gen_ai.tool.name') ?? 'unknown'}`,
         sequence_num: event.sequence_num,
         severity: 'high',
       });
@@ -303,6 +306,39 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
         sequence_num: event.sequence_num,
         timestamp: event.timestamp,
       });
+    } else if (event.event_type === 'hypothesis.proposed') {
+      const description = payloadString(payload, 'hypothesis.description');
+      if (description) {
+        addProducedOutput(agent, {
+          id: `hypothesis-${event.sequence_num}`,
+          source: event.event_type,
+          type: 'reflection',
+          name: 'Hypothesis',
+          value: {
+            description,
+            confidence: payloadValue(payload, 'hypothesis.confidence'),
+          },
+          sequence_num: event.sequence_num,
+          timestamp: event.timestamp,
+        });
+      }
+    } else if (event.event_type === 'decision.made') {
+      const summary = payloadString(payload, 'decision.summary');
+      if (summary) {
+        addProducedOutput(agent, {
+          id: `decision-${event.sequence_num}`,
+          source: event.event_type,
+          type: 'reflection',
+          name: `Decision: ${payloadString(payload, 'decision.type') ?? 'outcome'}`,
+          value: {
+            type: payloadString(payload, 'decision.type'),
+            summary,
+            confidence: payloadValue(payload, 'decision.confidence'),
+          },
+          sequence_num: event.sequence_num,
+          timestamp: event.timestamp,
+        });
+      }
     } else if (event.event_type === 'interrupt.requested') {
       agent.status = 'waiting';
       agent.pending = payloadString(payload, 'reason') ?? 'Awaiting human decision';

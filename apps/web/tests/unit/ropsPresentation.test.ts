@@ -33,24 +33,26 @@ function facts(overrides: Partial<NodeProjectionFacts> = {}): NodeProjectionFact
   } as NodeProjectionFacts;
 }
 
-describe('ROPS L1 confidence integrity (spec 10.3)', () => {
+describe('ROPS L1 confidence integrity (spec 10.3 / P0)', () => {
   it('suppresses the bar when confidence is absent', () => {
-    const f = classifyConfidence(undefined, 0, 0, false);
+    const f = classifyConfidence(undefined);
     expect(f.absent).toBe(true);
+    expect(f.value).toBeUndefined();
   });
 
   it('treats emitter-set confidence as evidence (bar may render unlabelled at L1)', () => {
-    const f = classifyConfidence(0.9, 0, 0, true);
+    const f = classifyConfidence(0.9);
     expect(f.provenance).toBe('evidence');
+    expect(f.absent).toBe(false);
   });
 
-  it('treats formula-matching confidence as heuristic (must NOT render as evidence at L1)', () => {
-    // 1.0 - 1*0.15 - 1*0.05 = 0.80
-    const f = classifyConfidence(0.8, 1, 1, false);
-    expect(f.provenance).toBe('heuristic');
-    // A compliant L1 card must check provenance === 'evidence' before showing
-    // the unlabelled bar; heuristic confidence is L3-only (suppressed or labelled).
-    expect(f.provenance === 'evidence').toBe(false);
+  it('never produces heuristic confidence (no fabrication path)', () => {
+    // After P0 the projection does not synthesize a fallback formula, so any
+    // confidence reaching the view was emitted by the runtime and is Evidence.
+    // There is no heuristic confidence to suppress at L1.
+    const f = classifyConfidence(0.8);
+    expect(f.provenance).toBe('evidence');
+    expect(f.provenance === 'heuristic').toBe(false);
   });
 });
 

@@ -59,7 +59,7 @@ export function describeRuntimeEvent(event: MissionEventRecord): string | null {
     case 'task.failed':
       return `${agent} failed ${payloadString(payload, 'task') ?? 'a task'}`;
     case 'tool.called':
-      return `${agent} used ${payloadString(payload, 'tool_name') ?? 'a tool'}`;
+      return `${agent} used ${payloadString(payload, 'tool_name') ?? payloadString(payload, 'gen_ai.tool.name') ?? 'a tool'}`;
     case 'tool.completed':
       return `${agent} finished ${payloadString(payload, 'tool_name') ?? 'tool'} call`;
     case 'tool.failed':
@@ -92,8 +92,26 @@ export function describeRuntimeEvent(event: MissionEventRecord): string | null {
       const key = payloadString(payload, 'memory_key') ?? payloadString(payload, 'key') ?? 'memory';
       return `${agent} read from ${key}`;
     }
-    case 'observation.recorded':
-      return `${agent} recorded an observation`;
+    case 'observation.recorded': {
+      const insight = payloadString(payload, 'insight');
+      return insight ? `${agent} recorded: ${truncate(insight, 80)}` : `${agent} recorded an observation`;
+    }
+    case 'hypothesis.proposed': {
+      const description = payloadString(payload, 'hypothesis.description');
+      return description
+        ? `${agent} proposed hypothesis: ${truncate(description, 80)}`
+        : `${agent} proposed a hypothesis`;
+    }
+    case 'decision.made': {
+      const summary = payloadString(payload, 'decision.summary');
+      const decisionType = payloadString(payload, 'decision.type');
+      if (summary) {
+        return decisionType
+          ? `${agent} decided (${decisionType}): ${truncate(summary, 80)}`
+          : `${agent} decided: ${truncate(summary, 80)}`;
+      }
+      return `${agent} recorded a decision`;
+    }
     case 'artifact.created':
       return `${agent} created artifact ${payloadString(payload, 'artifact_name') ?? payloadString(payload, 'name') ?? 'output'}`;
     case 'artifact.updated':
@@ -133,6 +151,7 @@ function classifyEvent(
     case 'critique':
     case 'review.changes_requested':
     case 'observation.recorded':
+    case 'hypothesis.proposed':
       buckets.observations.push({ text, ...base });
       break;
     case 'agent.registered': {
@@ -145,6 +164,7 @@ function classifyEvent(
     case 'review.rejected':
     case 'handoff.accepted':
     case 'handoff.rejected':
+    case 'decision.made':
       buckets.decisions.push({ text, ...base });
       break;
     case 'memory.written':

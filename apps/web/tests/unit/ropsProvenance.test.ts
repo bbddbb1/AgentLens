@@ -78,25 +78,31 @@ describe('ROPS provenance — forbidden fields', () => {
   });
 });
 
-describe('ROPS provenance — confidence classification (P8 / 10.3)', () => {
-  it('classifies emitter-set confidence as evidence', () => {
-    const f = classifyConfidence(0.85, 0, 0, true);
+describe('ROPS provenance — confidence classification (P0 / 10.3 / P8)', () => {
+  it('classifies a present (emitter-set) confidence as evidence', () => {
+    const f = classifyConfidence(0.85);
     expect(f.provenance).toBe('evidence');
     expect(f.value).toBe(0.85);
     expect(f.absent).toBe(false);
   });
 
-  it('classifies formula-matching confidence (no emitter) as heuristic', () => {
-    // 1.0 - 2*0.15 - 2*0.05 = 0.60
-    const f = classifyConfidence(0.6, 2, 2, false);
-    expect(f.provenance).toBe('heuristic');
-    expect(f.value).toBe(0.6);
-  });
-
-  it('marks absent confidence as absent evidence', () => {
-    const f = classifyConfidence(undefined, 0, 0, false);
+  it('never fabricates confidence: absence renders as not-recorded evidence', () => {
+    // The projection no longer synthesizes a fallback formula, so a missing
+    // confidence is absent Evidence ("not recorded"), not a heuristic value.
+    const f = classifyConfidence(undefined);
     expect(f.absent).toBe(true);
     expect(f.provenance).toBe('evidence');
+    expect(f.value).toBeUndefined();
+  });
+
+  it('treats every present confidence as evidence (no heuristic path)', () => {
+    // After P0 there is no formula-reproduction branch: any value reaching
+    // facts.confidence was emitted by the runtime, so it is Evidence regardless
+    // of error/warning counts.
+    const f = classifyConfidence(0.6);
+    expect(f.provenance).toBe('evidence');
+    expect(f.value).toBe(0.6);
+    expect(f.absent).toBe(false);
   });
 });
 

@@ -5,6 +5,7 @@ import { GitBranch, Plus, Waypoints, Bot, AlertTriangle, Sparkles, Loader2, Chev
 import { api } from '@/lib/api';
 import { useGraphStore } from '@/stores/graphStore';
 import { useReplayStore } from '@/stores/replayStore';
+import { eventAtFrame, eventsThroughFrame } from '@/lib/replayFrame';
 
 interface BranchExplorerProps {
   missionId: string;
@@ -60,8 +61,12 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
   
   const currentSnapshot = snapshots[currentFrame] ?? snapshots[snapshots.length - 1] ?? null;
   const selectedNode = currentSnapshot?.nodes.find((node) => node.id === selectedNodeId) ?? null;
-  const visibleEvent = events[currentFrame] ?? events[events.length - 1] ?? null;
+  const visibleEvent = eventAtFrame(snapshots, events, currentFrame);
   const isBranchable = isEventBranchable(visibleEvent?.event_type);
+  const frameEvents = useMemo(
+    () => eventsThroughFrame(snapshots, events, currentFrame),
+    [snapshots, events, currentFrame],
+  );
 
   useEffect(() => {
     if (!missionId || missionId === 'demo-mission') return;
@@ -128,7 +133,7 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
     );
 
     // 2. Scan events timeline for any event that matches the target node ID, agent ID, span ID, or tool name
-    const activeEvents = events.slice(0, currentFrame + 1);
+    const activeEvents = frameEvents;
     const matchedEvent = [...activeEvents].reverse().find((e) => {
       const payload = e.payload as Record<string, unknown>;
       if (e.agent_id?.toLowerCase() === target) return true;
@@ -182,7 +187,7 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
     }
 
     return null;
-  }, [stateTarget, events, currentFrame, currentSnapshot, currentState]);
+  }, [stateTarget, frameEvents, currentSnapshot, currentState]);
 
   const prefillStatePayload = () => {
     if (fetchedNodeState) {
@@ -209,7 +214,7 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
   const originalTask = useMemo(() => {
     if (!selectedAgentId || !events) return '';
     // Find the latest task.started event for this agent up to the current frame
-    const activeEvents = events.slice(0, currentFrame + 1);
+    const activeEvents = frameEvents;
     const taskEvent = [...activeEvents]
       .reverse()
       .find((e) => e.event_type === 'task.started' && (e.payload?.agent_id === selectedAgentId || e.agent_id === selectedAgentId));
@@ -230,12 +235,12 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
       );
     }
     return '';
-  }, [selectedAgentId, events, currentFrame, selectedAgentObj, selectedAgentNode]);
+  }, [selectedAgentId, frameEvents, selectedAgentObj, selectedAgentNode]);
 
   const originalGoal = useMemo(() => {
     if (!selectedAgentId || !events) return '';
     // Find the latest agent.registered event for this agent up to the current frame
-    const activeEvents = events.slice(0, currentFrame + 1);
+    const activeEvents = frameEvents;
     const regEvent = [...activeEvents]
       .reverse()
       .find((e) => e.event_type === 'agent.registered' && (e.payload?.agent_id === selectedAgentId || e.agent_id === selectedAgentId));
@@ -256,7 +261,7 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
       );
     }
     return '';
-  }, [selectedAgentId, events, currentFrame, selectedAgentObj, selectedAgentNode]);
+  }, [selectedAgentId, frameEvents, selectedAgentObj, selectedAgentNode]);
 
   const availableNodes = useMemo(() => {
     if (!currentSnapshot?.nodes) return [];

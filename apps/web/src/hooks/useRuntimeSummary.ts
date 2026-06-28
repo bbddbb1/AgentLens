@@ -5,6 +5,7 @@ import type { RuntimeSummary } from '@agentlens/protocol';
 import { projectRuntimeSummary } from '@agentlens/protocol';
 import { useReplayStore } from '@/stores/replayStore';
 import { useGraphStore } from '@/stores/graphStore';
+import { sequenceNumThroughFrame } from '@/lib/replayFrame';
 
 interface UseRuntimeSummaryOptions {
   missionId: string;
@@ -23,7 +24,10 @@ export function useRuntimeSummary({
 }: UseRuntimeSummaryOptions): RuntimeSummary | null {
   const { events, currentFrame, currentBranchId } = useReplayStore();
   const snapshots = useGraphStore((state) => state.snapshots);
-  const frameSequenceNum = snapshots[currentFrame]?.sequence_num;
+  const frameSequenceNum = useMemo(
+    () => sequenceNumThroughFrame(snapshots, events, currentFrame),
+    [snapshots, events, currentFrame],
+  );
 
   const clientSummary = useMemo(() => {
     if (!events.length) return null;

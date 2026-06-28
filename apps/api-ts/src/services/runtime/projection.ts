@@ -1,4 +1,14 @@
-import type { GraphSnapshot, GraphNode, GraphEdge, MissionEventRecord, ReplayStateResponse } from '@agentlens/protocol';
+import type {
+  GraphSnapshot,
+  GraphNode,
+  GraphEdge,
+  MissionEventRecord,
+  NodeType,
+  ProjectionProfile,
+  ReplayStateResponse,
+  RuntimeAgentState,
+} from '@agentlens/protocol';
+import { scanEventsToScratch } from '@agentlens/protocol';
 import { applyHierarchicalLayout } from '../graphLayout.js';
 
 export type MaturityTier = 'L1' | 'L2' | 'L3';
@@ -14,6 +24,177 @@ function parseAttrJson(val: any): any {
   }
   return val;
 }
+
+/**
+ * Assemble ModelProvenance from verbatim runtime attributes. Prefers an
+ * explicit structured form (`agentlens.model` / `model` JSON); otherwise
+ * composes the block from individual `gen_ai.*` attributes the runtime
+ * emitted. Only fields that actually exist at runtime are set — none are
+ * invented. This lets the ROPS inspector model provenance block populate
+ * (provider, model_name, model_version, tokens, temperature, stop_reason)
+ * from real telemetry instead of showing "not recorded".
+ */
+function assembleModelProvenance(attrs: Record<string, any>): any {
+  const structured = parseAttrJson(attrs['agentlens.model'] ?? attrs['model']);
+  if (structured && typeof structured === 'object') {
+    return structured;
+  }
+  const out: Record<string, any> = {};
+  const provider = attrs['gen_ai.system'];
+  const modelName = attrs['gen_ai.request.model'];
+  const modelVersion = attrs['gen_ai.model.version'];
+  const tokensIn = attrs['gen_ai.usage.input_tokens'];
+  const tokensOut = attrs['gen_ai.usage.output_tokens'];
+  const temperature = attrs['gen_ai.request.temperature'];
+  const stopReason = attrs['gen_ai.response.finish_reason'];
+  if (provider !== undefined) out.provider = String(provider);
+  if (modelName !== undefined) out.model_name = String(modelName);
+  if (modelVersion !== undefined) out.model_version = String(modelVersion);
+  if (tokensIn !== undefined) out.tokens_input = Number(tokensIn);
+  if (tokensOut !== undefined) out.tokens_output = Number(tokensOut);
+  if (temperature !== undefined) out.temperature = Number(temperature);
+  if (stopReason !== undefined) out.stop_reason = String(stopReason);
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function originFrameworkFromAttrs(attrs: Record<string, any>): string | undefined {
+  const value =
+    attrs['agentlens.origin_framework'] ??
+    attrs['origin_framework'] ??
+    attrs['gen_ai.agent.framework'];
+  return value !== undefined && value !== null ? String(value) : undefined;
+}
+
+/** Map BSOps `basestation.aiops.*` span events to AgentLens event types. */
+const BASESTATION_EVENT_MAP: Record<string, string> = {
+  'basestation.aiops.workflow.started': 'mission.created',
+  'basestation.aiops.workflow.completed': 'mission.status_changed',
+  'basestation.aiops.tool.output': 'tool.completed',
+  'basestation.aiops.evidence.collected': 'observation.recorded',
+  'basestation.aiops.hypothesis.proposed': 'hypothesis.proposed',
+  'basestation.aiops.decision.made': 'decision.made',
+  'basestation.aiops.artifact.created': 'artifact.created',
+};
+
+function normalizeOtelEventType(name: string, attrs: Record<string, any> = {}): string {
+  if (name === 'basestation.aiops.state.transition') {
+    const transition = attrs['basestation.aiops.workflow.transition'];
+    if (transition === 'exit') return 'task.completed';
+    return 'task.started';
+  }
+  return BASESTATION_EVENT_MAP[name] ?? name;
+}
+
+function enrichNormalizedEventPayload(
+  eventType: string,
+  spanAttrs: Record<string, any>,
+  eventAttrs: Record<string, any>,
+): Record<string, any> {
+  const payload = { ...spanAttrs, ...eventAttrs };
+  if (eventType === 'mission.status_changed' && payload.status === undefined) {
+    payload.status = 'completed';
+  }
+  if (eventType === 'observation.recorded') {
+    const count =
+      eventAttrs['basestation.aiops.evidence.count'] ??
+      spanAttrs['basestation.aiops.evidence.count'];
+    if (count !== undefined && payload.insight === undefined) {
+      const n = Number(count);
+      payload.insight = `Collected ${n} evidence item${n === 1 ? '' : 's'}`;
+    }
+  }
+  if ((eventType === 'task.started' || eventType === 'task.completed') && payload.task === undefined) {
+    const stepName =
+      eventAttrs['basestation.aiops.workflow.step_name'] ??
+      spanAttrs['basestation.aiops.workflow.step_name'];
+    if (stepName !== undefined) payload.task = String(stepName);
+  }
+  if (eventType === 'artifact.created' && payload.artifact_name === undefined) {
+    const artifactType =
+      eventAttrs['basestation.aiops.artifact.type'] ??
+      spanAttrs['basestation.aiops.artifact.type'];
+    if (artifactType !== undefined) payload.artifact_name = String(artifactType);
+  }
+  return payload;
+}
+
+function resolveSpanStartEventType(
+  tier: MaturityTier,
+  attrs: Record<string, any>,
+  operationName?: string,
+): string {
+  if (tier !== 'L3') return 'span.started';
+  // Use task.started for all L3 spans; tool.called is emitted only from span events
+  // with I/O so the timeline is not deduplicated against empty span-start envelopes.
+  if (
+    attrs['agent.span.kind'] === 'execute_tool' ||
+    operationName === 'execute_tool' ||
+    operationName === 'retrieval.search'
+  ) {
+    return 'task.started';
+  }
+  return 'task.started';
+}
+
+function buildRuntimeAgentsFromEvents(
+  events: MissionEventRecord[],
+  phase: string,
+): Record<string, RuntimeAgentState> {
+  const scratch = scanEventsToScratch(events, phase);
+  const agents: Record<string, RuntimeAgentState> = {};
+
+  for (const [agentId, agent] of scratch.agents) {
+    agents[agentId] = {
+      agent_id: agentId,
+      name: agent.name,
+      role: agent.role,
+      status: agent.status,
+      current_task_id: agent.active_task,
+      current_span_id: agent.source_span_id,
+      confidence: agent.confidence,
+      summary: agent.objective,
+      last_reason: agent.pending,
+      history: [],
+      metadata: {},
+    };
+  }
+
+  return agents;
+}
+
+/**
+ * Assemble ErrorAttribution from verbatim runtime attributes. Prefers an
+ * explicit structured form (`agentlens.error` / `error` / `error_attribution`
+ * JSON); otherwise composes from individual `error.*` attributes the runtime
+ * emitted, falling back to the OTel span status when only that is present.
+ * `error.cause` is the AgentLens cause category; the verbatim message lives
+ * in `error.original` → `original_error`. Only fields that actually exist
+ * are set — never invented.
+ */
+function assembleErrorProvenance(attrs: Record<string, any>, span: any): any {
+  const structured = parseAttrJson(attrs['agentlens.error'] ?? attrs['error'] ?? attrs['error_attribution']);
+  if (structured && typeof structured === 'object') {
+    return structured;
+  }
+  const out: Record<string, any> = {};
+  const source = attrs['error.source'];
+  const cause = attrs['error.cause'];
+  const severity = attrs['error.severity'];
+  const recovery = attrs['error.recovery.action'];
+  const original = attrs['error.original'];
+  if (source !== undefined) out.source = String(source);
+  if (cause !== undefined) out.cause = String(cause);
+  if (severity !== undefined) out.severity = String(severity);
+  if (recovery !== undefined) out.recovery_action = String(recovery);
+  if (original !== undefined) out.original_error = String(original);
+  if (Object.keys(out).length > 0) return out;
+  // Fall back to OTel span status when present (verbatim error state).
+  if (span?.status_code === 'ERROR') {
+    return { cause: 'unknown', original_error: span.status_message ? String(span.status_message) : 'error' };
+  }
+  return undefined;
+}
+
 
 function findAgentSpanId(agentId: string, spans: any[], currentSpanStartTime?: number): string | undefined {
   let bestSpan: any = undefined;
@@ -79,6 +260,113 @@ export function classifySpan(span: any): MaturityTier {
 
   // Default: L1 Auto Discovery
   return 'L1';
+}
+
+/**
+ * Derive the presentation `ProjectionProfile` from verbatim span attributes +
+ * `operation_name` + the already-classified `NodeType`.
+ *
+ * Architectural invariants (refinement pass):
+ *   - Pure, rule-based, side-effect-free. Reads only verbatim attrs/op name.
+ *   - Presentation metadata ONLY: never re-maps `NodeType`, never merges/hides
+ *     nodes, never synthesizes hierarchy, never invents attributes.
+ *   - `NodeType` stays the stable runtime union; the profile only chooses which
+ *     first-class Evidence rows a profile-aware inspector renders.
+ *
+ * Priority is identity-first (agent) so an `invoke_agent` span is never
+ * mis-profiled as an LLM call even if it happened to carry a `gen_ai.system`
+ * attribute. `llm.call` spans inherit `gen_ai.agent.id` (→ L3, `NodeType=task`
+ * or L2 `tool`) but never carry `agent.span.kind=invoke_agent`, so they fall
+ * through to the LLM rule.
+ */
+export function deriveProjectionProfile(
+  attrs: Record<string, any>,
+  operationName: string | undefined,
+  nodeType: NodeType,
+): ProjectionProfile {
+  // 1. Agent (invoke_agent) — strongest runtime identity.
+  if (
+    attrs['agent.span.kind'] === 'invoke_agent' ||
+    operationName === 'invoke_agent' ||
+    nodeType === 'agent'
+  ) {
+    return 'agent';
+  }
+  // 2. LLM call — gen_ai LLM signals live only on llm.call spans.
+  if (
+    operationName === 'llm.call' ||
+    attrs['gen_ai.system'] !== undefined ||
+    attrs['gen_ai.request.model'] !== undefined
+  ) {
+    return 'llm';
+  }
+  // 3. Retrieval — retrieval.search op or retrieval/search attributes.
+  if (
+    operationName === 'retrieval.search' ||
+    attrs['retrieval.backend'] !== undefined ||
+    attrs['search.query'] !== undefined ||
+    attrs['search.result_count'] !== undefined
+  ) {
+    return 'retrieval';
+  }
+  // 4. Memory op.
+  if (
+    attrs['agent.span.kind'] === 'memory' ||
+    nodeType === 'memory' ||
+    (operationName !== undefined && operationName.startsWith('memory.'))
+  ) {
+    return 'memory';
+  }
+  // 5. Artifact op.
+  if (
+    attrs['agent.span.kind'] === 'artifact' ||
+    nodeType === 'artifact' ||
+    (operationName !== undefined && operationName.startsWith('artifact.'))
+  ) {
+    return 'artifact';
+  }
+  // 6. Tool (execute_tool with gen_ai.tool.name; non-retrieval, non-llm).
+  if (
+    attrs['agent.span.kind'] === 'execute_tool' ||
+    operationName === 'execute_tool' ||
+    attrs['gen_ai.tool.name'] !== undefined
+  ) {
+    return 'tool';
+  }
+  // 7. Checkpoint (specific op name; checked before workflow_step because
+  //    checkpoint spans also carry gen_ai.workflow.id context).
+  if (
+    operationName === 'runtime.checkpoint.save' ||
+    operationName === 'runtime.checkpoint.load'
+  ) {
+    return 'checkpoint';
+  }
+  // 8. Mission (specific op name only). `basestation.aiops.mission.id` is
+  //    carried by every span in the mission (it is the mission-grouping key)
+  //    and is NOT a profile signal — using it would mis-profile every node.
+  if (operationName === 'mission.execute' || operationName === 'mission.lifecycle') {
+    return 'mission';
+  }
+  // 9. Workflow step / transition (specific op name, or workflow attrs fallback
+  //    for task spans that carry workflow context but no specific op name).
+  if (
+    operationName === 'workflow.step' ||
+    operationName === 'workflow.transition' ||
+    attrs['gen_ai.workflow.id'] !== undefined ||
+    attrs['basestation.aiops.workflow.step_name'] !== undefined ||
+    attrs['basestation.aiops.workflow.transition'] !== undefined
+  ) {
+    return 'workflow_step';
+  }
+  // 10. Human input.
+  if (
+    nodeType === 'human' ||
+    attrs['agent.span.kind'] === 'human' ||
+    attrs['agent.span.kind'] === 'agent.human.input'
+  ) {
+    return 'human';
+  }
+  return 'generic';
 }
 
 /**
@@ -207,7 +495,7 @@ export function projectTraceSnapshot(
 
     // Nodes
     const nodeId = span.span_id;
-    let nodeType: any = 'task';
+    let nodeType: NodeType = 'task';
     let label = span.operation_name;
     const status: any = span.status_code === 'ERROR' ? 'failed' : span.status_code === 'OK' ? 'completed' : 'active';
     let agentId: string | undefined;
@@ -261,6 +549,7 @@ export function projectTraceSnapshot(
 
     if (!addedNodes.has(nodeId)) {
       addedNodes.add(nodeId);
+      const projectionProfile = deriveProjectionProfile(attrs, span.operation_name, nodeType);
       nodes.push({
         id: nodeId,
         type: nodeType,
@@ -290,6 +579,7 @@ export function projectTraceSnapshot(
         evidence_span_id: span.span_id,
         source_span_id: span.span_id,
         source_event_id: undefined,
+        projection_profile: projectionProfile,
       });
     }
   }
@@ -386,7 +676,7 @@ export function projectReplay(
       branch_id: branchId,
       sequence_num: seq++,
       branch_sequence_num: seq,
-      event_type: tier === 'L3' ? (attrs['agent.span.kind'] === 'execute_tool' ? 'tool.called' : 'task.started') : 'span.started',
+      event_type: resolveSpanStartEventType(tier, attrs, span.operation_name),
       timestamp: startIso,
       agent_id: agentId,
       span_id: span.span_id,
@@ -402,10 +692,10 @@ export function projectReplay(
       },
       actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
       actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
-      origin_framework: attrs['agentlens.origin_framework'] ?? attrs['origin_framework'] ?? undefined,
+      origin_framework: originFrameworkFromAttrs(attrs),
       causal: parseAttrJson(attrs['agentlens.causal'] ?? attrs['causal']) ?? (span.parent_span_id ? { parent_span_id: span.parent_span_id } : undefined),
-      model: parseAttrJson(attrs['agentlens.model'] ?? attrs['model']) ?? (attrs['gen_ai.request.model'] ? { model_name: attrs['gen_ai.request.model'] } : undefined),
-      error: parseAttrJson(attrs['agentlens.error'] ?? attrs['error'] ?? attrs['error_attribution']) ?? (span.status_code === 'ERROR' ? { message: span.status_message } : undefined),
+      model: assembleModelProvenance(attrs),
+      error: assembleErrorProvenance(attrs, span),
       policy: parseAttrJson(attrs['agentlens.policy'] ?? attrs['policy'] ?? attrs['policy_decision']) ?? undefined,
       source_span_id: span.span_id,
       source_event_id: undefined,
@@ -420,26 +710,31 @@ export function projectReplay(
           : startIso;
 
         const eventAttrs = otelEvent.attributes ?? {};
+        const normalizedType = normalizeOtelEventType(otelEvent.name, eventAttrs);
+        const mergedPayload = enrichNormalizedEventPayload(normalizedType, attrs, eventAttrs);
+        const mergedAttrs = { ...attrs, ...eventAttrs };
         events.push({
           id: `${span.span_id}-event-${eventIdx++}`,
           mission_id: missionId,
           branch_id: branchId,
           sequence_num: seq++,
           branch_sequence_num: seq,
-          event_type: otelEvent.name,
+          event_type: normalizedType,
           timestamp: eventTimeIso,
           agent_id: agentId,
           span_id: span.span_id,
           trace_id: span.trace_id,
           parent_span_id: span.parent_span_id ?? undefined,
-          payload: {
-            ...eventAttrs,
-          },
+          payload: mergedPayload,
           metadata: {
             maturity_tier: tier,
           },
           actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
           actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
+          origin_framework: originFrameworkFromAttrs(mergedAttrs),
+          model: assembleModelProvenance(mergedAttrs),
+          error: assembleErrorProvenance(mergedAttrs, span),
+          policy: parseAttrJson(mergedAttrs['agentlens.policy'] ?? mergedAttrs['policy'] ?? mergedAttrs['policy_decision']) ?? undefined,
           source_span_id: span.span_id,
           source_event_id: otelEvent.name,
         } as any);
@@ -470,10 +765,10 @@ export function projectReplay(
         },
         actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
         actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
-        origin_framework: attrs['agentlens.origin_framework'] ?? attrs['origin_framework'] ?? undefined,
+        origin_framework: originFrameworkFromAttrs(attrs),
         causal: parseAttrJson(attrs['agentlens.causal'] ?? attrs['causal']) ?? (span.parent_span_id ? { parent_span_id: span.parent_span_id } : undefined),
-        model: parseAttrJson(attrs['agentlens.model'] ?? attrs['model']) ?? (attrs['gen_ai.request.model'] ? { model_name: attrs['gen_ai.request.model'] } : undefined),
-        error: parseAttrJson(attrs['agentlens.error'] ?? attrs['error'] ?? attrs['error_attribution']) ?? (span.status_code === 'ERROR' ? { message: span.status_message } : undefined),
+        model: assembleModelProvenance(attrs),
+        error: assembleErrorProvenance(attrs, span),
         policy: parseAttrJson(attrs['agentlens.policy'] ?? attrs['policy'] ?? attrs['policy_decision']) ?? undefined,
         source_span_id: span.span_id,
         source_event_id: undefined,
@@ -563,10 +858,28 @@ export function projectReplay(
   // Sort events chronologically
   events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime() || a.sequence_num - b.sequence_num);
 
+  const spanStartSeqBySpanId = new Map<string, number>();
+  for (const event of events) {
+    if (event.span_id && event.id === event.span_id) {
+      spanStartSeqBySpanId.set(event.span_id, event.sequence_num);
+    }
+  }
+  for (const snap of snapshots) {
+    if (!snap.source_event_id) continue;
+    const seq = spanStartSeqBySpanId.get(snap.source_event_id);
+    if (seq !== undefined) {
+      snap.source_event_sequence_num = seq;
+    }
+  }
+
   const lastSnapshot = snapshots[snapshots.length - 1];
   const durationSeconds = timestamps.length >= 2
     ? (timestamps[timestamps.length - 1] - timestamps[0]) / 1e9
     : null;
+
+  const replayPhase =
+    lastSnapshot?.nodes.some((n) => n.status === 'failed') ? 'failed' : 'completed';
+  const runtimeAgents = buildRuntimeAgentsFromEvents(events, replayPhase);
 
   const interruptsRecord: Record<string, any> = {};
   for (const intr of interrupts) {
@@ -607,10 +920,10 @@ export function projectReplay(
       mission_id: missionId,
       branch_id: branchId,
       sequence_num: lastSnapshot?.sequence_num ?? 0,
-      agents: {},
+      agents: runtimeAgents,
       interrupts: interruptsRecord,
       status: lastSnapshot?.nodes.some((n) => n.status === 'failed') ? 'failed' : 'completed',
-      phase: 'completed',
+      phase: replayPhase,
       nodes: lastSnapshot?.nodes ?? [],
       edges: lastSnapshot?.edges ?? [],
     },

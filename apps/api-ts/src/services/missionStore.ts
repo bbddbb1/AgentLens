@@ -67,6 +67,43 @@ function attributeValue(attrs: AttributeMap | Record<string, unknown> | undefine
   return Array.isArray(value) ? value.join(',') : String(value);
 }
 
+const ALARM_ATTR_KEYS = [
+  'basestation.aiops.alarm.id',
+  'basestation.aiops.alarm.type',
+  'basestation.aiops.alarm.severity',
+  'basestation.aiops.alarm.site_id',
+  'basestation.aiops.alarm.ne_id',
+  'basestation.aiops.alarm.ne_type',
+] as const;
+
+function extractAlarmContext(
+  resourceAttributes: AttributeMap,
+  spans: OtlpSpan[],
+): Record<string, string> | undefined {
+  const alarm: Record<string, string> = {};
+  for (const key of ALARM_ATTR_KEYS) {
+    const value =
+      attributeValue(resourceAttributes, key) ??
+      spans.map((span) => attributeValue(span.attributes, key)).find(Boolean);
+    if (value) {
+      alarm[key.replace('basestation.aiops.alarm.', '')] = value;
+    }
+  }
+  return Object.keys(alarm).length > 0 ? alarm : undefined;
+}
+
+function objectiveWithAlarmContext(
+  objective: string,
+  alarm: Record<string, string> | undefined,
+): string {
+  if (!alarm?.type) return objective;
+  const prefix = `Alarm: ${alarm.type}`;
+  if (objective === 'Auto-created mission' || objective === alarm.type) {
+    return alarm.severity ? `${prefix} (${alarm.severity})` : prefix;
+  }
+  return `${prefix} — ${objective}`;
+}
+
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -536,12 +573,16 @@ class MissionStore {
       missionIdInput ??
       attributeValue(resourceAttributes, MissionAttributes.ID) ??
       spans.map((span) => attributeValue(span.attributes, MissionAttributes.ID)).find(Boolean) ??
+      spans.map((span) => attributeValue(span.attributes, 'basestation.aiops.mission.id')).find(Boolean) ??
       randomUUID();
     const missionId = isUuid(discoveredMissionId) ? discoveredMissionId : stableUuidFromText(discoveredMissionId);
     const objective =
       attributeValue(resourceAttributes, MissionAttributes.OBJECTIVE) ??
       spans.map((span) => attributeValue(span.attributes, MissionAttributes.OBJECTIVE)).find(Boolean) ??
+      spans.map((span) => attributeValue(span.attributes, 'basestation.aiops.workflow.id')).find(Boolean) ??
       'Auto-created mission';
+    const alarmContext = extractAlarmContext(resourceAttributes, spans);
+    const resolvedObjective = objectiveWithAlarmContext(objective, alarmContext);
     const phase =
       attributeValue(resourceAttributes, MissionAttributes.PHASE) ??
       spans.map((span) => attributeValue(span.attributes, MissionAttributes.PHASE)).find(Boolean) ??
@@ -565,7 +606,11 @@ class MissionStore {
           SET phase = EXCLUDED.phase,
               updated_at = NOW()
         `,
-        [missionId, objective, phase, JSON.stringify({ source: 'otel', resource_attributes: resourceAttributes })],
+        [missionId, resolvedObjective, phase, JSON.stringify({
+          source: 'otel',
+          resource_attributes: resourceAttributes,
+          ...(alarmContext ? { alarm: alarmContext } : {}),
+        })],
       );
       await this.ensureBranch(client, missionId, ROOT_BRANCH_ID);
       await this.ensureBranch(client, missionId, branchId);

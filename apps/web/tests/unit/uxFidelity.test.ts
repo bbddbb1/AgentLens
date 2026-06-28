@@ -151,7 +151,7 @@ describe('Runtime UX Fidelity Refinement', () => {
       expect(projection!.facts.drift_score).toBe(0.12);
     });
 
-    it('computes confidence dynamically based on error count and warnings if missing', () => {
+    it('does not fabricate confidence when the runtime did not emit it (passive observability, P0)', () => {
       const events = [
         makeEvent('agent.registered', { agent_id: 'test_agent', name: 'Test Agent' }, 0),
         makeEvent('task.failed', { agent_id: 'test_agent', task: 'some task' }, 1), // 1 error, adds warning
@@ -166,13 +166,14 @@ describe('Runtime UX Fidelity Refinement', () => {
       });
 
       expect(projection).toBeDefined();
-      // starting at 1.0, subtracting 0.15 per error (2 * 0.15 = 0.30)
-      // subtracting 0.05 per warning (2 warnings * 0.05 = 0.10)
-      // 1.0 - 0.30 - 0.10 = 0.60
-      expect(projection!.facts.confidence).toBeCloseTo(0.60);
+      // No `gen_ai.agent.confidence` was emitted, so the projection must NOT
+      // invent a fallback formula from error/warning counts. Confidence is
+      // absent ("not recorded") regardless of error_count/warnings.
+      expect(projection!.facts.confidence).toBeUndefined();
+      expect(projection!.facts.error_count).toBe(2);
     });
 
-    it('respects a minimum confidence of 0.1', () => {
+    it('does not fabricate a minimum-confidence floor when absent (P0)', () => {
       const events = [
         makeEvent('agent.registered', { agent_id: 'test_agent', name: 'Test Agent' }, 0),
       ];
@@ -189,7 +190,8 @@ describe('Runtime UX Fidelity Refinement', () => {
       });
 
       expect(projection).toBeDefined();
-      expect(projection!.facts.confidence).toBe(0.1);
+      // The previous 0.1 floor was fabricated; absence stays absent.
+      expect(projection!.facts.confidence).toBeUndefined();
     });
   });
 });

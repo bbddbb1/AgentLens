@@ -148,6 +148,7 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
             {envelope.error.cause && <EvidenceRow label="cause" value={envelope.error.cause} onCopy={copy} copied={copied} />}
             {envelope.error.severity && <EvidenceRow label="severity" value={envelope.error.severity} onCopy={copy} copied={copied} />}
             {envelope.error.recovery_action && <EvidenceRow label="recovery_action" value={envelope.error.recovery_action} onCopy={copy} copied={copied} />}
+            {envelope.error.original_error && <EvidenceRow label="original_error" value={envelope.error.original_error} onCopy={copy} copied={copied} />}
           </div>
         )}
         {envelope.causal && (

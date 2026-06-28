@@ -31,6 +31,19 @@ describe('describeRuntimeEvent', () => {
     expect(describeRuntimeEvent(event('tool.called', { tool_name: 'grep', agent_id: 'researcher' }, 1))).toContain('grep');
     expect(describeRuntimeEvent(event('task.started', { task: 'Collect logs', agent_id: 'worker' }, 2))).toContain('Collect logs');
   });
+
+  it('describes BSOps domain events after normalization', () => {
+    expect(
+      describeRuntimeEvent(
+        event('hypothesis.proposed', { 'hypothesis.description': 'RF interference on sector 3' }, 3),
+      ),
+    ).toContain('RF interference');
+    expect(
+      describeRuntimeEvent(
+        event('decision.made', { 'decision.type': 'root_cause', 'decision.summary': 'Faulty antenna' }, 4),
+      ),
+    ).toContain('root_cause');
+  });
 });
 
 describe('projectRuntimeSummary', () => {

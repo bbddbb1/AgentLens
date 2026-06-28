@@ -48,9 +48,13 @@ function scratchToFacts(agent: AgentNodeScratch): NodeProjectionFacts {
     error_count: agent.error_count,
     source_span_id: agent.source_span_id,
     source_event_id: agent.source_event_id,
-    confidence: agent.confidence !== undefined
-      ? agent.confidence
-      : Math.max(0.1, 1.0 - (agent.error_count * 0.15) - (agent.warnings.length * 0.05)),
+    // Passive observability (spec 10.3 / P0): confidence is Evidence only when
+    // the runtime emitted it. `AgentNodeScratch.confidence` is set exclusively
+    // from a parsed `gen_ai.agent.confidence` / `confidence` attribute
+    // (projectionScratch.ts); it is left undefined when the runtime did not
+    // emit one. We pass it through verbatim and never synthesize a fallback
+    // formula — absence renders as "not recorded", not an invented number.
+    confidence: agent.confidence,
     drift_score: agent.drift_score,
   };
 }

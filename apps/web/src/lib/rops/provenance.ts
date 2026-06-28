@@ -24,21 +24,26 @@ import type {
   NodeProjectionFacts,
   PolicyDecision,
   ProducedOutput,
+  ProjectionProfile,
   ReplayBranch,
   RuntimeAgentState,
   RuntimeEventRef,
   RuntimeInterruptState,
   RuntimeNodeProjection,
 } from '@agentlens/protocol';
+import type { NodeCorrelatedEvidence } from './nodeEvidence.js';
 
 /**
  * The three ROPS provenance classes (spec section 6).
  *
  * - `evidence`   — value present verbatim in a runtime record.
  * - `projection` — deterministic, ledger-derived value (labeled `[projection]`).
- * - `heuristic`  — deterministic projection that invents a metric the runtime
- *                  did not emit (labeled `[projection · heuristic]`); see P8 and
- *                  the `scratchToFacts` inferred-confidence formula.
+ * - `heuristic`  — deterministic projection derived from a non-authoritative
+ *                  signal (labeled `[projection · heuristic]`); see P8. Used by
+ *                  `classifySearch` when a search is inferred from a tool-name
+ *                  pattern rather than an explicit `search.*` attribute. ROPS
+ *                  never invents a metric the runtime did not emit: confidence
+ *                  is Evidence-or-absent, never a heuristic formula.
  *
  * `notAllowed` is intentionally absent: a Not-Allowed field is never packed into
  * a view model, so it never appears as a value. Callers use `isAllowed` /
@@ -95,7 +100,7 @@ function evidence<T>(key: string, value: T | undefined | null): RopsField<T> {
  * from a pure correlation layer (e.g. `collectNodeEvidence`). The caller is
  * responsible for guaranteeing the value is verbatim runtime evidence; this
  * helper only classifies and packs it. Never use it for inferred/projection
- * values — use `projection(...)` / `heuristic(...)` for those.
+ * values — use `projection(...)` for those.
  */
 export const packEvidence = evidence;
 
@@ -109,15 +114,6 @@ function projection<T>(key: string, value: T | undefined | null): RopsField<T> {
   };
 }
 
-/** Pack a deterministic-but-inventing projection (P8 caveat). */
-function heuristic<T>(key: string, value: T | undefined | null): RopsField<T> {
-  return {
-    key,
-    provenance: 'heuristic',
-    value: (value === null ? undefined : value) as T | undefined,
-    absent: value === undefined || value === null,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Status / lifecycle vocabulary (spec section 7.1 / 7.2)
@@ -157,38 +153,21 @@ export function deriveDurationMs(
 // ---------------------------------------------------------------------------
 
 /**
- * Determine whether `confidence` on a node projection is emitter-set Evidence
- * or the `scratchToFacts` inferred fallback.
+ * Classify `confidence` on a node projection (spec 10.3 / P0 / P8).
  *
- * The frozen scratch stores emitter-set confidence under `AgentNodeScratch.confidence`
- * only when a `gen_ai.agent.confidence` / `confidence` attribute was parsed
- * (`projectionScratch.ts:180-183`). When absent, `scratchToFacts` computes
- * `Math.max(0.1, 1.0 - 0.15*error_count - 0.05*warnings.length)`
- * (`nodeStateProjection.ts:51-53`). ROPS treats the latter as a heuristic
- * projection: presentable at L3, suppressed-or-labelled at L1 (spec 10.3).
- *
- * Because the projection does not expose a flag distinguishing the two, we
- * reproduce the exact frozen formula and compare: if the value equals the
- * formula output AND no emitter confidence attribute is recoverable, it is
- * heuristic. This is deterministic and ledger-derived (P8).
+ * Rule (passive observability): `confidence` is Evidence only when the runtime
+ * emitted it. `AgentNodeScratch.confidence` — and therefore
+ * `NodeProjectionFacts.confidence` — is set exclusively from a parsed
+ * `gen_ai.agent.confidence` / `confidence` attribute (`projectionScratch.ts`)
+ * and is left `undefined` when the runtime did not emit one. `scratchToFacts`
+ * passes that value through verbatim and no longer synthesizes a fallback
+ * formula, so a present `confidence` is always emitter-set Evidence and an
+ * absent one renders as the stable "not recorded" marker. There is no
+ * heuristic confidence path.
  */
 export function classifyConfidence(
   confidence: number | undefined,
-  errorCount: number | undefined,
-  warningCount: number | undefined,
-  emitterConfidencePresent: boolean,
 ): RopsField<number> {
-  if (confidence === undefined) return evidence<number>('confidence', undefined);
-  if (emitterConfidencePresent) return evidence('confidence', confidence);
-  const inferred = Math.max(
-    0.1,
-    1.0 - (errorCount ?? 0) * 0.15 - (warningCount ?? 0) * 0.05,
-  );
-  if (Math.abs(confidence - inferred) < 1e-9) {
-    return heuristic('confidence', confidence);
-  }
-  // Value is neither absent nor the formula output nor flagged emitter-set:
-  // treat as Evidence (some projection path set it explicitly).
   return evidence('confidence', confidence);
 }
 
@@ -269,6 +248,7 @@ export interface EnvelopeProvenance {
     readonly cause: RopsField<string>;
     readonly severity: RopsField<string>;
     readonly recoveryAction: RopsField<string>;
+    readonly originalError: RopsField<string>;
   } | null;
   readonly causal: {
     readonly parentSpanId: RopsField<string>;
@@ -326,6 +306,7 @@ function packError(e: ErrorAttribution): EnvelopeProvenance['error'] {
     cause: evidence('error.cause', e.cause),
     severity: evidence('error.severity', e.severity),
     recoveryAction: evidence('error.recovery_action', e.recovery_action),
+    originalError: evidence('error.original_error', e.original_error),
   };
 }
 
@@ -403,6 +384,25 @@ export const PAYLOAD_WHITELIST: readonly string[] = [
   'gen_ai.agent.policy.required_review',
   'gen_ai.agent.interrupt.id',
   'gen_ai.agent.interrupt.reason',
+  'gen_ai.agent.id',
+  'operation_name',
+  // LLM call provenance (verbatim gen_ai.* attributes on llm.call spans)
+  'gen_ai.system',
+  'gen_ai.request.model',
+  'gen_ai.model.version',
+  'gen_ai.usage.input_tokens',
+  'gen_ai.usage.output_tokens',
+  'gen_ai.request.temperature',
+  'gen_ai.response.finish_reason',
+  // BSOps domain event payloads (normalized from basestation.aiops.* span events)
+  'hypothesis.description',
+  'hypothesis.confidence',
+  'decision.type',
+  'decision.summary',
+  'decision.confidence',
+  'basestation.aiops.evidence.count',
+  'basestation.aiops.workflow.step_name',
+  'basestation.aiops.artifact.type',
   // No-schema Evidence keys: these have no semconv/SDK/projection, so they are
   // only present when an emitter set them verbatim. Whitelisting classifies
   // them as recognized Evidence (L2+ presentable) rather than unrecognized
@@ -430,6 +430,279 @@ export function splitPayload(
     else unrecognized.push([k, v] as const);
   }
   return { recognized, unrecognized };
+}
+
+// ---------------------------------------------------------------------------
+// Profile-aware evidence rows (spec P1 — ProjectionProfile presentation)
+// ---------------------------------------------------------------------------
+// `ProjectionProfile` is presentation metadata carried on `GraphNode` (see
+// packages/protocol/src/types.ts). It selects which standardized fields the
+// inspector surfaces as first-class Evidence rows and which inspector
+// component renders them. It is NOT a runtime-ontology expansion:
+//   - It never re-maps `GraphNode.type`, merges nodes, hides nodes, or invents
+//     a synthetic hierarchy (workflow topology invariants).
+//   - Promotion is rule-based over verbatim attributes; `PAYLOAD_WHITELIST` is
+//     not expanded for mere exposure. Only keys actually consumed by a row are
+//     removed from `leftoverPayload` so they do not duplicate in the raw
+//     payload section (raw boundary invariants).
+//   - Unknown attributes remain verbatim forever; absence renders as
+//     "not recorded", never an invented default.
+
+/** A single first-class Evidence row surfaced for a profile. */
+export interface ProfileEvidenceRow {
+  readonly label: string;
+  readonly field: RopsField<unknown>;
+}
+
+/** Result of building profile rows: the rows + payload with consumed keys removed. */
+export interface ProfileEvidenceResult {
+  readonly rows: readonly ProfileEvidenceRow[];
+  /** `payload` with the keys consumed by the rows removed (no duplication in raw). */
+  readonly leftoverPayload: Record<string, unknown> | undefined;
+}
+
+/** First non-null/undefined value among `aliases` in `payload`, else undefined. */
+function pickAlias(
+  payload: Record<string, unknown> | undefined,
+  aliases: readonly string[],
+): unknown | undefined {
+  if (!payload) return undefined;
+  for (const a of aliases) {
+    const v = payload[a];
+    if (v !== undefined && v !== null) return v;
+  }
+  return undefined;
+}
+
+/** Return `payload` with `keys` removed. Returns the same ref when nothing is removed. */
+function removeKeys(
+  payload: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): Record<string, unknown> | undefined {
+  if (!payload) return undefined;
+  const set = new Set(keys);
+  let touched = false;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (set.has(k)) {
+      touched = true;
+      continue;
+    }
+    out[k] = v;
+  }
+  return touched ? out : payload;
+}
+
+// Payload keys consumed (removed from the raw section) per profile. These mirror
+// the alias sets in `nodeEvidence.ts` and the `PAYLOAD_WHITELIST` entries; they
+// are not a whitelist expansion — they name exactly the keys the rows below read.
+const LLM_CONSUMED_KEYS = [
+  'gen_ai.system',
+  'gen_ai.request.model',
+  'gen_ai.model.version',
+  'gen_ai.usage.input_tokens',
+  'gen_ai.usage.output_tokens',
+  'gen_ai.request.temperature',
+  'gen_ai.response.finish_reason',
+  'gen_ai.agent.id',
+] as const;
+
+const TOOL_CONSUMED_KEYS = [
+  'gen_ai.tool.name',
+  'tool_name',
+  'name',
+  'gen_ai.tool.input',
+  'tool_input',
+  'input',
+  'gen_ai.tool.output',
+  'tool_output',
+  'output',
+  'gen_ai.tool.status',
+  'tool_status',
+  'status',
+] as const;
+
+const RETRIEVAL_CONSUMED_KEYS = [
+  'retrieval.backend',
+  'retrieval_backend',
+  'retrievalBackend',
+  'search.query',
+  'search_query',
+  'query',
+  'search.result_count',
+  'result_count',
+  'resultCount',
+  'gen_ai.tool.name',
+  'tool_name',
+  'gen_ai.tool.input',
+  'tool_input',
+  'gen_ai.tool.output',
+  'tool_output',
+] as const;
+
+const MEMORY_CONSUMED_KEYS = [
+  'gen_ai.agent.memory.key',
+  'memory_key',
+  'key',
+  'gen_ai.agent.memory.value',
+  'memory_value',
+  'value',
+  'gen_ai.agent.memory.operation',
+] as const;
+
+const ARTIFACT_CONSUMED_KEYS = [
+  'artifact_name',
+  'name',
+  'artifact_type',
+  'type',
+  'value',
+] as const;
+
+const WORKFLOW_STEP_CONSUMED_KEYS = [
+  'task',
+  'gen_ai.workflow.step_id',
+  'gen_ai.agent.task.description',
+] as const;
+
+function buildLlmRows(
+  payload: Record<string, unknown> | undefined,
+  prov: EnvelopeProvenance | null,
+): ProfileEvidenceRow[] {
+  const m = prov?.model;
+  // Verbatim `gen_ai.*` span attributes win; the correlated `EventEnvelope`
+  // model provenance is used only as a fallback when the span did not emit the
+  // attribute. Both sources are Evidence (never fabricated).
+  const row = (label: string, payloadKey: string, fallback: unknown): ProfileEvidenceRow => ({
+    label,
+    field: evidence(label, (payload?.[payloadKey] ?? fallback) as unknown),
+  });
+  return [
+    row('gen_ai.system', 'gen_ai.system', m?.provider.value),
+    row('gen_ai.request.model', 'gen_ai.request.model', m?.modelName.value),
+    row('gen_ai.model.version', 'gen_ai.model.version', m?.modelVersion.value),
+    row('gen_ai.usage.input_tokens', 'gen_ai.usage.input_tokens', m?.tokensInput.value),
+    row('gen_ai.usage.output_tokens', 'gen_ai.usage.output_tokens', m?.tokensOutput.value),
+    row('gen_ai.request.temperature', 'gen_ai.request.temperature', m?.temperature.value),
+    row('gen_ai.response.finish_reason', 'gen_ai.response.finish_reason', m?.stopReason.value),
+    row('gen_ai.agent.id', 'gen_ai.agent.id', undefined),
+  ];
+}
+
+function buildToolRows(ev: NodeCorrelatedEvidence | undefined): ProfileEvidenceRow[] {
+  const e = ev ?? {};
+  return [
+    { label: 'tool_name', field: evidence('tool_name', e.toolName) },
+    { label: 'tool_input', field: evidence('tool_input', e.toolInput) },
+    { label: 'tool_output', field: evidence('tool_output', e.toolOutput) },
+    { label: 'tool_status', field: evidence('tool_status', e.toolStatus) },
+    { label: 'failure_reason', field: evidence('failure_reason', e.failureReason) },
+    { label: 'failure_cause', field: evidence('failure_cause', e.failureCause) },
+  ];
+}
+
+function buildRetrievalRows(ev: NodeCorrelatedEvidence | undefined): ProfileEvidenceRow[] {
+  const e = ev ?? {};
+  return [
+    { label: 'retrieval.backend', field: evidence('retrieval.backend', e.retrievalBackend) },
+    { label: 'search.query', field: evidence('search.query', e.searchQuery) },
+    { label: 'search.result_count', field: evidence('search.result_count', e.resultCount) },
+    { label: 'tool_input', field: evidence('tool_input', e.toolInput) },
+    { label: 'tool_output', field: evidence('tool_output', e.toolOutput) },
+    { label: 'failure_reason', field: evidence('failure_reason', e.failureReason) },
+    { label: 'failure_cause', field: evidence('failure_cause', e.failureCause) },
+  ];
+}
+
+function buildMemoryRows(payload: Record<string, unknown> | undefined): ProfileEvidenceRow[] {
+  return [
+    {
+      label: 'memory_key',
+      field: evidence('memory_key', pickAlias(payload, ['gen_ai.agent.memory.key', 'memory_key', 'key'])),
+    },
+    {
+      label: 'memory_value',
+      field: evidence('memory_value', pickAlias(payload, ['gen_ai.agent.memory.value', 'memory_value', 'value'])),
+    },
+    {
+      label: 'operation',
+      field: evidence('operation', pickAlias(payload, ['gen_ai.agent.memory.operation'])),
+    },
+  ];
+}
+
+function buildArtifactRows(payload: Record<string, unknown> | undefined): ProfileEvidenceRow[] {
+  return [
+    {
+      label: 'artifact_name',
+      field: evidence('artifact_name', pickAlias(payload, ['artifact_name', 'name'])),
+    },
+    {
+      label: 'artifact_type',
+      field: evidence('artifact_type', pickAlias(payload, ['artifact_type', 'type'])),
+    },
+    { label: 'value', field: evidence('value', pickAlias(payload, ['value'])) },
+  ];
+}
+
+function buildWorkflowStepRows(
+  payload: Record<string, unknown> | undefined,
+  ev: NodeCorrelatedEvidence | undefined,
+): ProfileEvidenceRow[] {
+  const e = ev ?? {};
+  const stepId = payload?.['gen_ai.workflow.step_id'];
+  return [
+    {
+      label: 'task',
+      field: evidence(
+        'task',
+        pickAlias(payload, ['task', 'gen_ai.workflow.step_id', 'gen_ai.agent.task.description']),
+      ),
+    },
+    { label: 'gen_ai.workflow.step_id', field: evidence('gen_ai.workflow.step_id', stepId) },
+    {
+      label: 'gen_ai.agent.task.description',
+      field: evidence('gen_ai.agent.task.description', payload?.['gen_ai.agent.task.description']),
+    },
+    { label: 'failure_reason', field: evidence('failure_reason', e.failureReason) },
+    { label: 'failure_cause', field: evidence('failure_cause', e.failureCause) },
+  ];
+}
+
+/**
+ * Build the first-class Evidence rows for a `ProjectionProfile` and the
+ * payload with consumed keys removed. Profiles that surface their fields via a
+ * dedicated view (`agent` → AgentView, `checkpoint` → checkpoint view,
+ * `mission` → Mission record, `human` / `generic` → generic view) return no
+ * rows and leave the payload untouched so all attributes remain raw.
+ */
+export function buildProfileEvidenceRows(
+  profile: ProjectionProfile,
+  payload: Record<string, unknown> | undefined,
+  ev: NodeCorrelatedEvidence | undefined,
+  prov: EnvelopeProvenance | null,
+): ProfileEvidenceResult {
+  switch (profile) {
+    case 'llm':
+      return { rows: buildLlmRows(payload, prov), leftoverPayload: removeKeys(payload, LLM_CONSUMED_KEYS) };
+    case 'tool':
+      return { rows: buildToolRows(ev), leftoverPayload: removeKeys(payload, TOOL_CONSUMED_KEYS) };
+    case 'retrieval':
+      return { rows: buildRetrievalRows(ev), leftoverPayload: removeKeys(payload, RETRIEVAL_CONSUMED_KEYS) };
+    case 'memory':
+      return { rows: buildMemoryRows(payload), leftoverPayload: removeKeys(payload, MEMORY_CONSUMED_KEYS) };
+    case 'artifact':
+      return { rows: buildArtifactRows(payload), leftoverPayload: removeKeys(payload, ARTIFACT_CONSUMED_KEYS) };
+    case 'workflow_step':
+      return {
+        rows: buildWorkflowStepRows(payload, ev),
+        leftoverPayload: removeKeys(payload, WORKFLOW_STEP_CONSUMED_KEYS),
+      };
+    // 'agent' | 'checkpoint' | 'human' | 'mission' | 'generic' — no payload
+    // promotion here; their inspectors use dedicated views and keep all
+    // workload-specific / `basestation.aiops.*` attributes verbatim as raw.
+    default:
+      return { rows: [], leftoverPayload: payload };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -512,23 +785,16 @@ export interface AgentView {
  * Build the Agent view from `RuntimeNodeProjection.facts` + `recent_runtime_events`.
  * Never reads `projection.generated` (spec P4 / 9.2).
  *
- * `emitterConfidencePresent` must be supplied by the caller from the underlying
- * scratch/event stream (true when a `gen_ai.agent.confidence` attribute was
- * observed for this agent). When unknown, defaults to false, which makes a
- * formula-matching confidence render as heuristic (the safe, spec-compliant
- * default per 10.3).
+ * `confidence` is classified by `classifyConfidence` from `facts.confidence`
+ * alone: Evidence when the runtime emitted `gen_ai.agent.confidence`, "not
+ * recorded" when absent. The projection no longer fabricates a fallback, so no
+ * emitter-presence hint is required (spec 10.3 / P0).
  */
 export function buildAgentView(
   nodeProjection: RuntimeNodeProjection,
-  emitterConfidencePresent = false,
 ): AgentView {
   const facts: NodeProjectionFacts = nodeProjection.facts;
-  const confidence = classifyConfidence(
-    facts.confidence,
-    facts.error_count,
-    facts.warnings?.length ?? 0,
-    emitterConfidencePresent,
-  );
+  const confidence = classifyConfidence(facts.confidence);
   const durationMs = facts.duration_ms !== undefined
     ? projection('duration_ms', facts.duration_ms)
     : projection('duration_ms', deriveDurationMs(facts.start_time, facts.end_time));

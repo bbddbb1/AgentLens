@@ -246,11 +246,12 @@ describe('replayStore', () => {
     expect(useReplayStore.getState().currentFrame).toBe(0);
   });
 
-  it('sets selected event when setting frame', () => {
+  it('sets current frame without coupling to the events array index', () => {
     const events = [{ id: 'e0' }, { id: 'e1' }, { id: 'e2' }];
     useReplayStore.setState({ totalFrames: 3, events });
     useReplayStore.getState().setCurrentFrame(1);
-    expect(useReplayStore.getState().selectedEventId).toBe('e1');
+    expect(useReplayStore.getState().currentFrame).toBe(1);
+    expect(useReplayStore.getState().selectedEventId).toBeNull();
   });
 
   it('nextFrame advances the frame', () => {
@@ -258,7 +259,7 @@ describe('replayStore', () => {
     useReplayStore.setState({ totalFrames: 3, events });
     useReplayStore.getState().nextFrame();
     expect(useReplayStore.getState().currentFrame).toBe(1);
-    expect(useReplayStore.getState().selectedEventId).toBe('e1');
+    expect(useReplayStore.getState().selectedEventId).toBeNull();
   });
 
   it('stops playing when nextFrame reaches end', () => {
@@ -273,7 +274,7 @@ describe('replayStore', () => {
     useReplayStore.setState({ totalFrames: 3, currentFrame: 2, events });
     useReplayStore.getState().prevFrame();
     expect(useReplayStore.getState().currentFrame).toBe(1);
-    expect(useReplayStore.getState().selectedEventId).toBe('e1');
+    expect(useReplayStore.getState().selectedEventId).toBeNull();
   });
 
   it('prevFrame stays at 0 when already at start', () => {
@@ -299,7 +300,7 @@ describe('replayStore', () => {
     expect(state.durationSeconds).toBe(10.5);
     expect(state.currentBranchId).toBe('main');
     expect(state.events).toHaveLength(2);
-    expect(state.selectedEventId).toBe('e0'); // frame 0
+    expect(state.selectedEventId).toBeNull();
   });
 
   it('reset goes back to frame 0 and stops playing', () => {
@@ -308,14 +309,15 @@ describe('replayStore', () => {
     useReplayStore.getState().reset();
     expect(useReplayStore.getState().isPlaying).toBe(false);
     expect(useReplayStore.getState().currentFrame).toBe(0);
-    expect(useReplayStore.getState().selectedEventId).toBe('e0');
+    expect(useReplayStore.getState().selectedEventId).toBeNull();
   });
 
-  it('setSelectedEventId finds the event in the events array', () => {
+  it('setSelectedEventId stores the id without changing the frame index', () => {
     const events = [{ id: 'e0' }, { id: 'e1' }, { id: 'e2' }];
-    useReplayStore.setState({ totalFrames: 3, events });
+    useReplayStore.setState({ totalFrames: 3, currentFrame: 0, events });
     useReplayStore.getState().setSelectedEventId('e2');
-    expect(useReplayStore.getState().currentFrame).toBe(2);
+    expect(useReplayStore.getState().selectedEventId).toBe('e2');
+    expect(useReplayStore.getState().currentFrame).toBe(0);
   });
 
   it('setSelectedEventId handles unknown event id gracefully', () => {

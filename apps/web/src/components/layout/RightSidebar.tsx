@@ -13,6 +13,12 @@ import { useNodeProjection } from '@/hooks/useNodeProjection';
 import { RopsInspector } from '@/components/rops/RopsInspector';
 import { RopsEvidence } from '@/components/rops/RopsEvidence';
 import {
+  eventAtFrame,
+  findFrameForEvent,
+  selectEnvelopeForNode,
+  sequenceNumThroughFrame,
+} from '@/lib/replayFrame';
+import {
   PanelRightClose,
   Activity,
   Shield,
@@ -72,9 +78,14 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
   }, [auditEvents, auditIntegrity, currentBranchId]);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
+  const frameSequenceNum = useMemo(
+    () => sequenceNumThroughFrame(snapshots, events, currentFrame),
+    [snapshots, events, currentFrame],
+  );
+
   useEffect(() => {
-    loadAudit(missionId, currentBranchId ?? null, events[currentFrame]?.sequence_num);
-  }, [loadAudit, missionId, currentBranchId, currentFrame, events]);
+    loadAudit(missionId, currentBranchId ?? null, frameSequenceNum);
+  }, [loadAudit, missionId, currentBranchId, frameSequenceNum]);
 
   // Tab auto-selection rules
   useEffect(() => {
@@ -123,19 +134,24 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     }
   };
 
-  // Find the selected event's hydrated envelope from audit data
-  const selectedEventEnvelope = useMemo(() => {
-    const targetId = selectedEventId || events[currentFrame]?.id;
-    if (!targetId || !auditData?.events) return null;
-    return auditData.events.find((e) => e.id === targetId) || null;
-  }, [selectedEventId, currentFrame, events, auditData]);
-
-  // Selected node details
   const selectedNode = useMemo(() => {
     const currentSnapshot = snapshots[currentFrame] ?? snapshots[snapshots.length - 1] ?? null;
     if (!currentSnapshot || !selectedNodeId) return null;
     return currentSnapshot.nodes.find((n) => n.id === selectedNodeId) ?? null;
   }, [selectedNodeId, currentFrame, snapshots]);
+
+  const selectedEventEnvelope = useMemo(() => {
+    if (selectedNode) {
+      const nodeEnvelope = selectEnvelopeForNode(selectedNode, auditEvents);
+      if (nodeEnvelope) return nodeEnvelope;
+    }
+    if (selectedEventId && auditData?.events) {
+      return auditData.events.find((e) => e.id === selectedEventId) ?? null;
+    }
+    const frameEvent = eventAtFrame(snapshots, events, currentFrame);
+    if (!frameEvent || !auditData?.events) return null;
+    return auditData.events.find((e) => e.id === frameEvent.id) ?? (frameEvent as import('@agentlens/protocol').EventEnvelope);
+  }, [selectedNode, auditEvents, selectedEventId, auditData, snapshots, events, currentFrame]);
 
   const runtimeSummary = useRuntimeSummary({
     missionId,
@@ -153,7 +169,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     missionId,
     agentId: selectedAgentId,
     branchId: currentBranchId ?? undefined,
-    sequenceNum: events[currentFrame]?.sequence_num,
+    sequenceNum: frameSequenceNum,
     events: events as unknown as import('@agentlens/protocol').MissionEventRecord[],
     runtimeSummary,
   });
@@ -182,16 +198,9 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     return Object.values(currentState?.interrupts ?? {}).find((i) => i.interrupt_id === selectedNode.id) ?? null;
   }, [selectedNode, runtimeAgentState, currentState]);
 
-  // Whether the agent's confidence came from an emitter attribute. The client
-  // projection cannot tell, so we conservatively treat it as heuristic (false)
-  // unless the runtime agent state explicitly carried a confidence value (which
-  // the scratch only sets from the emitter attribute path).
-  const emitterConfidencePresent = runtimeAgentState?.confidence !== undefined && runtimeAgentState?.confidence !== null;
-
   const inspectorInput = {
     node: selectedNode,
     agentProjection: nodeProjection,
-    emitterConfidencePresent,
     edges: currentSnapshotForInspector?.edges ?? [],
     mission: null as import('@agentlens/protocol').Mission | null,
     eventEnvelope: selectedEventEnvelope ?? null,
@@ -204,8 +213,10 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     onJumpToEvent: (seq: number) => {
       const ev = events.find((e) => e.sequence_num === seq);
       if (ev) {
-        const { setSelectedEventId } = useReplayStore.getState();
+        const { setSelectedEventId, setCurrentFrame } = useReplayStore.getState();
         setSelectedEventId(ev.id);
+        const frame = findFrameForEvent(snapshots, events, ev.id);
+        if (frame !== null) setCurrentFrame(frame);
       }
     },
   };
