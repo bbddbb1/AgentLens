@@ -402,6 +402,33 @@ function resolveActivityId(event: EventEnvelope, kind: RuntimeExplanationActivit
   return `${kind}:event:${event.id}`;
 }
 
+function extractActivityIo(
+  kind: RuntimeExplanationActivityKind,
+  event: EventEnvelope,
+  payload: Record<string, unknown>,
+): { input: RuntimeExplanationValue | undefined; output: RuntimeExplanationValue | undefined } {
+  const inputKeys =
+    kind === 'llm'
+      ? (['gen_ai.prompt', 'gen_ai.tool.input', 'tool_input', 'input'] as const)
+      : (['gen_ai.tool.input', 'tool_input', 'input'] as const);
+  const outputKeys =
+    kind === 'llm'
+      ? (['gen_ai.completion', 'gen_ai.response', 'gen_ai.tool.output', 'tool_output', 'output'] as const)
+      : (['gen_ai.tool.output', 'tool_output', 'output'] as const);
+
+  const pick = (keys: readonly string[]): RuntimeExplanationValue | undefined => {
+    for (const key of keys) {
+      const raw = payload[key];
+      if (raw === undefined || raw === null) continue;
+      const value = redactableValue(event, raw);
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  };
+
+  return { input: pick(inputKeys), output: pick(outputKeys) };
+}
+
 function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | null {
   const kind = classifyKind(event);
   if (!kind) return null;
@@ -410,8 +437,7 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
   if (!id) return null;
   const title = buildTitle(kind, payload);
   const invocationId = rawInvocationIdFromEvent(event, kind);
-  const toolInput = redactableValue(event, payload['gen_ai.tool.input'] ?? payload.tool_input ?? payload.input);
-  const toolOutput = redactableValue(event, payload['gen_ai.tool.output'] ?? payload.tool_output ?? payload.output);
+  const { input: activityInput, output: activityOutput } = extractActivityIo(kind, event, payload);
   const errorValue = redactableValue(event, event.error?.original_error ?? payload.error ?? payload.reason);
   const artifactValue = redactableValue(
     event,
@@ -450,8 +476,8 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
         ...base,
         phase: toolCalledTerminalStatus ? 'instant' : 'start',
         completed_status: toolCalledTerminalStatus ?? 'active',
-        inputs: toolInput === undefined ? undefined : { input: toolInput },
-        outputs: toolOutput === undefined ? undefined : { output: toolOutput },
+        inputs: activityInput === undefined ? undefined : { input: activityInput },
+        outputs: activityOutput === undefined ? undefined : { output: activityOutput },
         error:
           toolCalledTerminalStatus === 'failed' && errorValue !== undefined
             ? { error: errorValue }
@@ -462,7 +488,7 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
         ...base,
         phase: 'terminal',
         completed_status: 'completed',
-        outputs: toolOutput === undefined ? undefined : { output: toolOutput },
+        outputs: activityOutput === undefined ? undefined : { output: activityOutput },
       };
     case 'tool.failed':
       return {
@@ -498,7 +524,7 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
         ...base,
         phase: 'instant',
         completed_status: 'completed',
-        outputs: toolOutput === undefined ? undefined : { output: toolOutput },
+        outputs: activityOutput === undefined ? undefined : { output: activityOutput },
         artifacts: artifactValue === undefined ? undefined : [artifactValue],
       };
     case 'span.completed':
@@ -507,7 +533,7 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
         ...base,
         phase: 'terminal',
         completed_status: 'completed',
-        outputs: toolOutput === undefined ? undefined : { output: toolOutput },
+        outputs: activityOutput === undefined ? undefined : { output: activityOutput },
       };
     case 'span.failed':
     case 'task.failed':
@@ -526,7 +552,7 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
       ...base,
       phase: 'start',
       completed_status: 'active',
-      inputs: toolInput === undefined ? undefined : { input: toolInput },
+      inputs: activityInput === undefined ? undefined : { input: activityInput },
     };
   }
 
@@ -534,7 +560,7 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
     ...base,
     phase: 'instant',
     completed_status: 'completed',
-    outputs: toolOutput === undefined ? undefined : { output: toolOutput },
+    outputs: activityOutput === undefined ? undefined : { output: activityOutput },
     artifacts: artifactValue === undefined ? undefined : [artifactValue],
   };
 }

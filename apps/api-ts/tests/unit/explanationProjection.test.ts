@@ -402,4 +402,169 @@ describe('projectRuntimeExplanation', () => {
     expect(explanation.merge_groups).toHaveLength(1);
     expect(explanation.merge_groups[0]?.predecessor_activity_ids).toEqual(['tool:a-1', 'tool:b-1']);
   });
+
+  it('promotes gen_ai.completion into operator-facing output', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'span.started', { operation_name: 'llm.call', 'gen_ai.request.id': 'req-llm-1' }, {
+          span_id: 'llm-span',
+        }),
+        event(1, 'span.completed', {
+          operation_name: 'llm.call',
+          'gen_ai.request.id': 'req-llm-1',
+          'gen_ai.completion': 'diagnosis result text',
+        }, { span_id: 'llm-span' }),
+      ],
+    });
+
+    const activity = explanation.activities[0];
+    expect(activity?.operator_facing_record?.output.condition).toBe('recorded');
+    expect(activity?.operator_facing_record?.output.value).toBe('diagnosis result text');
+  });
+
+  it('promotes gen_ai.prompt into operator-facing input', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'span.started', {
+          operation_name: 'llm.call',
+          'gen_ai.request.id': 'req-llm-2',
+          'gen_ai.prompt': 'system prompt text',
+        }, { span_id: 'llm-span-2' }),
+      ],
+    });
+
+    expect(explanation.activities[0]?.operator_facing_record?.input.condition).toBe('recorded');
+    expect(explanation.activities[0]?.operator_facing_record?.input.value).toBe('system prompt text');
+  });
+
+  it('records structured gen_ai.response without leaking through projection', () => {
+    const structured = { hypothesis: { description: 'cell fault', confidence: 0.9 } };
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'span.completed', {
+          operation_name: 'llm.call',
+          'gen_ai.request.id': 'req-llm-3',
+          'gen_ai.response': structured,
+        }, { span_id: 'llm-span-3' }),
+      ],
+    });
+
+    expect(explanation.activities[0]?.operator_facing_record?.output.condition).toBe('recorded');
+    expect(explanation.activities[0]?.operator_facing_record?.output.value).toEqual(structured);
+  });
+
+  it('does not promote workload-private output keys into L1 output', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'span.completed', {
+          operation_name: 'llm.call',
+          'gen_ai.request.id': 'req-private',
+          'basestation.aiops.llm.output.summary': '{"hypothesis":"private"}',
+        }, { span_id: 'llm-private' }),
+      ],
+    });
+
+    expect(explanation.activities[0]?.outputs?.output).toBeUndefined();
+    expect(explanation.activities[0]?.operator_facing_record?.output.condition).toBe('not_recorded');
+  });
+
+  it('normalizes tool.called output from gen_ai.tool.output', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'tool.called', {
+          'gen_ai.tool.name': 'fetch',
+          'gen_ai.tool.output': '{"ok":true}',
+        }, {
+          span_id: 'tool-span',
+          causal: { tool_call_id: 'call-out-1' },
+        }),
+      ],
+    });
+
+    expect(explanation.activities[0]?.operator_facing_record?.output.condition).toBe('recorded');
+    expect(explanation.activities[0]?.operator_facing_record?.output.value).toBe('{"ok":true}');
+  });
+
+  it('normalizes tool.called output from tool_output alias', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'tool.called', {
+          'gen_ai.tool.name': 'fetch',
+          tool_output: 'alias-output',
+        }, {
+          span_id: 'tool-span-2',
+          causal: { tool_call_id: 'call-out-2' },
+        }),
+      ],
+    });
+
+    expect(explanation.activities[0]?.operator_facing_record?.output.condition).toBe('recorded');
+    expect(explanation.activities[0]?.operator_facing_record?.output.value).toBe('alias-output');
+  });
+
+  it('normalizes retrieval/tool activity output from generic output key', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'span.completed', {
+          operation_name: 'retrieval.search',
+          'retrieval.request_id': 'ret-1',
+          output: 'retrieval hits',
+        }, { span_id: 'ret-span' }),
+      ],
+    });
+
+    expect(explanation.activities[0]?.operator_facing_record?.output.condition).toBe('recorded');
+    expect(explanation.activities[0]?.operator_facing_record?.output.value).toBe('retrieval hits');
+  });
+
+  it('normalizes tool input from gen_ai.tool.input', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'tool.called', {
+          'gen_ai.tool.name': 'fetch',
+          'gen_ai.tool.input': '{"query":"logs"}',
+        }, {
+          span_id: 'tool-in-span',
+          causal: { tool_call_id: 'call-in-1' },
+        }),
+      ],
+    });
+
+    expect(explanation.activities[0]?.operator_facing_record?.input.condition).toBe('recorded');
+    expect(explanation.activities[0]?.operator_facing_record?.input.value).toBe('{"query":"logs"}');
+  });
+
+  it('keeps story sufficiency independent from missing normalized output', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'span.completed', {
+          operation_name: 'llm.call',
+          'gen_ai.request.id': 'req-story',
+          'gen_ai.agent.id': 'diagnosis',
+        }, { span_id: 'llm-story', agent_id: 'diagnosis' }),
+      ],
+    });
+
+    const record = explanation.activities[0]?.operator_facing_record;
+    expect(record?.output.condition).toBe('not_recorded');
+    expect(record?.evidence_condition.condition).toBe('recorded');
+  });
 });

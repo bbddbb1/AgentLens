@@ -51,13 +51,18 @@ import {
   type RopsField,
 } from '@/lib/rops/provenance';
 import { collectNodeEvidence } from '@/lib/rops/nodeEvidence';
+import { isRedactionValue, resolveNormalizedIoDisplay } from '@/lib/rops/fieldCondition';
 import {
   MissingFieldsProvider,
   RopsFieldRow,
   RopsSection,
   ProvenanceTag,
 } from './primitives';
-import { safePreview } from '@/lib/safePreview';
+import {
+  L3_COLLAPSED_PREVIEW_MAX,
+  L3_EXPANDED_PREVIEW_MAX,
+  safePreview,
+} from '@/lib/safePreview';
 
 function displayText(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.length > 0 ? value : fallback;
@@ -210,6 +215,10 @@ function ProfileNodeInspector({
   const { recognized, unrecognized } = splitPayload(leftoverPayload);
   const hasProfileRows = rows.some((r) => !r.field.absent);
   const producedOutputs = evidence.producedOutputs ?? [];
+  const openViewEvidence =
+    input.onViewEvidence && eventEnvelope
+      ? () => input.onViewEvidence!(eventEnvelope.sequence_num)
+      : undefined;
 
   return (
     <PanelShell
@@ -246,14 +255,14 @@ function ProfileNodeInspector({
         {hasProfileRows || recognized.length > 0 || unrecognized.length > 0 ? (
           <div className="space-y-1.5">
             {rows.map((r) => (
-              <EvidenceRow key={r.label} label={r.label} field={r.field} />
+              <EvidenceRow key={r.label} label={r.label} field={r.field} onViewEvidence={openViewEvidence} />
             ))}
             {recognized.length > 0 && (
               <div className={hasProfileRows ? 'pt-1.5' : ''}>
                 {hasProfileRows && (
                   <div className="text-[9px] uppercase tracking-[0.12em] text-[#5d6180] mb-1">Other payload</div>
                 )}
-                <KeyValueList entries={recognized} />
+                <KeyValueList entries={recognized} onViewEvidence={openViewEvidence} />
               </div>
             )}
             {unrecognized.length > 0 && (
@@ -261,7 +270,7 @@ function ProfileNodeInspector({
                 <div className="text-[9px] text-[#6b708a] mb-1">
                   Payload keys not in the ROPS whitelist (spec 8.2). Shown verbatim, never interpreted.
                 </div>
-                <KeyValueList entries={unrecognized} />
+                <KeyValueList entries={unrecognized} onViewEvidence={openViewEvidence} />
               </div>
             )}
           </div>
@@ -742,14 +751,8 @@ function SelectedActivityPrioritySection({
         {record?.limitation && <div className="text-[10px] text-[#fbbf24]">{record.limitation}</div>}
         <div className="grid gap-1.5 text-[10px]">
           <RopsFieldRow label="trigger" field={packEvidence('trigger', triggerText)} />
-          <RopsFieldRow
-            label="inputs"
-            field={packEvidence('inputs', record?.input.value ?? evidence.toolInput ?? evidence.searchQuery ?? evidence.retrievalBackend ?? record?.input.condition ?? 'not recorded')}
-          />
-          <RopsFieldRow
-            label="outputs"
-            field={packEvidence('outputs', record?.output.value ?? evidence.toolOutput ?? evidence.producedOutputs?.length ?? record?.output.condition ?? 'not recorded')}
-          />
+          <NormalizedIoFieldRow label="inputs" field="input" recordField={record?.input} />
+          <NormalizedIoFieldRow label="outputs" field="output" recordField={record?.output} />
           <RopsFieldRow
             label="error_or_wait_reason"
             field={packEvidence('error_or_wait_reason', record?.status_or_outcome.value === 'Waiting' ? record?.evidence_condition.value ?? 'waiting' : evidence.failureReason ?? evidence.failureCause ?? 'not recorded')}
@@ -763,9 +766,14 @@ function SelectedActivityPrioritySection({
             field={packEvidence('artifacts', record?.artifacts.value ?? evidence.producedOutputs?.length ?? 0)}
           />
           <RopsFieldRow
-            label="evidence_condition"
-            field={packEvidence('evidence_condition', record?.evidence_condition.value ?? record?.evidence_condition.condition ?? 'recorded')}
+            label="story_sufficiency"
+            field={packEvidence('story_sufficiency', record?.evidence_condition.value ?? record?.evidence_condition.condition ?? 'recorded')}
           />
+          {record && (
+            <div className="text-[9px] text-[#6b708a]">
+              Actor, action, target, and outcome only—not input, output, or artifacts.
+            </div>
+          )}
         </div>
       </div>
     </RopsSection>
@@ -1016,7 +1024,36 @@ function ProvenanceBlock({ prov }: { prov: NonNullable<ReturnType<typeof envelop
   );
 }
 
-function KeyValueList({ entries }: { entries: ReadonlyArray<readonly [string, unknown]> }) {
+function NormalizedIoFieldRow({
+  label,
+  field,
+  recordField,
+}: {
+  label: string;
+  field: 'input' | 'output';
+  recordField: import('@agentlens/protocol').RuntimeActivityField | undefined;
+}) {
+  const display = resolveNormalizedIoDisplay(recordField, field);
+  return (
+    <RopsFieldRow
+      label={label}
+      field={{
+        key: label,
+        provenance: 'projection',
+        value: display.text,
+        absent: false,
+      }}
+    />
+  );
+}
+
+function KeyValueList({
+  entries,
+  onViewEvidence,
+}: {
+  entries: ReadonlyArray<readonly [string, unknown]>;
+  onViewEvidence?: () => void;
+}) {
   return (
     <ul className="space-y-1">
       {entries.map(([k, v]) => (
@@ -1025,7 +1062,7 @@ function KeyValueList({ entries }: { entries: ReadonlyArray<readonly [string, un
           <div className="text-[#d0d4ea] mt-0.5">
             {typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'
               ? String(v)
-              : <JsonBlock value={v} />}
+              : <JsonBlock value={v} onViewEvidence={onViewEvidence} />}
           </div>
         </li>
       ))}
@@ -1043,9 +1080,11 @@ function KeyValueList({ entries }: { entries: ReadonlyArray<readonly [string, un
 function EvidenceRow({
   label,
   field,
+  onViewEvidence,
 }: {
   label: string;
   field: RopsField<unknown>;
+  onViewEvidence?: () => void;
 }) {
   const v = field.value;
   if (v === undefined || v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
@@ -1057,25 +1096,57 @@ function EvidenceRow({
         <span className="text-[#8f95b2] text-[10px] font-semibold shrink-0">{label}</span>
         <ProvenanceTag provenance="evidence" />
       </div>
-      <JsonBlock value={v} />
+      <JsonBlock value={v} onViewEvidence={onViewEvidence} />
     </div>
   );
 }
 
-function JsonBlock({ value }: { value: unknown }) {
+/** L3 JSON preview with expand + L4 fallback (rops.md §7.4 / §8.3). */
+function JsonBlock({
+  value,
+  onViewEvidence,
+}: {
+  value: unknown;
+  onViewEvidence?: () => void;
+}) {
   const [open, setOpen] = useState(false);
-  const preview = safePreview(value, 240);
-  const isTruncated = preview.truncated;
+  if (isRedactionValue(value)) {
+    return <span className="text-[10px] text-[#fbbf24] italic">redacted</span>;
+  }
+  const collapsed = safePreview(value, L3_COLLAPSED_PREVIEW_MAX);
+  const expanded = safePreview(value, L3_EXPANDED_PREVIEW_MAX);
+  const display = open ? expanded : collapsed;
+  const canExpand = collapsed.truncated;
+  const needsL4 = open && expanded.truncated;
+
   return (
     <div className="font-mono text-[9px] text-[#9da3bf] bg-[rgba(0,0,0,0.18)] rounded p-1.5 break-all">
-      {open || !isTruncated ? preview.text : preview.text}
-      {isTruncated && (
+      {display.text}
+      {!open && canExpand && (
         <button
           type="button"
-          onClick={() => setOpen(!open)}
+          onClick={() => setOpen(true)}
           className="ml-1 text-[#818cf8] hover:text-[#a5b4fc]"
         >
-          {open ? 'less' : 'more'}
+          more
+        </button>
+      )}
+      {open && !needsL4 && canExpand && (
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="ml-1 text-[#818cf8] hover:text-[#a5b4fc]"
+        >
+          less
+        </button>
+      )}
+      {needsL4 && onViewEvidence && (
+        <button
+          type="button"
+          onClick={onViewEvidence}
+          className="ml-1 text-[#818cf8] hover:text-[#a5b4fc]"
+        >
+          View evidence
         </button>
       )}
     </div>

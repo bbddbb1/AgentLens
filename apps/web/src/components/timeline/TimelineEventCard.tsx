@@ -2,6 +2,8 @@ import { Bot, CheckCircle2, ChevronDown, ChevronUp, FileText, PauseCircle, Spark
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import type { RuntimeExplanationActivity } from '@agentlens/protocol';
+import { formatTimelineOutputBadge, isRedactionValue, resolveNormalizedIoDisplay } from '@/lib/rops/fieldCondition';
+import { safePreview, SUMMARY_IO_PREVIEW_MAX } from '@/lib/safePreview';
 import { AgentAvatar } from '@/components/common/AgentAvatar';
 
 function statusTone(status: RuntimeExplanationActivity['status']): string {
@@ -55,9 +57,11 @@ interface TimelineEventCardProps {
 
 export function TimelineEventCard({ activity, isCurrent, onSelect }: TimelineEventCardProps) {
   const record = activity.operator_facing_record;
-  const innerMonologue =
-    typeof record?.output.value === 'string' && record.output.condition === 'recorded'
-      ? record.output.value
+  const outputDisplay =
+    record?.output.condition === 'recorded' &&
+    record.output.value !== undefined &&
+    !isRedactionValue(record.output.value)
+      ? resolveNormalizedIoDisplay(record.output, 'output').text
       : undefined;
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -109,14 +113,14 @@ export function TimelineEventCard({ activity, isCurrent, onSelect }: TimelineEve
             )}
             {record && record.output.condition !== 'recorded' && (
               <span className="rounded-full bg-[rgba(251,191,36,0.12)] px-2 py-0.5 text-[9px] text-[#fbbf24]">
-                output: {record.output.condition.replace(/_/g, ' ')}
+                output: {formatTimelineOutputBadge(record.output)}
               </span>
             )}
           </div>
         </div>
       </button>
 
-      {innerMonologue && (
+      {outputDisplay && (
         <div className="px-3 pb-2 w-full">
           <div className="border-t border-[rgba(255,255,255,0.05)] pt-2 mt-1">
             <button
@@ -136,7 +140,7 @@ export function TimelineEventCard({ activity, isCurrent, onSelect }: TimelineEve
                   className="overflow-hidden"
                 >
                   <div className="mt-2 p-2 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)] text-[11px] text-[#cfd3e6] leading-relaxed font-mono whitespace-pre-wrap break-words">
-                    {innerMonologue}
+                    {safePreview(record!.output.value, SUMMARY_IO_PREVIEW_MAX).text}
                   </div>
                 </motion.div>
               )}
