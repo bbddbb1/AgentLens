@@ -41,7 +41,7 @@ const SEARCH_QUERY_KEYS = ['search.query', 'search_query', 'query'] as const;
 const RESULT_COUNT_KEYS = ['search.result_count', 'result_count', 'resultCount'] as const;
 const RETRIEVAL_BACKEND_KEYS = ['retrieval.backend', 'retrieval_backend', 'retrievalBackend'] as const;
 
-/** Raw runtime evidence correlated to a node. Values are verbatim or unset. */
+/** Recorded runtime evidence correlated to a node. Values are verbatim or unset. */
 export interface NodeCorrelatedEvidence {
   /** Envelopes whose span_id matches the node's source span, in sequence order. */
   readonly envelopes: readonly EventEnvelope[];
@@ -49,7 +49,7 @@ export interface NodeCorrelatedEvidence {
   readonly toolCallEnvelope: EventEnvelope | null;
   /** The span.failed envelope (carries failure reason), if present. */
   readonly failureEnvelope: EventEnvelope | null;
-  /** Raw values pulled verbatim from envelope payload / node metadata. */
+  /** Recorded values pulled verbatim from envelope payload / node metadata. */
   readonly toolName?: string;
   readonly toolInput?: unknown;
   readonly toolOutput?: unknown;
@@ -64,7 +64,7 @@ export interface NodeCorrelatedEvidence {
 }
 
 /**
- * Correlate `envelopes` to `node` by span_id and extract raw evidence.
+ * Correlate `envelopes` to `node` by span_id and extract recorded evidence.
  *
  * The correlation key is the node's source span id (every node sets
  * `source_span_id` / `evidence_span_id` / `span_id` to its span at projection

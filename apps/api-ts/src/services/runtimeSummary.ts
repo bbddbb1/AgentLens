@@ -75,7 +75,7 @@ function buildLlmPrompt(summary: RuntimeSummary): string {
   'Focus on: objective, progress, observations, decisions, evidence, actions, pending work, warnings.',
     '',
     `Objective: ${summary.objective}`,
-    `Status: ${summary.status} | Phase: ${summary.phase}`,
+    `Status: ${summary.run_status ?? summary.status} | Phase: ${summary.runtime_phase?.label ?? summary.current_phase?.label ?? summary.phase}`,
     `Headline: ${summary.headline}`,
     `Blocked: ${summary.is_blocked} | Requires human: ${summary.requires_human}`,
     '',

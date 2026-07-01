@@ -37,13 +37,25 @@ describe('classifySpan', () => {
     expect(classifySpan(span)).toBe('L3');
   });
 
-  it('classifies BSOps span as L3', () => {
+  it('does not promote workload namespaces into L3', () => {
     const span = {
       span_id: 's1',
       name: 'agent.run',
       attributes: {
         'basestation.aiops.agent.id': 'agent-1',
         'basestation.aiops.agent.name': 'Orchestrator',
+      },
+    };
+    expect(classifySpan(span)).toBe('L1');
+  });
+
+  it('classifies standard agent runtime attributes as L3', () => {
+    const span = {
+      span_id: 's1',
+      name: 'agent.run',
+      attributes: {
+        'gen_ai.agent.id': 'agent-1',
+        'gen_ai.agent.name': 'Orchestrator',
       },
     };
     expect(classifySpan(span)).toBe('L3');
@@ -101,7 +113,7 @@ describe('projectTraceSnapshot', () => {
     expect(snapshot.nodes).toHaveLength(2);
     expect(snapshot.nodes[0].id).toBe('span1');
     expect(snapshot.nodes[0].type).toBe('agent');
-    expect(snapshot.nodes[0].label).toBe('SuperAgent');
+    expect(snapshot.nodes[0].label).toBe('Agent · SuperAgent');
     expect(snapshot.nodes[0].maturityTier).toBe('L3');
 
     expect(snapshot.nodes[1].id).toBe('span2');
@@ -209,7 +221,7 @@ describe('projectReplay', () => {
     expect(toolCalled[0]?.payload?.['gen_ai.tool.input']).toBe('{"query":"sector-3"}');
   });
 
-  it('normalizes basestation.aiops span events to AgentLens types', () => {
+  it('preserves workload span events verbatim without projecting domain meaning', () => {
     const span = {
       span_id: 'diag-span',
       trace_id: 'trace-diag',
@@ -241,10 +253,12 @@ describe('projectReplay', () => {
       ],
     };
     const replay = projectReplay('m-diag', 'main', [span]);
-    const hypothesis = replay.events.find((e) => e.event_type === 'hypothesis.proposed');
-    const decision = replay.events.find((e) => e.event_type === 'decision.made');
+    const hypothesis = replay.events.find((e) => e.event_type === 'basestation.aiops.hypothesis.proposed');
+    const decision = replay.events.find((e) => e.event_type === 'basestation.aiops.decision.made');
     expect(hypothesis?.payload?.['hypothesis.description']).toBe('Power amplifier failure');
     expect(decision?.payload?.['decision.summary']).toBe('Replace PA module');
+    expect(replay.events.some((e) => e.event_type === 'hypothesis.proposed')).toBe(false);
+    expect(replay.events.some((e) => e.event_type === 'decision.made')).toBe(false);
   });
 
   it('Scenario 1: Planner -> Researcher -> Writer delegation chain', () => {
@@ -552,8 +566,8 @@ describe('provenance assembly from verbatim attributes', () => {
     // The L2 node carries the model provenance on its envelope payload.
     const node = snapshot.nodes.find(n => n.id === 'llm-1');
     expect(node).toBeDefined();
-    // Node label reflects provider + model.
-    expect(node!.label).toContain('openai');
+    // Universal node identity foregrounds the activity type + model.
+    expect(node!.label).toContain('LLM');
     expect(node!.label).toContain('gpt-4o');
   });
 

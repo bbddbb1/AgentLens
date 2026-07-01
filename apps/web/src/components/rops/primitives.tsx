@@ -9,6 +9,23 @@
 'use client';
 
 import type { RopsField, Provenance } from '@/lib/rops/provenance';
+import { createContext, useContext, useState } from 'react';
+
+const ShowMissingFieldsContext = createContext(false);
+
+export function MissingFieldsProvider({
+  showMissing,
+  children,
+}: {
+  showMissing: boolean;
+  children?: React.ReactNode;
+}) {
+  return (
+    <ShowMissingFieldsContext.Provider value={showMissing}>
+      {children}
+    </ShowMissingFieldsContext.Provider>
+  );
+}
 
 const STATUS_TOKEN_COLORS: Record<string, string> = {
   idle: '#5d6180',
@@ -109,6 +126,8 @@ export function RopsFieldRow<T>({
   formatter?: (value: T) => string;
   showProvenance?: boolean;
 }) {
+  const showMissing = useContext(ShowMissingFieldsContext);
+  if (field.absent && !showMissing) return null;
   return (
     <div className="flex justify-between items-start gap-3 border-b border-[rgba(255,255,255,0.04)] pb-1.5">
       <span className="text-[#8f95b2] text-[10px] font-semibold shrink-0">{label}</span>
@@ -154,7 +173,6 @@ export function RopsSection({
   );
 }
 
-import { useState } from 'react';
 function useToggleState(initial: boolean): [boolean, (v: boolean) => void] {
   const [open, setOpen] = useState(initial);
   return [open, setOpen];

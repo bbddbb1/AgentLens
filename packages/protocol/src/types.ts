@@ -3,6 +3,260 @@ export type NodeStatus = 'idle' | 'active' | 'completed' | 'failed' | 'waiting' 
 export type EdgeType = 'dependency' | 'uses' | 'delegation' | 'critique' | 'review' | 'escalation' | 'data_flow' | 'approval' | 'member_of' | 'produces';
 export type EdgeStatus = 'pending' | 'active' | 'completed' | 'failed';
 
+/** Framework- and workload-neutral activity classes derived from runtime evidence. */
+export type RuntimeActivityKind =
+  | 'agent'
+  | 'tool'
+  | 'llm'
+  | 'retrieval'
+  | 'workflow'
+  | 'memory'
+  | 'artifact'
+  | 'human'
+  | 'checkpoint'
+  | 'runtime';
+
+export type RuntimeExplanationProjectionVersion = 'runtime_explanation.v1';
+export type RuntimeExplanationActivityKind =
+  | 'agent'
+  | 'workflow'
+  | 'tool'
+  | 'llm'
+  | 'retrieval'
+  | 'memory'
+  | 'artifact'
+  | 'human'
+  | 'checkpoint';
+export type RuntimeExplanationRunOutcome = 'active' | 'waiting' | 'completed' | 'failed';
+export type RuntimeExplanationRelationBasis =
+  | 'explicit_link'
+  | 'trigger_reference'
+  | 'decision_reference'
+  | 'parent_span';
+export type RuntimeExplanationConsistencyCode =
+  | 'missing_start'
+  | 'orphan_terminal'
+  | 'duplicate_terminal'
+  | 'timestamp_conflict'
+  | 'dangling_trigger_reference'
+  | 'dangling_decision_reference'
+  | 'dangling_parent_span'
+  | 'ambiguous_parallelism'
+  | 'shared_span_multiple_invocations'
+  | 'branch_fork_cutoff_conflict'
+  | 'incomplete_lifecycle';
+export type RuntimeExplanationConsistencySeverity = 'info' | 'warning' | 'error';
+
+export interface RuntimeExplanationEvidenceRef {
+  event_id: string;
+  sequence_num: number;
+  timestamp: string;
+  branch_id?: string;
+  span_id?: string;
+  source_event_id?: string;
+}
+
+export interface RuntimeExplanationRedaction {
+  kind: 'redaction';
+  policy_decision: 'redact';
+  reason?: string;
+  evidence_refs: RuntimeExplanationEvidenceRef[];
+}
+
+export interface RuntimeExplanationAdvisory {
+  kind: 'ai_advisory';
+  message: string;
+  source: 'ai';
+}
+
+export type RuntimeExplanationValue =
+  | string
+  | number
+  | boolean
+  | null
+  | Record<string, unknown>
+  | unknown[]
+  | RuntimeExplanationRedaction;
+
+export interface RuntimeExplanationRelation {
+  id: string;
+  source_activity_id: string;
+  target_activity_id: string;
+  basis: RuntimeExplanationRelationBasis;
+  evidence_refs: RuntimeExplanationEvidenceRef[];
+}
+
+export interface RuntimeExplanationParallelGroup {
+  id: string;
+  activity_ids: string[];
+  basis: 'explicit' | 'parent_overlap';
+  evidence_refs: RuntimeExplanationEvidenceRef[];
+}
+
+export interface RuntimeExplanationMergeGroup {
+  id: string;
+  predecessor_activity_ids: string[];
+  downstream_activity_id: string;
+  parallel_group_id: string;
+  evidence_refs: RuntimeExplanationEvidenceRef[];
+}
+
+export interface RuntimeExplanationConsistencyFlag {
+  code: RuntimeExplanationConsistencyCode;
+  severity: RuntimeExplanationConsistencySeverity;
+  message: string;
+  activity_id?: string;
+  relation_id?: string;
+  evidence_refs: RuntimeExplanationEvidenceRef[];
+}
+
+export interface RuntimeExplanationActivity {
+  id: string;
+  kind: RuntimeExplanationActivityKind;
+  title: string;
+  subtitle?: string;
+  action: string;
+  status: RuntimeExplanationRunOutcome;
+  outcome?: string;
+  started_at?: string;
+  ended_at?: string;
+  duration_ms?: number;
+  actor?: string;
+  source_span_id?: string;
+  parent_span_id?: string;
+  sequence_num?: number;
+  invocation_id?: string;
+  inputs?: Record<string, RuntimeExplanationValue>;
+  outputs?: Record<string, RuntimeExplanationValue>;
+  error?: Record<string, RuntimeExplanationValue>;
+  artifacts?: RuntimeExplanationValue[];
+  operator_facing_record?: RuntimeOperatorActivityRecord;
+  story_critical?: boolean;
+  story_critical_limitation?: string;
+  evidence_refs: RuntimeExplanationEvidenceRef[];
+}
+
+export interface RuntimeExplanationProjection {
+  mission_id: string;
+  branch_id: string;
+  as_of_sequence_num: number;
+  as_of_timestamp?: string;
+  projection_version: RuntimeExplanationProjectionVersion;
+  run_outcome: RuntimeExplanationRunOutcome;
+  frame?: RuntimeFrame;
+  run_status?: RunStatus;
+  runtime_phase?: RuntimePhaseSummary;
+  progress_markers?: RuntimeProgressMarker[];
+  selected_activity_state?: RuntimeSelectedActivityState;
+  run_duration_ms?: number;
+  activities: RuntimeExplanationActivity[];
+  relations: RuntimeExplanationRelation[];
+  parallel_groups: RuntimeExplanationParallelGroup[];
+  merge_groups: RuntimeExplanationMergeGroup[];
+  consistency_flags: RuntimeExplanationConsistencyFlag[];
+}
+
+export interface RuntimeFrame {
+  mission_id: string;
+  branch_id: string;
+  sequence_num: number;
+  as_of_timestamp: string;
+  projection_version: string;
+}
+
+export interface RuntimePhaseSummary {
+  id: string;
+  label: string;
+  basis: 'recorded' | 'derived' | 'unknown';
+  start_sequence_num?: number;
+  end_sequence_num?: number;
+  evidence_refs: RuntimeExplanationEvidenceRef[];
+}
+
+export type RunStatus = 'Active' | 'Waiting' | 'Completed' | 'Failed' | 'Unknown';
+export type RuntimePhaseLabel =
+  | 'Queued'
+  | 'Active Work'
+  | 'Waiting'
+  | 'Converging'
+  | 'Completed'
+  | 'Failed'
+  | 'Unknown';
+export type RuntimeEvidenceFieldCondition =
+  | 'recorded'
+  | 'not_recorded'
+  | 'unavailable'
+  | 'redacted'
+  | 'encrypted'
+  | 'permission_denied'
+  | 'oversized'
+  | 'absent'
+  | 'recorded_empty'
+  | 'inconsistent';
+
+export interface RuntimeActivityField<T = RuntimeExplanationValue> {
+  value?: T;
+  condition: RuntimeEvidenceFieldCondition;
+  evidence_refs?: RuntimeExplanationEvidenceRef[];
+}
+
+export interface RuntimeProgressMarker {
+  sequence_num: number;
+  timestamp: string;
+  kind: string;
+  text: string;
+  actor?: string;
+}
+
+export interface RuntimeSelectedActivityState {
+  kind: 'overview' | 'selected' | 'no_activity';
+  activity_id?: string;
+  selection_basis?: string;
+  reason?: 'frame_overview' | 'no_selectable_activity' | 'missing_activity' | 'incompatible';
+}
+
+export interface RuntimeOperatorActivityRecord {
+  primary_label: string;
+  actor: RuntimeActivityField<string>;
+  action: RuntimeActivityField<string>;
+  target: RuntimeActivityField<string>;
+  status_or_outcome: RuntimeActivityField<string>;
+  trigger: RuntimeActivityField;
+  input: RuntimeActivityField;
+  output: RuntimeActivityField;
+  downstream_effect: RuntimeActivityField;
+  artifacts: RuntimeActivityField;
+  evidence_condition: RuntimeActivityField<string>;
+  story_critical_sufficient: boolean;
+  limitation?: string;
+}
+
+/**
+ * Deterministic L1 projection of one runtime activity. The wording is
+ * intentionally universal; workload meaning remains in recorded evidence/L2 lenses.
+ */
+export interface RuntimeActivity {
+  id: string;
+  kind: RuntimeActivityKind;
+  label: string;
+  title?: string;
+  subtitle?: string;
+  action: string;
+  outcome: string;
+  status: NodeStatus;
+  sequence_num?: number;
+  timestamp?: string;
+  duration_ms?: number;
+  actor?: string;
+  source_span_id?: string;
+  parent_span_id?: string;
+  invocation_id?: string;
+  operator_facing_record?: RuntimeOperatorActivityRecord;
+  story_critical?: boolean;
+  story_critical_limitation?: string;
+  provenance: 'projection';
+}
+
 /**
  * Presentation profile of a `GraphNode` (ROPS inspector dispatch + field
  * surfacing). NOT runtime identity and NOT part of the runtime ontology:
@@ -60,6 +314,8 @@ export interface GraphNode {
   source_event_id?: string;
   /** Presentation profile (ROPS dispatch + field surfacing). See `ProjectionProfile`. */
   projection_profile?: ProjectionProfile;
+  /** Universal, deterministic action/outcome identity for L1/L2 presentation. */
+  activity?: RuntimeActivity;
 }
 
 export interface GraphEdge {
@@ -304,11 +560,23 @@ export interface RuntimeSummary {
   branch_id: string;
   sequence_num: number;
   generated_at: string;
+  frame?: RuntimeFrame;
   objective: string;
   status: string;
+  run_status?: RunStatus;
   phase: string;
+  current_phase?: RuntimePhaseSummary;
+  runtime_phase?: RuntimePhaseSummary;
+  major_phases?: RuntimePhaseSummary[];
   headline: string;
   progress: RuntimeSummaryProgressEntry[];
+  progress_markers?: RuntimeProgressMarker[];
+  /** Compact Runtime Story (normally 5-8 key universal activities). */
+  activities?: RuntimeActivity[];
+  /** Ordered, concise story selection for the summary surface. */
+  story_activities?: RuntimeActivity[];
+  selected_activity_id?: string;
+  selected_activity_state?: RuntimeSelectedActivityState;
   observations: RuntimeSummaryObservation[];
   decisions: RuntimeSummaryDecision[];
   evidence: RuntimeSummaryEvidence[];
@@ -322,6 +590,13 @@ export interface RuntimeSummary {
   is_blocked: boolean;
   requires_human: boolean;
   source: 'deterministic' | 'llm';
+  background_work?: {
+    collapsed: boolean;
+    visible_activity_count: number;
+    hidden_activity_count: number;
+    total_activity_count: number;
+    disclosure: string;
+  };
   /** Optional LLM-enhanced narrative; projection-only, never authoritative. */
   narrative?: string;
 }
@@ -402,6 +677,7 @@ export interface MissionEventRecord {
   span_id?: string;
   trace_id?: string;
   parent_span_id?: string;
+  source_event_id?: string;
   idempotency_key?: string;
   payload: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -574,6 +850,10 @@ export interface EventEnvelope extends MissionEventRecord {
 
   /** Policy decision — governance rule evaluation. */
   policy?: PolicyDecision;
+
+  /** Source telemetry identifiers preserved for replay/provenance correlation. */
+  source_span_id?: string;
+  source_event_id?: string;
 
   /** SHA-256 hash of (payload + metadata + previous_hash) for tamper evidence. */
   content_hash?: string;

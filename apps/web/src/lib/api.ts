@@ -3,6 +3,7 @@
  */
 
 import type {
+  BranchSandboxJob,
   GraphSnapshot,
   InterruptRecord,
   Mission,
@@ -10,6 +11,7 @@ import type {
   ReplayBranch,
   ReplayStateResponse,
   SemanticSummaryResult,
+  RuntimeExplanationProjection,
   RuntimeSummary,
   RuntimeNodeProjection,
   AuditIntegrityReport,
@@ -99,9 +101,9 @@ export const api = {
       request<ReplayStateResponse>(`/api/v1/missions/${missionId}/replay${branchId ? `?branch_id=${branchId}` : ''}`),
     branches: (missionId: string) => request<BranchesResponse>(`/api/v1/missions/${missionId}/replay/branches`),
     createBranch: (missionId: string, data: { name?: string; source_branch_id?: string; forked_from_sequence_num?: number; metadata?: Record<string, unknown> }) =>
-      request<{ branch: ReplayBranch; job: unknown }>(`/api/v1/missions/${missionId}/replay/branches`, { method: 'POST', body: JSON.stringify(data) }),
-    jobs: (missionId: string) => request<{ jobs: unknown[] }>(`/api/v1/missions/${missionId}/branch-jobs`),
-    jobLogs: (missionId: string, jobId: string) => request<{ job: unknown, logs: unknown[] }>(`/api/v1/missions/${missionId}/branch-jobs/${jobId}`),
+      request<{ branch: ReplayBranch; job: BranchSandboxJob }>(`/api/v1/missions/${missionId}/replay/branches`, { method: 'POST', body: JSON.stringify(data) }),
+    jobs: (missionId: string) => request<{ jobs: BranchSandboxJob[] }>(`/api/v1/missions/${missionId}/branch-jobs`),
+    jobLogs: (missionId: string, jobId: string) => request<{ job: BranchSandboxJob, logs: unknown[] }>(`/api/v1/missions/${missionId}/branch-jobs/${jobId}`),
   },
 
   events: {
@@ -180,6 +182,16 @@ export const api = {
     enhance: (missionId: string, branchId?: string) => {
       const query = branchId ? `?branch_id=${branchId}` : '';
       return request<RuntimeSummary>(`/api/v1/missions/${missionId}/runtime-summary/enhance${query}`, { method: 'POST' });
+    },
+  },
+
+  runtimeExplanation: {
+    get: (missionId: string, options?: { branchId?: string; sequenceNum?: number }) => {
+      const params = new URLSearchParams();
+      if (options?.branchId) params.append('branch_id', options.branchId);
+      if (options?.sequenceNum !== undefined) params.append('sequence_num', String(options.sequenceNum));
+      const query = params.toString();
+      return request<RuntimeExplanationProjection>(`/api/v1/missions/${missionId}/explanation${query ? `?${query}` : ''}`);
     },
   },
 

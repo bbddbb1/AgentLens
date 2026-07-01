@@ -22,6 +22,7 @@ import {
 } from '@xyflow/react';
 import { useGraphStore } from '@/stores/graphStore';
 import { useReviewStore } from '@/stores/reviewStore';
+import { useReplayStore } from '@/stores/replayStore';
 import { AgentNode } from './AgentNode';
 import { TaskNode } from './TaskNode';
 import { ToolNode } from './ToolNode';
@@ -70,6 +71,7 @@ function MissionGraphInner() {
   const setZoomLevel = useGraphStore((state) => state.setZoomLevel);
   const setNodeLayoutPosition = useGraphStore((state) => state.setNodeLayoutPosition);
   const toggleFocusMode = useGraphStore((state) => state.toggleFocusMode);
+  const setSelectedActivityId = useReplayStore((state) => state.setSelectedActivityId);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(storeEdges);
@@ -119,16 +121,23 @@ function MissionGraphInner() {
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
       setSelectedNodeId(node.id);
+      const activityId =
+        typeof (node.data as Record<string, unknown>).activity === 'object' &&
+        (node.data as { activity?: { id?: string } }).activity?.id
+          ? (node.data as { activity?: { id?: string } }).activity?.id ?? null
+          : null;
+      setSelectedActivityId(activityId);
       setActiveCommentTarget({ type: 'node', id: node.id });
     },
-    [setSelectedNodeId, setActiveCommentTarget],
+    [setSelectedActivityId, setSelectedNodeId, setActiveCommentTarget],
   );
 
   const onPaneClick = useCallback(() => {
     setSelectedNodeId(null);
+    setSelectedActivityId(null);
     setActiveCommentTarget(null);
     useGraphStore.getState().setHighlightedEdgeId(null);
-  }, [setSelectedNodeId, setActiveCommentTarget]);
+  }, [setSelectedActivityId, setSelectedNodeId, setActiveCommentTarget]);
 
   return (
     <div className="relative h-full w-full pt-[52px]">

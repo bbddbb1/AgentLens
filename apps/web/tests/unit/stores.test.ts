@@ -3,7 +3,21 @@ import { useGraphStore } from '../../src/stores/graphStore.js';
 import { useMissionStore } from '../../src/stores/missionStore.js';
 import { useReplayStore } from '../../src/stores/replayStore.js';
 import { useReviewStore } from '../../src/stores/reviewStore.js';
-import type { GraphSnapshot } from '@agentlens/protocol';
+import type { EventEnvelope, GraphSnapshot } from '@agentlens/protocol';
+
+function replayEvent(id: string, sequence_num = 0): EventEnvelope {
+  return {
+    id,
+    mission_id: 'm1',
+    branch_id: 'main',
+    sequence_num,
+    branch_sequence_num: sequence_num,
+    event_type: 'span.started',
+    timestamp: `2026-01-01T00:00:0${sequence_num}.000Z`,
+    payload: {},
+    metadata: {},
+  };
+}
 
 // Zustand stores are standalone — reset between tests by calling getState/setState
 beforeEach(() => {
@@ -45,7 +59,7 @@ beforeEach(() => {
   useReplayStore.setState({
     isPlaying: false, currentFrame: 0, totalFrames: 0, playbackSpeed: 1,
     durationSeconds: null, currentBranchId: null, branches: [], events: [],
-    currentState: null, selectedEventId: null,
+    currentState: null, selectedEventId: null, selectedActivityId: null, activityContextState: null,
   });
   useReviewStore.setState({
     reviews: [], comments: [], activeCommentTarget: null, isCommentPanelOpen: true,
@@ -227,6 +241,7 @@ describe('replayStore', () => {
     expect(state.currentFrame).toBe(0);
     expect(state.totalFrames).toBe(0);
     expect(state.playbackSpeed).toBe(1);
+    expect(state.activityContextState).toBeNull();
   });
 
   it('sets playing state', () => {
@@ -235,19 +250,19 @@ describe('replayStore', () => {
   });
 
   it('clamps current frame to valid range', () => {
-    useReplayStore.setState({ totalFrames: 5, events: Array.from({ length: 5 }, (_, i) => ({ id: `e${i}` })) });
+    useReplayStore.setState({ totalFrames: 5, events: Array.from({ length: 5 }, (_, i) => replayEvent(`e${i}`, i)) });
     useReplayStore.getState().setCurrentFrame(10);
     expect(useReplayStore.getState().currentFrame).toBe(4); // clamped to totalFrames-1
   });
 
   it('clamps negative current frame to 0', () => {
-    useReplayStore.setState({ totalFrames: 5, events: Array.from({ length: 5 }, (_, i) => ({ id: `e${i}` })) });
+    useReplayStore.setState({ totalFrames: 5, events: Array.from({ length: 5 }, (_, i) => replayEvent(`e${i}`, i)) });
     useReplayStore.getState().setCurrentFrame(-5);
     expect(useReplayStore.getState().currentFrame).toBe(0);
   });
 
   it('sets current frame without coupling to the events array index', () => {
-    const events = [{ id: 'e0' }, { id: 'e1' }, { id: 'e2' }];
+    const events = [replayEvent('e0', 0), replayEvent('e1', 1), replayEvent('e2', 2)];
     useReplayStore.setState({ totalFrames: 3, events });
     useReplayStore.getState().setCurrentFrame(1);
     expect(useReplayStore.getState().currentFrame).toBe(1);
@@ -255,7 +270,7 @@ describe('replayStore', () => {
   });
 
   it('nextFrame advances the frame', () => {
-    const events = [{ id: 'e0' }, { id: 'e1' }, { id: 'e2' }];
+    const events = [replayEvent('e0', 0), replayEvent('e1', 1), replayEvent('e2', 2)];
     useReplayStore.setState({ totalFrames: 3, events });
     useReplayStore.getState().nextFrame();
     expect(useReplayStore.getState().currentFrame).toBe(1);
@@ -263,14 +278,14 @@ describe('replayStore', () => {
   });
 
   it('stops playing when nextFrame reaches end', () => {
-    useReplayStore.setState({ totalFrames: 3, currentFrame: 2, isPlaying: true, events: [{ id: 'e0' }, { id: 'e1' }, { id: 'e2' }] });
+    useReplayStore.setState({ totalFrames: 3, currentFrame: 2, isPlaying: true, events: [replayEvent('e0', 0), replayEvent('e1', 1), replayEvent('e2', 2)] });
     useReplayStore.getState().nextFrame();
     expect(useReplayStore.getState().isPlaying).toBe(false);
     expect(useReplayStore.getState().currentFrame).toBe(2); // didn't exceed bounds
   });
 
   it('prevFrame goes back one frame', () => {
-    const events = [{ id: 'e0' }, { id: 'e1' }, { id: 'e2' }];
+    const events = [replayEvent('e0', 0), replayEvent('e1', 1), replayEvent('e2', 2)];
     useReplayStore.setState({ totalFrames: 3, currentFrame: 2, events });
     useReplayStore.getState().prevFrame();
     expect(useReplayStore.getState().currentFrame).toBe(1);
@@ -278,18 +293,18 @@ describe('replayStore', () => {
   });
 
   it('prevFrame stays at 0 when already at start', () => {
-    const events = [{ id: 'e0' }];
+    const events = [replayEvent('e0', 0)];
     useReplayStore.setState({ totalFrames: 1, currentFrame: 0, events });
     useReplayStore.getState().prevFrame();
     expect(useReplayStore.getState().currentFrame).toBe(0);
   });
 
   it('sets replay data via setReplayData', () => {
-    const events = [{ id: 'e0' }, { id: 'e1' }];
+    const events = [replayEvent('e0', 0), replayEvent('e1', 1)];
     useReplayStore.getState().setReplayData({
       branch_id: 'main',
       branches: [{ id: 'main', mission_id: 'm1', name: 'Main', status: 'active', metadata: {}, created_at: '', updated_at: '' }],
-      events: events as unknown as import('@agentlens/protocol').MissionEventRecord[],
+      events,
       current_state: null,
       total_frames: 2,
       duration_seconds: 10.5,
@@ -301,10 +316,11 @@ describe('replayStore', () => {
     expect(state.currentBranchId).toBe('main');
     expect(state.events).toHaveLength(2);
     expect(state.selectedEventId).toBeNull();
+    expect(state.activityContextState).toBeNull();
   });
 
   it('reset goes back to frame 0 and stops playing', () => {
-    const events = [{ id: 'e0' }, { id: 'e1' }];
+    const events = [replayEvent('e0', 0), replayEvent('e1', 1)];
     useReplayStore.setState({ isPlaying: true, currentFrame: 1, events });
     useReplayStore.getState().reset();
     expect(useReplayStore.getState().isPlaying).toBe(false);
@@ -313,7 +329,7 @@ describe('replayStore', () => {
   });
 
   it('setSelectedEventId stores the id without changing the frame index', () => {
-    const events = [{ id: 'e0' }, { id: 'e1' }, { id: 'e2' }];
+    const events = [replayEvent('e0', 0), replayEvent('e1', 1), replayEvent('e2', 2)];
     useReplayStore.setState({ totalFrames: 3, currentFrame: 0, events });
     useReplayStore.getState().setSelectedEventId('e2');
     expect(useReplayStore.getState().selectedEventId).toBe('e2');
@@ -321,9 +337,25 @@ describe('replayStore', () => {
   });
 
   it('setSelectedEventId handles unknown event id gracefully', () => {
-    useReplayStore.setState({ events: [{ id: 'e0' }] });
+    useReplayStore.setState({ events: [replayEvent('e0', 0)] });
     useReplayStore.getState().setSelectedEventId('nonexistent');
     expect(useReplayStore.getState().selectedEventId).toBe('nonexistent');
+  });
+
+  it('stores and resets frame activity-context authority state', () => {
+    useReplayStore.getState().setActivityContextState({
+      kind: 'selected',
+      activity_id: 'tool:call-1',
+      selection_basis: 'latest_event',
+    });
+    expect(useReplayStore.getState().activityContextState).toEqual({
+      kind: 'selected',
+      activity_id: 'tool:call-1',
+      selection_basis: 'latest_event',
+    });
+
+    useReplayStore.getState().reset();
+    expect(useReplayStore.getState().activityContextState).toBeNull();
   });
 });
 

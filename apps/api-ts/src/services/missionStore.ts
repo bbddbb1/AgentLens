@@ -16,8 +16,11 @@ import {
   type ReplayBranch,
   type ReplayStateResponse,
   type MissionAuditEventResponse,
+  type RuntimeActivity,
+  type RuntimeExplanationProjection,
   type RuntimeSummary,
   type RuntimeNodeProjection,
+  projectRuntimeExplanation,
 } from '@agentlens/protocol';
 import { BuiltInRules, PolicyEngine } from './policyEngine.js';
 
@@ -67,43 +70,6 @@ function attributeValue(attrs: AttributeMap | Record<string, unknown> | undefine
   return Array.isArray(value) ? value.join(',') : String(value);
 }
 
-const ALARM_ATTR_KEYS = [
-  'basestation.aiops.alarm.id',
-  'basestation.aiops.alarm.type',
-  'basestation.aiops.alarm.severity',
-  'basestation.aiops.alarm.site_id',
-  'basestation.aiops.alarm.ne_id',
-  'basestation.aiops.alarm.ne_type',
-] as const;
-
-function extractAlarmContext(
-  resourceAttributes: AttributeMap,
-  spans: OtlpSpan[],
-): Record<string, string> | undefined {
-  const alarm: Record<string, string> = {};
-  for (const key of ALARM_ATTR_KEYS) {
-    const value =
-      attributeValue(resourceAttributes, key) ??
-      spans.map((span) => attributeValue(span.attributes, key)).find(Boolean);
-    if (value) {
-      alarm[key.replace('basestation.aiops.alarm.', '')] = value;
-    }
-  }
-  return Object.keys(alarm).length > 0 ? alarm : undefined;
-}
-
-function objectiveWithAlarmContext(
-  objective: string,
-  alarm: Record<string, string> | undefined,
-): string {
-  if (!alarm?.type) return objective;
-  const prefix = `Alarm: ${alarm.type}`;
-  if (objective === 'Auto-created mission' || objective === alarm.type) {
-    return alarm.severity ? `${prefix} (${alarm.severity})` : prefix;
-  }
-  return `${prefix} — ${objective}`;
-}
-
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -115,6 +81,143 @@ function stableUuidFromText(value: string): string {
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function maxSequenceThroughTimestamp(
+  events: readonly EventEnvelope[],
+  timestamp: string,
+  floorSeq?: number,
+): number | undefined {
+  const snapshotMs = Date.parse(timestamp);
+  let maxSeq = floorSeq ?? -1;
+
+  for (const event of events) {
+    if (floorSeq !== undefined && event.sequence_num < floorSeq) continue;
+    const eventMs = Date.parse(event.timestamp);
+    if (!Number.isNaN(snapshotMs) && !Number.isNaN(eventMs) && eventMs <= snapshotMs) {
+      maxSeq = Math.max(maxSeq, event.sequence_num);
+    }
+  }
+
+  if (maxSeq >= 0) return maxSeq;
+  return floorSeq ?? events[0]?.sequence_num;
+}
+
+function sequenceNumThroughSnapshot(
+  snapshots: readonly GraphSnapshot[],
+  events: readonly EventEnvelope[],
+  frameIndex: number,
+): number | undefined {
+  if (events.length === 0) return undefined;
+  if (snapshots.length === 0) return events[events.length - 1]?.sequence_num;
+
+  const frame = Math.max(0, Math.min(frameIndex, snapshots.length - 1));
+  if (frame === snapshots.length - 1) {
+    return events[events.length - 1]?.sequence_num;
+  }
+
+  const snapshot = snapshots[frame];
+  const spanStartSeq = snapshot.source_event_id
+    ? events.find((event) => event.id === snapshot.source_event_id)?.sequence_num
+    : undefined;
+  const linkedSeq =
+    snapshot.source_event_sequence_num !== undefined &&
+    snapshot.source_event_sequence_num !== snapshot.sequence_num
+      ? snapshot.source_event_sequence_num
+      : spanStartSeq;
+
+  return maxSequenceThroughTimestamp(events, snapshot.timestamp, linkedSeq);
+}
+
+function toCompatibilityActivity(
+  activity: RuntimeExplanationProjection['activities'][number],
+): RuntimeActivity {
+  return {
+    id: activity.id,
+    kind: activity.kind,
+    label: activity.title,
+    title: activity.title,
+    subtitle: activity.subtitle,
+    action: activity.action,
+    outcome:
+      activity.status === 'failed' ? 'Failed'
+        : activity.status === 'waiting' ? 'Waiting'
+          : activity.status === 'completed' ? 'Completed'
+            : 'Active',
+    status: activity.status === 'waiting' ? 'waiting' : activity.status,
+    sequence_num: activity.sequence_num,
+    timestamp: activity.started_at ?? activity.ended_at,
+    duration_ms: activity.duration_ms,
+    actor: activity.actor,
+    source_span_id: activity.source_span_id,
+    parent_span_id: activity.parent_span_id,
+    invocation_id: activity.invocation_id,
+    operator_facing_record: activity.operator_facing_record,
+    story_critical: activity.story_critical,
+    story_critical_limitation: activity.story_critical_limitation,
+    provenance: 'projection',
+  };
+}
+
+function attachExplanationToNodes(
+  nodes: GraphSnapshot['nodes'],
+  explanation: RuntimeExplanationProjection,
+): GraphSnapshot['nodes'] {
+  const activitiesBySpanId = new Map<string, RuntimeExplanationProjection['activities']>();
+  for (const activity of explanation.activities) {
+    if (!activity.source_span_id) continue;
+    const current = activitiesBySpanId.get(activity.source_span_id) ?? [];
+    current.push(activity);
+    activitiesBySpanId.set(activity.source_span_id, current);
+  }
+
+  return nodes.map((node) => {
+    const spanId = node.source_span_id ?? node.span_id;
+    const activities = spanId ? activitiesBySpanId.get(spanId) ?? [] : [];
+    if (activities.length !== 1) {
+      return {
+        ...node,
+        activity: undefined,
+      };
+    }
+    return {
+      ...node,
+      activity: toCompatibilityActivity(activities[0]),
+    };
+  });
+}
+
+function annotateReplayWithExplanation(
+  replay: ReplayStateResponse,
+): ReplayStateResponse {
+  const events = replay.events as EventEnvelope[];
+  const snapshots = replay.snapshots.map((snapshot, index) => {
+    const cutoff = sequenceNumThroughSnapshot(replay.snapshots, events, index);
+    const explanation = projectRuntimeExplanation({
+      mission_id: replay.mission_id,
+      branch_id: replay.branch_id,
+      events,
+      as_of_sequence_num: cutoff,
+    });
+    return {
+      ...snapshot,
+      nodes: attachExplanationToNodes(snapshot.nodes, explanation),
+    };
+  });
+
+  const lastSnapshot = snapshots[snapshots.length - 1] ?? null;
+  return {
+    ...replay,
+    snapshots,
+    current_state: replay.current_state
+      ? {
+          ...replay.current_state,
+          nodes: lastSnapshot?.nodes ?? replay.current_state.nodes,
+          edges: lastSnapshot?.edges ?? replay.current_state.edges,
+          sequence_num: lastSnapshot?.sequence_num ?? replay.current_state.sequence_num,
+        }
+      : null,
+  };
 }
 
 export interface ReviewRecord {
@@ -397,6 +500,26 @@ class MissionStore {
     return result.rows.map((row) => this.mapSpanRow(row as Record<string, unknown>));
   }
 
+  private async listSpansForBranchesInternal(
+    client: PoolClient,
+    missionId: string,
+    branchIds: string[],
+  ): Promise<Array<OtlpSpan & { branch_id: string }>> {
+    const result = await client.query(
+      `
+        SELECT *
+        FROM spans
+        WHERE mission_id = $1 AND branch_id = ANY($2)
+        ORDER BY start_time_unix_nano ASC
+      `,
+      [missionId, branchIds],
+    );
+    return result.rows.map((row) => ({
+      ...this.mapSpanRow(row as Record<string, unknown>),
+      branch_id: String((row as Record<string, unknown>).branch_id ?? ROOT_BRANCH_ID),
+    }));
+  }
+
   private async listReplayBranchesInternal(client: PoolClient, missionId: string): Promise<ReplayBranch[]> {
     const result = await client.query(
       `
@@ -426,7 +549,8 @@ class MissionStore {
         },
       };
     }
-    const events = sequenceNum !== undefined ? replay.events.filter((e) => e.sequence_num <= sequenceNum) : replay.events;
+    const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId);
+    const events = sequenceNum !== undefined ? selectedEvents.filter((e) => e.sequence_num <= sequenceNum) : selectedEvents;
     return {
       events,
       integrity: {
@@ -573,16 +697,12 @@ class MissionStore {
       missionIdInput ??
       attributeValue(resourceAttributes, MissionAttributes.ID) ??
       spans.map((span) => attributeValue(span.attributes, MissionAttributes.ID)).find(Boolean) ??
-      spans.map((span) => attributeValue(span.attributes, 'basestation.aiops.mission.id')).find(Boolean) ??
       randomUUID();
     const missionId = isUuid(discoveredMissionId) ? discoveredMissionId : stableUuidFromText(discoveredMissionId);
     const objective =
       attributeValue(resourceAttributes, MissionAttributes.OBJECTIVE) ??
       spans.map((span) => attributeValue(span.attributes, MissionAttributes.OBJECTIVE)).find(Boolean) ??
-      spans.map((span) => attributeValue(span.attributes, 'basestation.aiops.workflow.id')).find(Boolean) ??
       'Auto-created mission';
-    const alarmContext = extractAlarmContext(resourceAttributes, spans);
-    const resolvedObjective = objectiveWithAlarmContext(objective, alarmContext);
     const phase =
       attributeValue(resourceAttributes, MissionAttributes.PHASE) ??
       spans.map((span) => attributeValue(span.attributes, MissionAttributes.PHASE)).find(Boolean) ??
@@ -606,10 +726,9 @@ class MissionStore {
           SET phase = EXCLUDED.phase,
               updated_at = NOW()
         `,
-        [missionId, resolvedObjective, phase, JSON.stringify({
+        [missionId, objective, phase, JSON.stringify({
           source: 'otel',
           resource_attributes: resourceAttributes,
-          ...(alarmContext ? { alarm: alarmContext } : {}),
         })],
       );
       await this.ensureBranch(client, missionId, ROOT_BRANCH_ID);
@@ -710,19 +829,45 @@ class MissionStore {
       if (!safeBranches.some((branch) => branch.id === branchId)) {
         return null;
       }
+      const lineage = buildBranchLineage(safeBranches, branchId);
+      const branchIds = lineage.length > 0 ? lineage.map((branch) => branch.id) : [branchId];
 
       // 1. Fetch raw spans from database
-      const spans = await this.listSpansInternal(client, missionId, branchId);
+      const spans = await this.listSpansForBranchesInternal(client, missionId, branchIds);
 
       // 2. Fetch interrupts from database
       const interruptsRes = await client.query(
-        `SELECT * FROM interrupts WHERE mission_id = $1 AND branch_id = $2`,
-        [missionId, branchId]
+        `SELECT * FROM interrupts WHERE mission_id = $1 AND branch_id = ANY($2)`,
+        [missionId, branchIds]
       );
       const interrupts = interruptsRes.rows;
 
       // 3. Project in memory
-      const replay = projectReplay(missionId, branchId, spans, interrupts);
+      const lineageReplay = projectReplay(missionId, branchId, spans, interrupts);
+      const selectedEvents = selectEventsForBranch(lineageReplay.events, safeBranches, branchId) as EventEnvelope[];
+      const selectedSpanIds = new Set(
+        selectedEvents
+          .map((event) => event.span_id)
+          .filter((spanId): spanId is string => typeof spanId === 'string' && spanId.length > 0),
+      );
+      const selectedInterruptIds = new Set(
+        selectedEvents
+          .map((event) => {
+            const payload = (event.payload ?? {}) as Record<string, unknown>;
+            return typeof payload.interrupt_id === 'string' && payload.interrupt_id.length > 0
+              ? payload.interrupt_id
+              : null;
+          })
+          .filter((interruptId): interruptId is string => interruptId !== null),
+      );
+      const filteredSpans = spans.filter((span) => selectedSpanIds.has(span.span_id));
+      const filteredInterrupts = interrupts.filter((interrupt) =>
+        selectedInterruptIds.has(String(interrupt.interrupt_id))
+        || (interrupt.span_id ? selectedSpanIds.has(String(interrupt.span_id)) : false),
+      );
+      const replay = annotateReplayWithExplanation(
+        projectReplay(missionId, branchId, filteredSpans, filteredInterrupts),
+      );
       return {
         ...replay,
         branches: safeBranches,
@@ -772,7 +917,7 @@ class MissionStore {
   async listMissionEvents(missionId: string, branchId = ROOT_BRANCH_ID): Promise<MissionEventRecord[] | null> {
     const replay = await this.getReplayFromTelemetry(missionId, branchId);
     if (!replay) return null;
-    return replay.events;
+    return selectEventsForBranch(replay.events, replay.branches, branchId);
   }
 
   async createReplayBranch(missionId: string, input: CreateReplayBranchInput): Promise<ReplayBranch | null> {
@@ -893,18 +1038,45 @@ class MissionStore {
 
     const replay = await this.getReplayFromTelemetry(missionId, branchId);
     if (!replay) return null;
+    const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId) as EventEnvelope[];
+    const explanation = projectRuntimeExplanation({
+      mission_id: missionId,
+      branch_id: branchId,
+      events: selectedEvents,
+      as_of_sequence_num: upToSequenceNum,
+    });
 
     const input = {
       mission_id: missionId,
       branch_id: branchId,
       objective: mission.objective,
-      status: replay.current_state?.status ?? mission.status,
+      status: explanation.run_outcome,
       phase: replay.current_state?.phase ?? mission.phase,
-      events: replay.events,
+      events: selectedEvents,
       up_to_sequence_num: upToSequenceNum,
     };
 
     return buildRuntimeSummaryWithOptionalLlm(input, useLlm);
+  }
+
+  async getRuntimeExplanation(
+    missionId: string,
+    branchId = ROOT_BRANCH_ID,
+    upToSequenceNum?: number,
+  ): Promise<RuntimeExplanationProjection | null> {
+    const mission = await this.getMission(missionId);
+    if (!mission) return null;
+
+    const replay = await this.getReplayFromTelemetry(missionId, branchId);
+    if (!replay) return null;
+
+    const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId) as EventEnvelope[];
+    return projectRuntimeExplanation({
+      mission_id: missionId,
+      branch_id: branchId,
+      events: selectedEvents,
+      as_of_sequence_num: upToSequenceNum,
+    });
   }
 
   async getNodeProjection(
@@ -918,12 +1090,13 @@ class MissionStore {
 
     const replay = await this.getReplayFromTelemetry(missionId, branchId);
     if (!replay) return null;
+    const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId);
 
     return buildNodeProjection({
       mission_id: missionId,
       branch_id: branchId,
       agent_id: agentId,
-      events: replay.events,
+      events: selectedEvents,
       up_to_sequence_num: upToSequenceNum,
     });
   }

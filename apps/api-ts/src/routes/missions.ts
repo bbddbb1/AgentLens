@@ -152,6 +152,11 @@ missionsRouter.post('/api/v1/ingest/otlp', async (req, res) => {
         void publishMissionEvent(missionId, 'runtime.summary.updated', { runtime_summary: runtimeSummary });
       }
     }).catch(() => undefined);
+    void missionStore.getRuntimeExplanation(missionId, branchId).then((runtimeExplanation) => {
+      if (runtimeExplanation) {
+        void publishMissionEvent(missionId, 'runtime.explanation.updated', { runtime_explanation: runtimeExplanation });
+      }
+    }).catch(() => undefined);
     void missionStore.scheduleNodeProjectionEnhancements(missionId, branchId).catch(() => undefined);
   }
 
@@ -183,6 +188,11 @@ missionsRouter.post('/v1/traces', async (req, res) => {
         void publishMissionEvent(missionId, 'runtime.summary.updated', { runtime_summary: runtimeSummary });
       }
     }).catch(() => undefined);
+    void missionStore.getRuntimeExplanation(missionId, branchId).then((runtimeExplanation) => {
+      if (runtimeExplanation) {
+        void publishMissionEvent(missionId, 'runtime.explanation.updated', { runtime_explanation: runtimeExplanation });
+      }
+    }).catch(() => undefined);
     void missionStore.scheduleNodeProjectionEnhancements(missionId, branchId).catch(() => undefined);
   }
 
@@ -203,4 +213,3 @@ missionsRouter.get('/api/v1/missions/:missionId/graph/snapshots', async (req, re
   if (!snapshots) return res.status(404).json({ detail: 'Mission not found' });
   return res.json({ snapshots, offset, limit, count: snapshots.length });
 });
-

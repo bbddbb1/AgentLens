@@ -16,7 +16,15 @@ import {
   Telescope,
   XCircle,
 } from 'lucide-react';
-import type { MissionEventRecord, ReplayBranch, ReplayStateResponse, RuntimeState, RuntimeSummary } from '@agentlens/protocol';
+import type {
+  RuntimeExplanationActivity,
+  MissionEventRecord,
+  ReplayBranch,
+  ReplayStateResponse,
+  RuntimeExplanationProjection,
+  RuntimeState,
+  RuntimeSummary,
+} from '@agentlens/protocol';
 import { AiAssistant } from '@/components/ai/AiAssistant';
 import { CanvasToolbar } from '@/components/graph/CanvasToolbar';
 import { MissionGraph } from '@/components/graph/MissionGraph';
@@ -27,6 +35,9 @@ import { WorkspaceShell } from '@/components/layout/WorkspaceShell';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { api } from '@/lib/api';
+import { matchNodeToActivity, resolveSelectedActivity } from '@/lib/runtimeFocus';
+import { sequenceNumThroughFrame } from '@/lib/replayFrame';
+import { selectedFrameAuthority } from '@/lib/runtimeAuthority';
 import { useGraphStore, type GraphSnapshot } from '@/stores/graphStore';
 import type { Mission } from '@/stores/missionStore';
 import { useReplayStore } from '@/stores/replayStore';
@@ -352,21 +363,99 @@ const statusConfig: Record<string, { icon: React.ReactNode; color: string; label
   paused: { icon: <PauseCircle size={12} />, color: '#fbbf24', label: 'Paused' },
 };
 
+export function CurrentEventAuthorityCard({
+  currentSnapshot,
+  runtimeSummary,
+  runtimeExplanation = null,
+  selectedActivity: selectedActivityOverride = null,
+}: {
+  currentSnapshot: GraphSnapshot;
+  runtimeSummary: RuntimeSummary | null;
+  runtimeExplanation?: RuntimeExplanationProjection | null;
+  selectedActivity?: RuntimeExplanationActivity | null;
+}) {
+  const selectedNodeId = useGraphStore((state) => state.selectedNodeId);
+  const selectedEventId = useReplayStore((state) => state.selectedEventId);
+  const selectedActivityId = useReplayStore((state) => state.selectedActivityId);
+
+  const selectedActivity = useMemo<RuntimeExplanationActivity | null>(() => {
+    if (selectedActivityOverride) return selectedActivityOverride;
+    return resolveSelectedActivity(
+      runtimeExplanation,
+      currentSnapshot,
+      selectedActivityId,
+      selectedNodeId,
+      selectedEventId,
+    );
+  }, [currentSnapshot, runtimeExplanation, selectedActivityOverride, selectedActivityId, selectedEventId, selectedNodeId]);
+
+  const authority = selectedFrameAuthority(runtimeSummary, selectedActivity);
+  const authorityDisclosure = authority.incompatibilities.length > 0
+    ? 'selected-frame authority incompatible'
+    : authority.status && authority.phase
+    ? `status ${authority.status} | phase ${authority.phase.label} (${authority.phase.basis})`
+    : 'selected-frame authority unavailable';
+  const selectedActivityDisclosure = selectedActivity
+    ? `${selectedActivity.operator_facing_record?.primary_label ?? selectedActivity.title} | ${selectedActivity.operator_facing_record?.action.value ?? selectedActivity.action} | ${selectedActivity.status}`
+    : runtimeExplanation?.selected_activity_state?.kind === 'overview'
+      ? 'Frame overview | no authoritative selected activity'
+    : runtimeExplanation && runtimeExplanation.activities.length === 0
+      ? 'No selectable activity at this frame'
+      : 'No authoritative selected activity';
+  const incompatibilityDisclosure = authority.incompatibilities.length > 0
+    ? `Authority incompatibility: ${authority.incompatibilities.join('; ')}`
+    : null;
+
+  return (
+    <div className="absolute bottom-4 left-4 z-10 max-w-sm rounded-2xl border border-[rgba(255,255,255,0.06)] bg-[rgba(10,11,16,0.82)] px-4 py-3 shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-[#7b819f]">
+        Current Event
+      </div>
+      <div className="mt-1 text-[13px] font-medium text-[#eef1fa]">
+        {currentSnapshot.event_description ?? currentSnapshot.event_type ?? 'Replay frame'}
+      </div>
+      <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-[#68708f]">
+        Recorded event metadata
+      </div>
+      <div className="mt-1 text-[11px] text-[#8f95b2]">
+        {new Date(currentSnapshot.timestamp).toLocaleString()} | {authorityDisclosure}
+      </div>
+      <div className="mt-1 text-[11px] text-[#8f95b2]">
+        Selected activity | {selectedActivityDisclosure}
+      </div>
+      {incompatibilityDisclosure && (
+        <div className="mt-2 text-[11px] text-[#fbbf24]">{incompatibilityDisclosure}</div>
+      )}
+    </div>
+  );
+}
+
 export default function MissionWorkspacePage() {
-  const { setSnapshots, applySnapshot, snapshots, visibleEdgeCount, totalEdgeCount, zoomBand } = useGraphStore();
+  const { setSnapshots, applySnapshot, snapshots, visibleEdgeCount, totalEdgeCount, zoomBand, setSelectedNodeId, selectedNodeId } = useGraphStore();
   const currentFrame = useReplayStore((state) => state.currentFrame);
   const branches = useReplayStore((state) => state.branches);
   const currentBranchId = useReplayStore((state) => state.currentBranchId);
   const currentState = useReplayStore((state) => state.currentState);
+  const events = useReplayStore((state) => state.events);
   const setReplayData = useReplayStore((state) => state.setReplayData);
   const setCurrentFrame = useReplayStore((state) => state.setCurrentFrame);
+  const selectedEventId = useReplayStore((state) => state.selectedEventId);
+  const selectedActivityId = useReplayStore((state) => state.selectedActivityId);
+  const setSelectedActivityId = useReplayStore((state) => state.setSelectedActivityId);
+  const setSelectedEventId = useReplayStore((state) => state.setSelectedEventId);
+  const setActivityContextState = useReplayStore((state) => state.setActivityContextState);
   const { isGraphFullscreen, setIsGraphFullscreen } = useLayoutStore();
   const [mission, setMission] = useState<Mission | null>(null);
   const [missionLoadError, setMissionLoadError] = useState<string | null>(null);
   const [runtimeSummary, setRuntimeSummary] = useState<RuntimeSummary | null>(null);
+  const [runtimeExplanation, setRuntimeExplanationState] = useState<RuntimeExplanationProjection | null>(null);
   const [isEnhancingSummary, setIsEnhancingSummary] = useState(false);
   const params = useParams<{ id?: string }>();
   const missionId = Array.isArray(params?.id) ? params.id[0] : params?.id ?? 'demo-mission';
+  const frameSequenceNum = useMemo(
+    () => sequenceNumThroughFrame(snapshots, events, currentFrame),
+    [snapshots, events, currentFrame],
+  );
 
   const syncReplayToGraph = useCallback((replay: ReplayStateResponse) => {
     // Inject pending interrupt flags into snapshots so nodes can render badges
@@ -402,6 +491,8 @@ export default function MissionWorkspacePage() {
       syncReplayToGraph(demoReplay);
       setMission(null);
       setMissionLoadError(null);
+      setRuntimeSummary(null);
+      setRuntimeExplanationState(null);
       return;
     }
 
@@ -414,14 +505,6 @@ export default function MissionWorkspacePage() {
     setMissionLoadError(null);
     syncReplayToGraph(replay);
 
-    if (missionId !== 'demo-mission') {
-      try {
-        const summary = await api.runtimeSummary.get(missionId, { branchId: branchId ?? replay.branch_id });
-        setRuntimeSummary(summary);
-      } catch {
-        setRuntimeSummary(null);
-      }
-    }
   }, [missionId, syncReplayToGraph]);
 
   useEffect(() => {
@@ -434,6 +517,8 @@ export default function MissionWorkspacePage() {
         const demoReplay = buildDemoReplay();
         setMission(null);
         setMissionLoadError(cause instanceof Error ? cause.message : 'Failed to load mission.');
+        setRuntimeExplanationState(null);
+        setRuntimeSummary(null);
         syncReplayToGraph(demoReplay);
       }
     };
@@ -453,6 +538,92 @@ export default function MissionWorkspacePage() {
   }, [applySnapshot, currentFrame, snapshots]);
 
   useEffect(() => {
+    if (!missionId || missionId === 'demo-mission') {
+      setRuntimeSummary(null);
+      setRuntimeExplanationState(null);
+      return;
+    }
+    if (!currentBranchId || frameSequenceNum === undefined) {
+      setRuntimeSummary(null);
+      setRuntimeExplanationState(null);
+      return;
+    }
+
+    let active = true;
+    void Promise.all([
+      api.runtimeSummary.get(missionId, { branchId: currentBranchId, sequenceNum: frameSequenceNum }),
+      api.runtimeExplanation.get(missionId, { branchId: currentBranchId, sequenceNum: frameSequenceNum }),
+    ]).then(([summary, explanation]) => {
+      if (!active) return;
+      setRuntimeSummary(summary);
+      setRuntimeExplanationState(explanation);
+    }).catch(() => {
+      if (!active) return;
+      setRuntimeSummary(null);
+      setRuntimeExplanationState(null);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [currentBranchId, frameSequenceNum, missionId]);
+
+  useEffect(() => {
+    const snapshot = snapshots[currentFrame] ?? snapshots[snapshots.length - 1] ?? null;
+    const selectedActivity = resolveSelectedActivity(
+      runtimeExplanation,
+      snapshot,
+      selectedActivityId,
+      selectedNodeId,
+      selectedEventId,
+    );
+
+    if (!runtimeExplanation) {
+      setActivityContextState(null);
+      return;
+    }
+    setActivityContextState(runtimeExplanation.selected_activity_state ?? null);
+    if (runtimeExplanation.selected_activity_state?.kind === 'no_activity' || runtimeExplanation.activities.length === 0) {
+      setSelectedActivityId(null);
+      setSelectedEventId(null);
+      setSelectedNodeId(null);
+      return;
+    }
+
+    if (
+      runtimeExplanation.selected_activity_state?.kind === 'overview'
+      && !selectedActivityId
+      && !selectedNodeId
+      && !selectedEventId
+    ) {
+      return;
+    }
+
+    if (!selectedActivity) return;
+    const resolvedNode = matchNodeToActivity(snapshot, selectedActivity);
+    if (selectedActivityId !== selectedActivity.id) {
+      setSelectedActivityId(selectedActivity.id);
+    }
+    if (selectedActivity.evidence_refs[0]?.event_id && selectedEventId !== selectedActivity.evidence_refs[0].event_id) {
+      setSelectedEventId(selectedActivity.evidence_refs[0].event_id);
+    }
+    if (resolvedNode?.id && selectedNodeId !== resolvedNode.id) {
+      setSelectedNodeId(resolvedNode.id);
+    }
+  }, [
+    currentFrame,
+    runtimeExplanation,
+    selectedActivityId,
+    selectedEventId,
+    selectedNodeId,
+    setActivityContextState,
+    setSelectedActivityId,
+    setSelectedEventId,
+    setSelectedNodeId,
+    snapshots,
+  ]);
+
+  useEffect(() => {
     if (!missionId || missionId === 'demo-mission') return;
 
     const ws = new WebSocket(`${websocketBaseUrl()}/ws/missions/${missionId}`);
@@ -462,6 +633,7 @@ export default function MissionWorkspacePage() {
           type: string;
           mission?: Mission;
           runtime_summary?: unknown;
+          runtime_explanation?: unknown;
           branch?: { id: string };
           snapshot?: { branch_id: string };
           interrupt?: { branch_id: string };
@@ -474,13 +646,24 @@ export default function MissionWorkspacePage() {
         const reloadTypes = [
           'graph.snapshot.created', 'interrupt.created', 'interrupt.decided', 'interrupt.resumed',
           'branch.sandbox.queued', 'branch.sandbox.started', 'branch.sandbox.completed', 'branch.sandbox.failed', 'branch.sandbox.timeout',
-          'runtime.summary.updated',
         ];
         
-        if (message.type === 'runtime.summary.updated' && message.runtime_summary) {
+        if (
+          message.type === 'runtime.summary.updated'
+          && message.runtime_summary
+          && (message.runtime_summary as RuntimeSummary).sequence_num === frameSequenceNum
+        ) {
           setRuntimeSummary(message.runtime_summary as RuntimeSummary);
         }
-        
+        if (
+          message.type === 'runtime.explanation.updated'
+          && message.runtime_explanation
+          && (message.runtime_explanation as RuntimeExplanationProjection).as_of_sequence_num === frameSequenceNum
+        ) {
+          const explanation = message.runtime_explanation as RuntimeExplanationProjection;
+          setRuntimeExplanationState(explanation);
+        }
+
         if (reloadTypes.includes(message.type)) {
           const msgBranchId = message.branch?.id || message.snapshot?.branch_id || message.interrupt?.branch_id || message.job?.branch_id;
           if (!msgBranchId || msgBranchId === currentBranchId) {
@@ -493,7 +676,7 @@ export default function MissionWorkspacePage() {
     };
 
     return () => ws.close();
-  }, [currentBranchId, loadReplay, missionId]);
+  }, [currentBranchId, frameSequenceNum, loadReplay, missionId]);
 
   const handleEnhanceSummary = useCallback(async () => {
     if (!missionId || missionId === 'demo-mission') return;
@@ -565,16 +748,16 @@ export default function MissionWorkspacePage() {
         leftPanel={
           <div className="flex flex-col h-full min-h-0">
             <RuntimeSummaryPanel
-              missionId={missionId}
               objective={mission?.objective ?? 'Mission overview'}
               missionStatus={missionStatus}
               missionPhase={currentState?.phase ?? mission?.phase ?? 'executing'}
               serverSummary={runtimeSummary}
+              serverExplanation={runtimeExplanation}
               onEnhance={missionId !== 'demo-mission' ? handleEnhanceSummary : undefined}
               isEnhancing={isEnhancingSummary}
             />
             <div className="flex-1 min-h-0 overflow-hidden">
-              <MissionTimeline />
+              <MissionTimeline explanation={runtimeExplanation} />
             </div>
           </div>
         }
@@ -601,17 +784,11 @@ export default function MissionWorkspacePage() {
             )}
 
             {currentSnapshot && (
-              <div className="absolute bottom-4 left-4 z-10 max-w-sm rounded-2xl border border-[rgba(255,255,255,0.06)] bg-[rgba(10,11,16,0.82)] px-4 py-3 shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-[#7b819f]">
-                  Current Event
-                </div>
-                <div className="mt-1 text-[13px] font-medium text-[#eef1fa]">
-                  {currentSnapshot.event_description ?? currentSnapshot.event_type ?? 'Replay frame'}
-                </div>
-                <div className="mt-2 text-[11px] text-[#8f95b2]">
-                  {new Date(currentSnapshot.timestamp).toLocaleString()} • phase {currentSnapshot.phase ?? currentState?.phase ?? 'executing'}
-                </div>
-              </div>
+              <CurrentEventAuthorityCard
+                currentSnapshot={currentSnapshot}
+                runtimeSummary={runtimeSummary}
+                runtimeExplanation={runtimeExplanation}
+              />
             )}
           </div>
         }
@@ -621,6 +798,8 @@ export default function MissionWorkspacePage() {
             onBranchChange={loadReplay}
             missionObjective={mission?.objective ?? 'Mission overview'}
             missionStatus={missionStatus}
+            runtimeExplanation={runtimeExplanation}
+            runtimeSummary={runtimeSummary}
           />
         }
         bottomPanel={

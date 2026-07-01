@@ -1,17 +1,20 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import type { RuntimeSummary } from '@agentlens/protocol';
 import { GitBranch, Plus, Waypoints, Bot, AlertTriangle, Sparkles, Loader2, ChevronDown, ChevronUp, X, Settings } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useGraphStore } from '@/stores/graphStore';
 import { useReplayStore } from '@/stores/replayStore';
 import { eventAtFrame, eventsThroughFrame } from '@/lib/replayFrame';
+import { selectedFrameAuthority } from '@/lib/runtimeAuthority';
 
 interface BranchExplorerProps {
   missionId: string;
   onBranchChange: (branchId: string) => Promise<void>;
   isCollapsed: boolean;
   onToggleCollapsed: () => void;
+  runtimeSummary?: RuntimeSummary | null;
 }
 
 interface BranchJob {
@@ -34,6 +37,18 @@ function formatEventLabel(eventType: string): string {
   return eventType.replace(/[._]/g, ' ');
 }
 
+function payloadString(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function displayValue(value: unknown): string | number | undefined {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return value;
+  }
+  return undefined;
+}
+
 export function isEventBranchable(eventType?: string): boolean {
   if (!eventType) return false;
   return [
@@ -45,7 +60,7 @@ export function isEventBranchable(eventType?: string): boolean {
   ].includes(eventType);
 }
 
-export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: BranchExplorerProps) {
+export function BranchExplorer({ missionId, onBranchChange, isCollapsed, runtimeSummary = null }: BranchExplorerProps) {
   const { snapshots, selectedNodeId } = useGraphStore();
   const {
     branches,
@@ -67,6 +82,10 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
     () => eventsThroughFrame(snapshots, events, currentFrame),
     [snapshots, events, currentFrame],
   );
+  const frameAuthority = selectedFrameAuthority(runtimeSummary);
+  const authoritativePhase = frameAuthority.phase;
+  const authoritativeStatus = frameAuthority.status;
+  const hasAuthorityConflict = frameAuthority.incompatibilities.length > 0;
 
   useEffect(() => {
     if (!missionId || missionId === 'demo-mission') return;
@@ -137,14 +156,14 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
     const matchedEvent = [...activeEvents].reverse().find((e) => {
       const payload = e.payload as Record<string, unknown>;
       if (e.agent_id?.toLowerCase() === target) return true;
-      if (payload?.agent_id?.toLowerCase() === target) return true;
-      if (payload?.task_id?.toLowerCase() === target) return true;
-      if (payload?.tool_name?.toLowerCase() === target) return true;
+      if (payloadString(payload, 'agent_id')?.toLowerCase() === target) return true;
+      if (payloadString(payload, 'task_id')?.toLowerCase() === target) return true;
+      if (payloadString(payload, 'tool_name')?.toLowerCase() === target) return true;
       if (e.span_id?.toLowerCase() === target) return true;
       
       if (matchedNode) {
         if (e.span_id === matchedNode.span_id) return true;
-        if (e.agent_id === matchedNode.id || payload?.agent_id === matchedNode.id) return true;
+        if (e.agent_id === matchedNode.id || payloadString(payload, 'agent_id') === matchedNode.id) return true;
       }
       return false;
     });
@@ -294,12 +313,10 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
 
     setIsPayloadOpen(false);
     setPayloadJson('');
-    setJsonError(null);
 
     setStateOverrideEnabled(false);
     setStateTarget('');
     setStatePayloadJson('');
-    setStateJsonError(null);
     setIsCurrentStatePanelOpen(false);
   };
 
@@ -498,8 +515,13 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
                 <div className="text-[8px] uppercase tracking-[0.12em] text-[#818cf8] font-bold">Phase</div>
                 <div className="text-[12px] font-semibold text-white tracking-wide uppercase flex items-center gap-1.5 mt-1 truncate">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#818cf8]" />
-                  {currentSnapshot?.phase ?? currentState?.phase ?? 'executing'}
+                  {hasAuthorityConflict ? 'Incompatible' : authoritativePhase?.label ?? 'Unavailable'}
                 </div>
+                {hasAuthorityConflict ? (
+                  <div className="mt-1 text-[9px] text-[#fbbf24]">Authority mismatch</div>
+                ) : authoritativePhase ? (
+                  <div className="mt-1 text-[9px] text-[#8f95b2]">{authoritativePhase.basis}</div>
+                ) : null}
               </div>
 
               {/* Status */}
@@ -507,7 +529,7 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
                 <div className="text-[8px] uppercase tracking-[0.12em] text-[#10b981] font-bold">Runtime Status</div>
                 <div className="text-[12px] font-semibold text-white tracking-wide uppercase flex items-center gap-1.5 mt-1 truncate">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#34d399]" />
-                  {currentState?.status ?? 'active'}
+                  {hasAuthorityConflict ? 'Incompatible' : authoritativeStatus ?? 'Unavailable'}
                 </div>
               </div>
 
@@ -898,7 +920,7 @@ export function BranchExplorer({ missionId, onBranchChange, isCollapsed }: Branc
                                   <div className="space-y-1.5">
                                     <div className="flex items-center justify-between">
                                       <span className="text-[9px] uppercase tracking-[0.05em] text-[#5d6180]">
-                                        State resolved at sequence #{(fetchedNodeState as Record<string, unknown>).sequence_num ?? fromSequence}
+                                        State resolved at sequence #{displayValue((fetchedNodeState as Record<string, unknown>).sequence_num) ?? fromSequence}
                                       </span>
                                       <div className="flex items-center gap-3">
                                         <button

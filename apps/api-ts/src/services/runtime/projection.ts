@@ -65,57 +65,36 @@ function originFrameworkFromAttrs(attrs: Record<string, any>): string | undefine
   return value !== undefined && value !== null ? String(value) : undefined;
 }
 
-/** Map BSOps `basestation.aiops.*` span events to AgentLens event types. */
-const BASESTATION_EVENT_MAP: Record<string, string> = {
-  'basestation.aiops.workflow.started': 'mission.created',
-  'basestation.aiops.workflow.completed': 'mission.status_changed',
-  'basestation.aiops.tool.output': 'tool.completed',
-  'basestation.aiops.evidence.collected': 'observation.recorded',
-  'basestation.aiops.hypothesis.proposed': 'hypothesis.proposed',
-  'basestation.aiops.decision.made': 'decision.made',
-  'basestation.aiops.artifact.created': 'artifact.created',
-};
+function normalizeCausalContext(
+  attrs: Record<string, any>,
+  parentSpanId?: string,
+): Record<string, unknown> | undefined {
+  const parsed = parseAttrJson(attrs['agentlens.causal'] ?? attrs['causal']);
+  const normalized = parsed && typeof parsed === 'object' ? { ...parsed } : {};
 
-function normalizeOtelEventType(name: string, attrs: Record<string, any> = {}): string {
-  if (name === 'basestation.aiops.state.transition') {
-    const transition = attrs['basestation.aiops.workflow.transition'];
-    if (transition === 'exit') return 'task.completed';
-    return 'task.started';
-  }
-  return BASESTATION_EVENT_MAP[name] ?? name;
-}
+  const toolCallId =
+    normalized['tool_call_id'] ??
+    attrs['causal.tool_call_id'] ??
+    attrs['tool_call_id'] ??
+    attrs['gen_ai.tool.call_id'] ??
+    attrs['basestation.aiops.tool.call_id'];
+  const triggeredByEventId =
+    normalized['triggered_by_event_id'] ??
+    attrs['causal.triggered_by_event_id'] ??
+    attrs['triggered_by_event_id'];
+  const decisionForEventId =
+    normalized['decision_for_event_id'] ??
+    attrs['causal.decision_for_event_id'] ??
+    attrs['decision_for_event_id'];
 
-function enrichNormalizedEventPayload(
-  eventType: string,
-  spanAttrs: Record<string, any>,
-  eventAttrs: Record<string, any>,
-): Record<string, any> {
-  const payload = { ...spanAttrs, ...eventAttrs };
-  if (eventType === 'mission.status_changed' && payload.status === undefined) {
-    payload.status = 'completed';
+  if (parentSpanId && normalized['parent_span_id'] === undefined) {
+    normalized['parent_span_id'] = parentSpanId;
   }
-  if (eventType === 'observation.recorded') {
-    const count =
-      eventAttrs['basestation.aiops.evidence.count'] ??
-      spanAttrs['basestation.aiops.evidence.count'];
-    if (count !== undefined && payload.insight === undefined) {
-      const n = Number(count);
-      payload.insight = `Collected ${n} evidence item${n === 1 ? '' : 's'}`;
-    }
-  }
-  if ((eventType === 'task.started' || eventType === 'task.completed') && payload.task === undefined) {
-    const stepName =
-      eventAttrs['basestation.aiops.workflow.step_name'] ??
-      spanAttrs['basestation.aiops.workflow.step_name'];
-    if (stepName !== undefined) payload.task = String(stepName);
-  }
-  if (eventType === 'artifact.created' && payload.artifact_name === undefined) {
-    const artifactType =
-      eventAttrs['basestation.aiops.artifact.type'] ??
-      spanAttrs['basestation.aiops.artifact.type'];
-    if (artifactType !== undefined) payload.artifact_name = String(artifactType);
-  }
-  return payload;
+  if (toolCallId !== undefined) normalized['tool_call_id'] = String(toolCallId);
+  if (triggeredByEventId !== undefined) normalized['triggered_by_event_id'] = String(triggeredByEventId);
+  if (decisionForEventId !== undefined) normalized['decision_for_event_id'] = String(decisionForEventId);
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
 function resolveSpanStartEventType(
@@ -202,7 +181,7 @@ function findAgentSpanId(agentId: string, spans: any[], currentSpanStartTime?: n
 
   for (const span of spans) {
     const attrs = span.attributes ?? {};
-    const sAgentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+    const sAgentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
     if (sAgentId === agentId) {
       if (currentSpanStartTime !== undefined) {
         const start = Number(span.start_time_unix_nano);
@@ -220,7 +199,7 @@ function findAgentSpanId(agentId: string, spans: any[], currentSpanStartTime?: n
   if (!bestSpan) {
     const fallback = spans.find((span) => {
       const attrs = span.attributes ?? {};
-      const sAgentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+      const sAgentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
       return sAgentId === agentId;
     });
     return fallback?.span_id;
@@ -237,6 +216,17 @@ function resolveNodeId(id: string, spans: any[], currentSpanStartTime?: number):
   return resolved ?? id;
 }
 
+function nodeLabel(nodeType: NodeType, label: string, attrs: Record<string, any>, tier: MaturityTier): string {
+  if (tier === 'L3' && nodeType === 'agent') {
+    return `Agent · ${label}`;
+  }
+  if (tier === 'L2' && attrs['gen_ai.request.model'] !== undefined) {
+    const provider = attrs['gen_ai.system'] !== undefined ? `${String(attrs['gen_ai.system'])} · ` : '';
+    return `LLM · ${provider}${String(attrs['gen_ai.request.model'])}`;
+  }
+  return label;
+}
+
 /**
  * Classifies a span into L1, L2, or L3 based on its attributes.
  */
@@ -244,11 +234,10 @@ export function classifySpan(span: any): MaturityTier {
   const attrs = span.attributes ?? {};
   const keys = Object.keys(attrs);
 
-  // L3: Custom AgentLens or BSOps attributes, or agent.span.kind
+  // L3: universal agent runtime attributes or AgentLens attributes.
   const hasL3 = keys.some(
     (k) =>
       k.startsWith('gen_ai.agent.') ||
-      k.startsWith('basestation.aiops.') ||
       k.startsWith('agentlens.') ||
       k === 'agent.span.kind'
   );
@@ -341,9 +330,8 @@ export function deriveProjectionProfile(
   ) {
     return 'checkpoint';
   }
-  // 8. Mission (specific op name only). `basestation.aiops.mission.id` is
-  //    carried by every span in the mission (it is the mission-grouping key)
-  //    and is NOT a profile signal — using it would mis-profile every node.
+  // 8. Mission is an AgentLens product container. Only its explicit operation
+  //    names select this profile; workload attributes are never profile signals.
   if (operationName === 'mission.execute' || operationName === 'mission.lifecycle') {
     return 'mission';
   }
@@ -353,8 +341,7 @@ export function deriveProjectionProfile(
     operationName === 'workflow.step' ||
     operationName === 'workflow.transition' ||
     attrs['gen_ai.workflow.id'] !== undefined ||
-    attrs['basestation.aiops.workflow.step_name'] !== undefined ||
-    attrs['basestation.aiops.workflow.transition'] !== undefined
+    attrs['gen_ai.workflow.step_id'] !== undefined
   ) {
     return 'workflow_step';
   }
@@ -409,6 +396,7 @@ export function projectTraceSnapshot(
   for (const span of visibleSpans) {
     const tier = classifySpan(span);
     const attrs = span.attributes ?? {};
+    const operationName = span.operation_name ?? span.name ?? 'span';
 
     // G7 & G8: Handoff & Review Edge projection from span.events (PR-3)
     if (Array.isArray(span.events)) {
@@ -418,7 +406,7 @@ export function projectTraceSnapshot(
         const eventName = event.name;
 
         if (eventName === 'agent.handoff.requested' || eventName === 'agent.delegation') {
-          const source = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+          const source = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
           const target = eventAttrs['gen_ai.agent.handoff.target'] ?? eventAttrs['target_agent_id'] ?? eventAttrs['gen_ai.agent.delegation.target'];
           if (source && target) {
             const resolvedSource = span.span_id;
@@ -442,7 +430,7 @@ export function projectTraceSnapshot(
           eventName === 'agent.review.changes_requested' ||
           eventName === 'agent.review.rejected'
         ) {
-          const source = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+          const source = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
           const target = eventAttrs['gen_ai.agent.review.target'] ?? eventAttrs['target_agent_id'];
           // STRICT RULE: If target is missing, do NOT create the edge (no fallback)
           if (source && target) {
@@ -465,11 +453,11 @@ export function projectTraceSnapshot(
       }
     }
 
-    // L3 Edges (span-based): only draw if explicitly instructed by agentlens.edge.* or basestation.aiops.edge.*
+    // L3 edges are projected only from universal/AgentLens relationship attributes.
     if (tier === 'L3') {
-      const source = attrs['agentlens.edge.source'] ?? attrs['basestation.aiops.edge.source'] ?? attrs['basestation.aiops.workflow.transition.source'] ?? attrs['gen_ai.agent.delegation.source'];
-      const target = attrs['agentlens.edge.target'] ?? attrs['basestation.aiops.edge.target'] ?? attrs['basestation.aiops.workflow.transition.target'] ?? attrs['gen_ai.agent.delegation.target'] ?? attrs['gen_ai.agent.review.target'];
-      const edgeType = attrs['agentlens.edge.type'] ?? attrs['basestation.aiops.edge.type'] ?? attrs['basestation.aiops.workflow.transition.type'] ?? attrs['gen_ai.agent.delegation.type'] ?? (attrs['agent.span.kind'] === 'agent.review' ? 'review' : 'transition');
+      const source = attrs['agentlens.edge.source'] ?? attrs['gen_ai.agent.delegation.source'];
+      const target = attrs['agentlens.edge.target'] ?? attrs['gen_ai.agent.delegation.target'] ?? attrs['gen_ai.agent.review.target'];
+      const edgeType = attrs['agentlens.edge.type'] ?? attrs['gen_ai.agent.delegation.type'] ?? (attrs['agent.span.kind'] === 'agent.review' ? 'review' : 'dependency');
 
       // STRICT RULE: If it's a review span kind and review target is missing, we must NOT project the edge!
       const isReviewSpan = attrs['agent.span.kind'] === 'agent.review';
@@ -496,7 +484,7 @@ export function projectTraceSnapshot(
     // Nodes
     const nodeId = span.span_id;
     let nodeType: NodeType = 'task';
-    let label = span.operation_name;
+    let label = operationName;
     const status: any = span.status_code === 'ERROR' ? 'failed' : span.status_code === 'OK' ? 'completed' : 'active';
     let agentId: string | undefined;
     let agentRole: string | undefined;
@@ -505,7 +493,7 @@ export function projectTraceSnapshot(
     let summary: string | undefined;
 
     if (tier === 'L3') {
-      const customType = attrs['agent.span.kind'] ?? attrs['agentlens.node.type'] ?? attrs['basestation.aiops.node.type'];
+      const customType = attrs['agent.span.kind'] ?? attrs['agentlens.node.type'];
       if (customType === 'agent' || customType === 'agent.orchestration' || customType === 'invoke_agent') {
         nodeType = 'agent';
       } else if (customType === 'tool' || customType === 'execute_tool') {
@@ -520,23 +508,23 @@ export function projectTraceSnapshot(
         nodeType = 'task';
       }
 
-      agentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
-      agentRole = attrs['gen_ai.agent.role'] ?? attrs['agentlens.agent.role'] ?? attrs['basestation.aiops.agent.role'];
-      agentTeam = attrs['gen_ai.agent.team'] ?? attrs['agentlens.agent.team'] ?? attrs['basestation.aiops.agent.team'];
-      const name = attrs['gen_ai.agent.name'] ?? attrs['agentlens.agent.name'] ?? attrs['basestation.aiops.agent.name'];
+      agentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
+      agentRole = attrs['gen_ai.agent.role'] ?? attrs['agentlens.agent.role'];
+      agentTeam = attrs['gen_ai.agent.team'] ?? attrs['agentlens.agent.team'];
+      const name = attrs['gen_ai.agent.name'] ?? attrs['agentlens.agent.name'];
       if (name) {
         label = String(name);
       }
 
-      const conf = attrs['gen_ai.agent.confidence'] ?? attrs['agentlens.agent.confidence'] ?? attrs['basestation.aiops.agent.confidence'];
+      const conf = attrs['gen_ai.agent.confidence'] ?? attrs['agentlens.agent.confidence'];
       if (conf !== undefined) {
         confidence = Number(conf);
       }
 
-      summary = attrs['gen_ai.agent.goal'] ?? attrs['gen_ai.agent.task'] ?? attrs['agentlens.agent.goal'] ?? attrs['basestation.aiops.agent.goal'];
+      summary = attrs['gen_ai.agent.goal'] ?? attrs['gen_ai.agent.task.description'] ?? attrs['agentlens.agent.goal'];
     } else if (tier === 'L2') {
       nodeType = 'tool';
-      label = attrs['gen_ai.system'] ? `${attrs['gen_ai.system']} (${attrs['gen_ai.request.model'] || 'LLM'})` : span.operation_name;
+      label = attrs['gen_ai.system'] ? `${attrs['gen_ai.system']} (${attrs['gen_ai.request.model'] || 'LLM'})` : operationName;
       const tokensIn = attrs['gen_ai.usage.input_tokens'];
       const tokensOut = attrs['gen_ai.usage.output_tokens'];
       if (tokensIn !== undefined || tokensOut !== undefined) {
@@ -544,16 +532,16 @@ export function projectTraceSnapshot(
       }
     } else {
       nodeType = 'task';
-      label = span.operation_name;
+      label = operationName;
     }
 
-    if (!addedNodes.has(nodeId)) {
-      addedNodes.add(nodeId);
-      const projectionProfile = deriveProjectionProfile(attrs, span.operation_name, nodeType);
+      if (!addedNodes.has(nodeId)) {
+        addedNodes.add(nodeId);
+        const projectionProfile = deriveProjectionProfile(attrs, operationName, nodeType);
       nodes.push({
         id: nodeId,
         type: nodeType,
-        label,
+        label: nodeLabel(nodeType, label, attrs, tier),
         status,
         position: { x: 0, y: 0 },
         agent_id: agentId,
@@ -638,7 +626,7 @@ export function projectReplay(
     snap.sequence_num = idx;
     const currentSpan = sortedSpans.find((s) => Number(s.start_time_unix_nano) === ts);
     if (currentSpan) {
-      snap.event_description = `Span started: ${currentSpan.operation_name}`;
+      snap.event_description = `Span started: ${currentSpan.operation_name ?? currentSpan.name ?? 'span'}`;
       snap.source_event_id = currentSpan.span_id;
       snap.source_event_sequence_num = idx;
     }
@@ -668,15 +656,17 @@ export function projectReplay(
     const tier = classifySpan(span);
     const startIso = new Date(Number(span.start_time_unix_nano) / 1e6).toISOString();
     const attrs = span.attributes ?? {};
-    const agentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'] ?? attrs['basestation.aiops.agent.id'];
+    const operationName = span.operation_name ?? span.name ?? 'span';
+    const agentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
+    const eventBranchId = span.branch_id ?? branchId;
 
     events.push({
       id: span.span_id,
       mission_id: missionId,
-      branch_id: branchId,
+      branch_id: eventBranchId,
       sequence_num: seq++,
       branch_sequence_num: seq,
-      event_type: resolveSpanStartEventType(tier, attrs, span.operation_name),
+      event_type: resolveSpanStartEventType(tier, attrs, operationName),
       timestamp: startIso,
       agent_id: agentId,
       span_id: span.span_id,
@@ -684,7 +674,7 @@ export function projectReplay(
       parent_span_id: span.parent_span_id ?? undefined,
       payload: {
         ...attrs,
-        operation_name: span.operation_name,
+        operation_name: operationName,
         duration_ms: span.end_time_unix_nano ? (Number(span.end_time_unix_nano) - Number(span.start_time_unix_nano)) / 1e6 : undefined,
       },
       metadata: {
@@ -693,7 +683,7 @@ export function projectReplay(
       actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
       actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
       origin_framework: originFrameworkFromAttrs(attrs),
-      causal: parseAttrJson(attrs['agentlens.causal'] ?? attrs['causal']) ?? (span.parent_span_id ? { parent_span_id: span.parent_span_id } : undefined),
+      causal: normalizeCausalContext(attrs, span.parent_span_id ?? undefined),
       model: assembleModelProvenance(attrs),
       error: assembleErrorProvenance(attrs, span),
       policy: parseAttrJson(attrs['agentlens.policy'] ?? attrs['policy'] ?? attrs['policy_decision']) ?? undefined,
@@ -710,13 +700,20 @@ export function projectReplay(
           : startIso;
 
         const eventAttrs = otelEvent.attributes ?? {};
-        const normalizedType = normalizeOtelEventType(otelEvent.name, eventAttrs);
-        const mergedPayload = enrichNormalizedEventPayload(normalizedType, attrs, eventAttrs);
+        const normalizedType = otelEvent.name;
+        const mergedPayload = {
+          ...attrs,
+          ...eventAttrs,
+          operation_name: operationName,
+          duration_ms: span.end_time_unix_nano
+            ? (Number(span.end_time_unix_nano) - Number(span.start_time_unix_nano)) / 1e6
+            : undefined,
+        };
         const mergedAttrs = { ...attrs, ...eventAttrs };
         events.push({
           id: `${span.span_id}-event-${eventIdx++}`,
           mission_id: missionId,
-          branch_id: branchId,
+          branch_id: eventBranchId,
           sequence_num: seq++,
           branch_sequence_num: seq,
           event_type: normalizedType,
@@ -732,6 +729,7 @@ export function projectReplay(
           actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
           actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
           origin_framework: originFrameworkFromAttrs(mergedAttrs),
+          causal: normalizeCausalContext(mergedAttrs, span.parent_span_id ?? undefined),
           model: assembleModelProvenance(mergedAttrs),
           error: assembleErrorProvenance(mergedAttrs, span),
           policy: parseAttrJson(mergedAttrs['agentlens.policy'] ?? mergedAttrs['policy'] ?? mergedAttrs['policy_decision']) ?? undefined,
@@ -746,7 +744,7 @@ export function projectReplay(
       events.push({
         id: `${span.span_id}-end`,
         mission_id: missionId,
-        branch_id: branchId,
+        branch_id: eventBranchId,
         sequence_num: seq++,
         branch_sequence_num: seq,
         event_type: span.status_code === 'ERROR' ? 'span.failed' : 'span.completed',
@@ -757,19 +755,19 @@ export function projectReplay(
         parent_span_id: span.parent_span_id ?? undefined,
         payload: {
           ...attrs,
-          operation_name: span.operation_name,
+          operation_name: operationName,
           status_code: span.status_code,
         },
         metadata: {
           maturity_tier: tier,
         },
-        actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
-        actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
-        origin_framework: originFrameworkFromAttrs(attrs),
-        causal: parseAttrJson(attrs['agentlens.causal'] ?? attrs['causal']) ?? (span.parent_span_id ? { parent_span_id: span.parent_span_id } : undefined),
-        model: assembleModelProvenance(attrs),
-        error: assembleErrorProvenance(attrs, span),
-        policy: parseAttrJson(attrs['agentlens.policy'] ?? attrs['policy'] ?? attrs['policy_decision']) ?? undefined,
+      actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
+      actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
+      origin_framework: originFrameworkFromAttrs(attrs),
+      causal: normalizeCausalContext(attrs, span.parent_span_id ?? undefined),
+      model: assembleModelProvenance(attrs),
+      error: assembleErrorProvenance(attrs, span),
+      policy: parseAttrJson(attrs['agentlens.policy'] ?? attrs['policy'] ?? attrs['policy_decision']) ?? undefined,
         source_span_id: span.span_id,
         source_event_id: undefined,
       } as any);
@@ -780,11 +778,12 @@ export function projectReplay(
   for (const intr of interrupts) {
     const createdIso = new Date(intr.created_at).toISOString();
     const traceId = intr.span_id ? spanTraceMap.get(intr.span_id) : undefined;
+    const interruptBranchId = intr.branch_id ?? branchId;
 
     events.push({
       id: `interrupt-${intr.interrupt_id}-requested`,
       mission_id: missionId,
-      branch_id: branchId,
+      branch_id: interruptBranchId,
       sequence_num: seq++,
       branch_sequence_num: seq,
       event_type: 'interrupt.requested',
@@ -800,6 +799,7 @@ export function projectReplay(
         ...(intr.payload ?? {}),
       },
       metadata: {},
+      causal: intr.span_id ? { parent_span_id: intr.span_id } : undefined,
       source_span_id: intr.span_id ?? undefined,
       source_event_id: 'interrupt.requested',
     } as any);
@@ -809,7 +809,7 @@ export function projectReplay(
       events.push({
         id: `interrupt-${intr.interrupt_id}-decision`,
         mission_id: missionId,
-        branch_id: branchId,
+        branch_id: interruptBranchId,
         sequence_num: seq++,
         branch_sequence_num: seq,
         event_type: 'interrupt.decision',
@@ -825,6 +825,10 @@ export function projectReplay(
           ...(intr.decision_payload ?? {}),
         },
         metadata: {},
+        causal: {
+          parent_span_id: intr.span_id ?? undefined,
+          decision_for_event_id: `interrupt-${intr.interrupt_id}-requested`,
+        },
         source_span_id: intr.span_id ?? undefined,
         source_event_id: 'interrupt.decision',
       } as any);
@@ -835,7 +839,7 @@ export function projectReplay(
       events.push({
         id: `interrupt-${intr.interrupt_id}-resumed`,
         mission_id: missionId,
-        branch_id: branchId,
+        branch_id: interruptBranchId,
         sequence_num: seq++,
         branch_sequence_num: seq,
         event_type: 'interrupt.resumed',
@@ -849,6 +853,10 @@ export function projectReplay(
           ...(intr.decision_payload ?? {}),
         },
         metadata: {},
+        causal: {
+          parent_span_id: intr.span_id ?? undefined,
+          triggered_by_event_id: `interrupt-${intr.interrupt_id}-decision`,
+        },
         source_span_id: intr.span_id ?? undefined,
         source_event_id: 'interrupt.resumed',
       } as any);

@@ -19,6 +19,15 @@ export type TracePreset = 'none' | 'orchestration' | 'execution' | 'data';
 export type ZoomBand = 'overview' | 'standard' | 'detail';
 export type FocusDepth = 1 | 2;
 
+export interface HiddenGraphContext {
+  kind: 'hidden_recorded_context' | 'missing_relationship_evidence';
+  reason: 'overview_zoom' | 'standard_zoom' | 'focus_mode' | 'none';
+  hiddenNodeCount: number;
+  hiddenEdgeCount: number;
+  disclosure: string;
+  inspectHint?: string;
+}
+
 export const EDGE_PRESET_TYPES: Record<EdgeLayerPreset, EdgeType[]> = {
   orchestration: ['delegation', 'review', 'critique', 'escalation', 'approval', 'member_of'],
   execution: ['dependency', 'uses'],
@@ -129,6 +138,7 @@ export interface GraphVisibilityResult {
   totalEdgeCount: number;
   zoomBand: ZoomBand;
   satelliteCounts: Record<string, { tools: number; memory: number; artifacts: number }>;
+  hiddenContext: HiddenGraphContext | null;
 }
 
 export function computeVisibleGraph(input: GraphVisibilityInput): GraphVisibilityResult {
@@ -189,6 +199,10 @@ export function computeVisibleGraph(input: GraphVisibilityInput): GraphVisibilit
     return true;
   });
 
+  const zoomFilteredNodes = filteredNodes;
+  const zoomFilteredEdges = filteredEdges;
+  let hiddenContext: HiddenGraphContext | null = null;
+
   if (focusModeEnabled && selectedNodeId) {
     const neighborhood = getFocusNeighborhood(
       selectedNodeId,
@@ -200,6 +214,19 @@ export function computeVisibleGraph(input: GraphVisibilityInput): GraphVisibilit
       (edge) => neighborhood.has(edge.source) && neighborhood.has(edge.target),
     );
     filteredNodes = filteredNodes.filter((node) => neighborhood.has(node.id));
+
+    const hiddenNodeCount = Math.max(0, zoomFilteredNodes.length - filteredNodes.length);
+    const hiddenEdgeCount = Math.max(0, zoomFilteredEdges.length - filteredEdges.length);
+    if (hiddenNodeCount > 0 || hiddenEdgeCount > 0) {
+      hiddenContext = {
+        kind: 'hidden_recorded_context',
+        reason: 'focus_mode',
+        hiddenNodeCount,
+        hiddenEdgeCount,
+        disclosure: `Recorded graph context hidden by selected-node focus: ${hiddenNodeCount} nodes, ${hiddenEdgeCount} edges`,
+        inspectHint: 'Disable focus mode or widen focus depth to inspect hidden recorded neighbors.',
+      };
+    }
   } else if (tracePreset !== 'none') {
     const connected = new Set<string>();
     for (const edge of filteredEdges) {
@@ -213,6 +240,45 @@ export function computeVisibleGraph(input: GraphVisibilityInput): GraphVisibilit
   filteredEdges = filteredEdges.filter(
     (edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target),
   );
+
+  if (!hiddenContext) {
+    const hiddenNodeCount = Math.max(0, nodes.length - filteredNodes.length);
+    const hiddenEdgeCount = Math.max(0, edges.length - filteredEdges.length);
+    if (zoomBand === 'overview' && (hiddenNodeCount > 0 || hiddenEdgeCount > 0)) {
+      hiddenContext = {
+        kind: 'hidden_recorded_context',
+        reason: 'overview_zoom',
+        hiddenNodeCount,
+        hiddenEdgeCount,
+        disclosure: `Recorded graph context hidden by overview zoom: ${hiddenNodeCount} nodes, ${hiddenEdgeCount} edges`,
+        inspectHint: 'Zoom in to inspect hidden dependency edges and satellite nodes.',
+      };
+    } else if (zoomBand === 'standard' && (hiddenNodeCount > 0 || hiddenEdgeCount > 0)) {
+      hiddenContext = {
+        kind: 'hidden_recorded_context',
+        reason: 'standard_zoom',
+        hiddenNodeCount,
+        hiddenEdgeCount,
+        disclosure: `Recorded graph context hidden by standard zoom: ${hiddenNodeCount} nodes, ${hiddenEdgeCount} edges`,
+        inspectHint: 'Zoom in for tool, retrieval, memory, artifact, and edge-level execution detail.',
+      };
+    }
+  }
+
+  if (!hiddenContext && selectedNodeId) {
+    const selectedHasRecordedRelationships = edges.some(
+      (edge) => edge.source === selectedNodeId || edge.target === selectedNodeId,
+    );
+    if (!selectedHasRecordedRelationships) {
+      hiddenContext = {
+        kind: 'missing_relationship_evidence',
+        reason: 'none',
+        hiddenNodeCount: 0,
+        hiddenEdgeCount: 0,
+        disclosure: 'No recorded relationship evidence for the selected node at this frame.',
+      };
+    }
+  }
 
   let outputEdges = filteredEdges;
   if (bundleEdges) {
@@ -240,6 +306,7 @@ export function computeVisibleGraph(input: GraphVisibilityInput): GraphVisibilit
     totalEdgeCount: edges.length,
     zoomBand,
     satelliteCounts,
+    hiddenContext,
   };
 }
 

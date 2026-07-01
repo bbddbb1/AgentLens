@@ -7,8 +7,7 @@ import { useReplayStore } from '@/stores/replayStore';
 import { useAuditStore } from '@/stores/auditStore';
 import { BranchExplorer } from '@/components/replay/BranchExplorer';
 import { api } from '@/lib/api';
-import type { MissionAuditEventResponse } from '@agentlens/protocol';
-import { useRuntimeSummary } from '@/hooks/useRuntimeSummary';
+import type { MissionAuditEventResponse, RuntimeExplanationProjection, RuntimeSummary } from '@agentlens/protocol';
 import { useNodeProjection } from '@/hooks/useNodeProjection';
 import { RopsInspector } from '@/components/rops/RopsInspector';
 import { RopsEvidence } from '@/components/rops/RopsEvidence';
@@ -41,11 +40,20 @@ interface RightSidebarProps {
   onBranchChange?: (branchId: string) => Promise<void>;
   missionObjective?: string;
   missionStatus?: string;
+  runtimeExplanation?: RuntimeExplanationProjection | null;
+  runtimeSummary?: RuntimeSummary | null;
 }
 
-export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mission overview', missionStatus = 'active' }: RightSidebarProps) {
+export function RightSidebar({
+  missionId,
+  onBranchChange,
+  missionObjective: _missionObjective = 'Mission overview',
+  missionStatus: _missionStatus = 'active',
+  runtimeExplanation = null,
+  runtimeSummary = null,
+}: RightSidebarProps) {
   const { setIsRightCollapsed } = useLayoutStore();
-  const { snapshots, selectedNodeId } = useGraphStore();
+  const { snapshots, selectedNodeId, setSelectedNodeId } = useGraphStore();
   const { currentState, selectedEventId, currentBranchId, currentFrame, events } = useReplayStore();
 
   const [activeTab, setActiveTab] = useState<'run' | 'govern' | 'audit'>('run');
@@ -53,7 +61,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
   const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
 
-  // Compact audit events & integrity state — owned by the shared audit store
+  // Compact audit events & integrity state 鈥?owned by the shared audit store
   // so graph node components (hover popovers) can read the same envelopes.
   // The store performs the existing fetch (filtered to sequence_num <= frame)
   // and caches by (missionId, branchId, sequenceNum).
@@ -153,14 +161,6 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     return auditData.events.find((e) => e.id === frameEvent.id) ?? (frameEvent as import('@agentlens/protocol').EventEnvelope);
   }, [selectedNode, auditEvents, selectedEventId, auditData, snapshots, events, currentFrame]);
 
-  const runtimeSummary = useRuntimeSummary({
-    missionId,
-    objective: missionObjective,
-    missionStatus,
-    missionPhase: currentState?.phase ?? 'executing',
-  });
-
-
   const selectedAgentId = selectedNode?.type === 'agent'
     ? (selectedNode.agent_id ?? selectedNode.id ?? selectedNode.label)
     : null;
@@ -174,7 +174,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     runtimeSummary,
   });
 
-  // ROPS L4 evidence view: the operator can open the raw EventEnvelope for the
+  // ROPS L4 evidence view: the operator can open the recorded EventEnvelope for the
   // selected event from the L3 inspector. The envelope comes from the already-
   // fetched audit data (Evidence source per spec 9.4 / section 11).
   const [evidenceOpen, setEvidenceOpen] = useState(false);
@@ -202,6 +202,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     node: selectedNode,
     agentProjection: nodeProjection,
     edges: currentSnapshotForInspector?.edges ?? [],
+    nodes: currentSnapshotForInspector?.nodes ?? [],
     mission: null as import('@agentlens/protocol').Mission | null,
     eventEnvelope: selectedEventEnvelope ?? null,
     eventEnvelopes: auditEvents,
@@ -214,11 +215,23 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
       const ev = events.find((e) => e.sequence_num === seq);
       if (ev) {
         const { setSelectedEventId, setCurrentFrame } = useReplayStore.getState();
+        const { setSelectedNodeId } = useGraphStore.getState();
         setSelectedEventId(ev.id);
         const frame = findFrameForEvent(snapshots, events, ev.id);
-        if (frame !== null) setCurrentFrame(frame);
+        if (frame !== null) {
+          setCurrentFrame(frame);
+          const snapshot = snapshots[frame] ?? snapshots[snapshots.length - 1] ?? null;
+          const node = snapshot?.nodes.find(
+            (entry) =>
+              entry.source_span_id === ev.span_id ||
+              entry.evidence_span_id === ev.span_id ||
+              entry.span_id === ev.span_id,
+          );
+          setSelectedNodeId(node?.id ?? null);
+        }
       }
     },
+    onSelectNode: (nodeId: string) => setSelectedNodeId(nodeId),
   };
 
   // Interrupt lists
@@ -292,9 +305,15 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
                   forbidden `generated.*` block (P4). The ROPS inspector reads
                   only `facts` + `recent_runtime_events` and the EventEnvelope. */}
               {selectedNode && (
-                <RopsInspector {...inspectorInput} />
+                <>
+                  <div className="rounded-lg border border-[rgba(103,232,249,0.12)] bg-[rgba(103,232,249,0.04)] px-3 py-2 text-[10px] text-[#8f95b2]">
+                    <span className="font-semibold text-[#67e8f9]">Frame-consistent view</span>
+                    <span className="mx-1.5 text-[#4f536d]">路</span>
+                    branch {currentBranchId ?? runtimeExplanation?.branch_id ?? currentSnapshotForInspector?.branch_id ?? 'main'} | seq #{runtimeExplanation?.as_of_sequence_num ?? frameSequenceNum ?? currentSnapshotForInspector?.sequence_num ?? 0} | {runtimeExplanation?.as_of_timestamp ? new Date(runtimeExplanation.as_of_timestamp).toISOString() : currentSnapshotForInspector?.timestamp ? new Date(currentSnapshotForInspector.timestamp).toISOString() : 'unknown time'} | {runtimeExplanation?.projection_version ?? 'runtime_explanation.v1'}
+                  </div>
+                  <RopsInspector {...inspectorInput} />
+                </>
               )}
-
               {evidenceOpen && selectedEventEnvelope && (
                 <RopsEvidence envelope={selectedEventEnvelope} onClose={() => setEvidenceOpen(false)} />
               )}
@@ -328,6 +347,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
                 <BranchExplorer
                   missionId={missionId}
                   isCollapsed={false}
+                  runtimeSummary={runtimeSummary}
                   onToggleCollapsed={() => {}}
                   onBranchChange={async (bId) => {
                     if (onBranchChange) await onBranchChange(bId);
@@ -516,7 +536,7 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
                       }
                     </p>
                     <div className="text-[9px] font-mono text-[#5d6180]">
-                      Branch: {auditData.integrity.branch_id} • Verified: {auditData.integrity.total_events} events
+                      Branch: {auditData.integrity.branch_id} 鈥?Verified: {auditData.integrity.total_events} events
                     </div>
                   </div>
                 </div>
@@ -672,3 +692,4 @@ export function RightSidebar({ missionId, onBranchChange, missionObjective = 'Mi
     </div>
   );
 }
+

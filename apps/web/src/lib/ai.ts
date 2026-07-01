@@ -4,6 +4,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   ModelRegistry,
+  SettingsManager,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
 
@@ -17,13 +18,30 @@ function getRepoRoot(): string {
   return path.resolve(process.cwd(), '..', '..');
 }
 
-export async function askAgentLens(prompt: string, context: AssistantContext = {}): Promise<string> {
+interface AgentLensRuntimeServices {
+  agentDir: string;
+  authStorage: ReturnType<typeof AuthStorage.create>;
+  modelRegistry: ModelRegistry;
+  resourceLoader: DefaultResourceLoader;
+}
+
+const MISSING_MODEL_AUTH_MESSAGE =
+  'No configured model authentication is available for the embedded PI assistant. Configure a provider before using this route.';
+const MODEL_AUTH_REFRESH_INTERVAL_MS = 30_000;
+
+let runtimeServicesPromise: Promise<AgentLensRuntimeServices> | null = null;
+let lastModelAuthRefreshAt = 0;
+
+async function createRuntimeServices(): Promise<AgentLensRuntimeServices> {
   const repoRoot = getRepoRoot();
+  const agentDir = path.join(repoRoot, '.pi');
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
+  const settingsManager = SettingsManager.create(repoRoot, agentDir);
   const resourceLoader = new DefaultResourceLoader({
     cwd: repoRoot,
-    agentDir: path.join(repoRoot, '.pi'),
+    agentDir,
+    settingsManager,
     systemPromptOverride: () =>
       [
         'You are AgentLens, the embedded AI interface for reviewing multi-agent mission data.',
@@ -35,12 +53,58 @@ export async function askAgentLens(prompt: string, context: AssistantContext = {
 
   await resourceLoader.reload();
 
-  const { session } = await createAgentSession({
-    cwd: repoRoot,
-    agentDir: path.join(repoRoot, '.pi'),
+  return {
+    agentDir,
     authStorage,
     modelRegistry,
     resourceLoader,
+  };
+}
+
+async function getRuntimeServices(): Promise<AgentLensRuntimeServices> {
+  if (!runtimeServicesPromise) {
+    runtimeServicesPromise = createRuntimeServices().catch((error) => {
+      runtimeServicesPromise = null;
+      throw error;
+    });
+  }
+
+  return runtimeServicesPromise;
+}
+
+async function ensureConfiguredAssistantModel(): Promise<AgentLensRuntimeServices> {
+  const services = await getRuntimeServices();
+  if (services.modelRegistry.getAvailable().length > 0) {
+    return services;
+  }
+
+  const now = Date.now();
+  if (now - lastModelAuthRefreshAt >= MODEL_AUTH_REFRESH_INTERVAL_MS) {
+    lastModelAuthRefreshAt = now;
+    services.modelRegistry.refresh();
+    if (services.modelRegistry.getAvailable().length > 0) {
+      return services;
+    }
+  }
+
+  throw new Error(MISSING_MODEL_AUTH_MESSAGE);
+}
+
+export function resetAgentLensAiRuntimeForTests(): void {
+  runtimeServicesPromise = null;
+  lastModelAuthRefreshAt = 0;
+}
+
+export async function askAgentLens(prompt: string, context: AssistantContext = {}): Promise<string> {
+  const repoRoot = getRepoRoot();
+  const services = await ensureConfiguredAssistantModel();
+
+  const { session } = await createAgentSession({
+    cwd: repoRoot,
+    agentDir: services.agentDir,
+    authStorage: services.authStorage,
+    modelRegistry: services.modelRegistry,
+    resourceLoader: services.resourceLoader,
     sessionManager: SessionManager.inMemory(repoRoot),
     tools: ['read', 'grep', 'find', 'ls'],
   });

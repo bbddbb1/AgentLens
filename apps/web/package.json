@@ -3,7 +3,8 @@
     "version": "0.1.0",
     "private": true,
     "scripts": {
-        "dev": "pnpm --filter @agentlens/protocol build && next dev",
+        "dev": "pnpm --filter @agentlens/protocol build && next dev --webpack",
+        "dev:turbo": "pnpm --filter @agentlens/protocol build && next dev --turbo",
         "build": "pnpm --filter @agentlens/protocol build && next build",
         "start": "next start",
         "lint": "pnpm --filter @agentlens/protocol build && eslint",

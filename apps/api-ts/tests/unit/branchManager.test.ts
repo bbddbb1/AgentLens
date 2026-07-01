@@ -145,4 +145,24 @@ describe('selectEventsForBranch', () => {
     // Root branch events that are before the fork at seq 1
     expect(selected.map((e) => e.id)).toEqual(['e0', 'e1']);
   });
+
+  it('cuts parent lineage at each fork for nested branches', () => {
+    const now = '2026-01-01T00:00:00.000Z';
+    const branches: ReplayBranch[] = [
+      { id: ROOT_BRANCH_ID, mission_id: 'm1', name: 'Main', status: 'active', metadata: {}, created_at: now, updated_at: now },
+      { id: 'main-b1', mission_id: 'm1', name: 'B1', parent_branch_id: ROOT_BRANCH_ID, forked_from_sequence_num: 1, status: 'active', metadata: {}, created_at: now, updated_at: now },
+      { id: 'main-b1-c1', mission_id: 'm1', name: 'C1', parent_branch_id: 'main-b1', forked_from_sequence_num: 3, status: 'active', metadata: {}, created_at: now, updated_at: now },
+    ];
+    const events: MissionEventRecord[] = [
+      event('task.started', { task: 'root-0' }, { id: 'e0', branch_id: ROOT_BRANCH_ID, sequence_num: 0, branch_sequence_num: 0 }),
+      event('task.completed', { task: 'root-1' }, { id: 'e1', branch_id: ROOT_BRANCH_ID, sequence_num: 1, branch_sequence_num: 1 }),
+      event('task.started', { task: 'root-late' }, { id: 'e2', branch_id: ROOT_BRANCH_ID, sequence_num: 2, branch_sequence_num: 2 }),
+      event('task.started', { task: 'b1-0' }, { id: 'e3', branch_id: 'main-b1', sequence_num: 3, branch_sequence_num: 0 }),
+      event('task.completed', { task: 'b1-late' }, { id: 'e4', branch_id: 'main-b1', sequence_num: 4, branch_sequence_num: 1 }),
+      event('task.started', { task: 'c1-0' }, { id: 'e5', branch_id: 'main-b1-c1', sequence_num: 5, branch_sequence_num: 0 }),
+    ];
+
+    const selected = selectEventsForBranch(events, branches, 'main-b1-c1');
+    expect(selected.map((e) => e.id)).toEqual(['e0', 'e1', 'e3', 'e5']);
+  });
 });

@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import type { MissionEventRecord, RuntimeNodeProjection } from '@agentlens/protocol';
-import { getRuntimeNodeProjection, projectNodeState } from '@agentlens/protocol';
+import { getRuntimeNodeProjection } from '@agentlens/protocol';
 import { api } from '@/lib/api';
 import type { RuntimeSummary } from '@agentlens/protocol';
 
@@ -21,24 +21,12 @@ export function useNodeProjection({
   agentId,
   branchId,
   sequenceNum,
-  events,
+  events: _events,
   runtimeSummary,
   serverProjection = null,
 }: UseNodeProjectionOptions) {
   const [enhancedProjection, setEnhancedProjection] = useState<RuntimeNodeProjection | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
-
-  const clientProjection = useMemo(() => {
-    if (!agentId || events.length === 0) return null;
-
-    return projectNodeState({
-      mission_id: missionId,
-      branch_id: branchId ?? 'main',
-      agent_id: agentId,
-      events,
-      up_to_sequence_num: sequenceNum,
-    });
-  }, [agentId, branchId, events, missionId, sequenceNum]);
 
   const summaryProjection = useMemo(() => {
     if (!agentId || !runtimeSummary) return null;
@@ -47,8 +35,7 @@ export function useNodeProjection({
 
   const projection = enhancedProjection
     ?? serverProjection
-    ?? summaryProjection
-    ?? clientProjection;
+    ?? summaryProjection;
 
   const [prevKey, setPrevKey] = useState<string | null>(null);
   const currentKey = `${agentId}-${sequenceNum}-${branchId}`;
@@ -74,7 +61,6 @@ export function useNodeProjection({
 
   return {
     projection,
-    clientProjection,
     isEnhancing,
     enhance,
   };

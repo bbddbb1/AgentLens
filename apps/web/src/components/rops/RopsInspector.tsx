@@ -43,6 +43,7 @@ import {
   formatDurationMs,
   formatTimestamp,
   packEvidence,
+  resolveRelationshipTargets,
   splitPayload,
   type AgentView,
   type EnvelopeProvenance,
@@ -50,8 +51,17 @@ import {
   type RopsField,
 } from '@/lib/rops/provenance';
 import { collectNodeEvidence } from '@/lib/rops/nodeEvidence';
-import { RopsFieldRow, RopsSection, ProvenanceTag } from './primitives';
+import {
+  MissingFieldsProvider,
+  RopsFieldRow,
+  RopsSection,
+  ProvenanceTag,
+} from './primitives';
 import { safePreview } from '@/lib/safePreview';
+
+function displayText(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.length > 0 ? value : fallback;
+}
 
 export interface RopsInspectorInput {
   /** The selected graph node (Evidence source for non-agent objects). */
@@ -60,6 +70,8 @@ export interface RopsInspectorInput {
   readonly agentProjection: RuntimeNodeProjection | null;
   /** Edges in the current snapshot (for relationship derivation). */
   edges: readonly GraphEdge[];
+  /** Nodes in the current snapshot, used only to resolve relationship labels. */
+  nodes: readonly GraphNode[];
   /** The mission (for Mission object type). */
   mission: import('@agentlens/protocol').Mission | null;
   /** The selected event envelope (for the Provenance section + L4 jump). */
@@ -79,6 +91,8 @@ export interface RopsInspectorInput {
   onViewEvidence?: (sequenceNum: number) => void;
   /** Callback to jump the timeline to an event (spec 11 Jump to Event/Timeline). */
   onJumpToEvent?: (sequenceNum: number) => void;
+  /** Navigate to a related runtime activity. */
+  onSelectNode?: (nodeId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +217,13 @@ function ProfileNodeInspector({
       name={view.label.value ?? '—'}
       profile={profile}
     >
+      <SelectedActivityPrioritySection
+        node={node}
+        view={view}
+        evidence={evidence}
+        rels={rels}
+        nodes={input.nodes}
+      />
       <RopsSection title="Identity">
         <RopsFieldRow label="label" field={view.label} />
         <RopsFieldRow label="id" field={view.id} />
@@ -250,7 +271,7 @@ function ProfileNodeInspector({
       </RopsSection>
 
       <RopsSection title="Relationships">
-        <DerivedRelationshipRows rels={rels} />
+        <DerivedRelationshipRows rels={rels} nodes={input.nodes} onSelectNode={input.onSelectNode} />
         <RopsFieldRow label="span_id" field={view.spanId} />
         <RopsFieldRow label="source_span_id" field={view.sourceSpanId} />
         <RopsFieldRow label="source_event_id" field={view.sourceEventId} />
@@ -289,8 +310,8 @@ function MissionInspector({ input }: { input: RopsInspectorInput }) {
 
   // Mission record identity (spec 3.1) when available.
   const mview: MissionView | null = mission ? buildMissionView(mission) : null;
-  // A mission-profile node contributes its raw payload (basestation.aiops.*
-  // stays verbatim — nothing is promoted for the mission profile).
+  // A mission-profile node contributes raw workload payload only; Core does
+  // not promote workload-specific keys.
   const payload = (node?.metadata ?? {}) as Record<string, unknown>;
   const { recognized, unrecognized } = splitPayload(payload);
   const rels = node ? deriveRelationships(node.id, edges) : [];
@@ -333,7 +354,7 @@ function MissionInspector({ input }: { input: RopsInspectorInput }) {
 
       {node && (
         <RopsSection title="Relationships">
-          <DerivedRelationshipRows rels={rels} />
+          <DerivedRelationshipRows rels={rels} nodes={input.nodes} onSelectNode={input.onSelectNode} />
           <RopsFieldRow label="source_span_id" field={buildGraphNodeView(node).sourceSpanId} />
         </RopsSection>
       )}
@@ -395,6 +416,15 @@ function AgentInspector({ input }: { input: RopsInspectorInput }) {
 
   return (
     <PanelShell objectType={view.objectType} name={view.name.value ?? '—'}>
+      {node && (
+        <SelectedActivityPrioritySection
+          node={node}
+          view={view}
+          evidence={collectNodeEvidence(node, input.eventEnvelopes, agentProjection)}
+          rels={rels}
+          nodes={input.nodes}
+        />
+      )}
       <RopsSection title="Identity">
         <RopsFieldRow label="name" field={view.name} />
         <RopsFieldRow label="agent_id" field={view.agentId} />
@@ -426,7 +456,7 @@ function AgentInspector({ input }: { input: RopsInspectorInput }) {
 
       <RopsSection title="Relationships">
         <RopsFieldRow label="next_transition" field={view.nextTransition} formatter={(t) => `→ ${t.target} (${t.kind})${t.reason ? ` — ${t.reason}` : ''}`} />
-        <DerivedRelationshipRows rels={rels} />
+        <DerivedRelationshipRows rels={rels} nodes={input.nodes} onSelectNode={input.onSelectNode} />
         <RopsFieldRow label="source_span_id" field={view.sourceSpanId} />
         <RopsFieldRow label="source_event_id" field={view.sourceEventId} />
       </RopsSection>
@@ -484,6 +514,15 @@ function RuntimeAgentStateInspector({ input }: { input: RopsInspectorInput }) {
   const prov = envelopeProvenance(eventEnvelope);
   return (
     <PanelShell objectType={view.objectType} name={view.name.value ?? '—'}>
+      {node && (
+        <SelectedActivityPrioritySection
+          node={node}
+          view={view}
+          evidence={collectNodeEvidence(node, input.eventEnvelopes, null)}
+          rels={rels}
+          nodes={input.nodes}
+        />
+      )}
       <RopsSection title="Identity">
         <RopsFieldRow label="name" field={view.name} />
         <RopsFieldRow label="agent_id" field={view.agentId} />
@@ -504,7 +543,7 @@ function RuntimeAgentStateInspector({ input }: { input: RopsInspectorInput }) {
         <RopsFieldRow label="summary" field={view.summary} />
       </RopsSection>
       <RopsSection title="Relationships">
-        <DerivedRelationshipRows rels={rels} />
+        <DerivedRelationshipRows rels={rels} nodes={input.nodes} onSelectNode={input.onSelectNode} />
       </RopsSection>
       <RopsSection title="Statistics">
         <RopsFieldRow label="history" field={view.history} formatter={(h) => `${h.length} events`} />
@@ -604,7 +643,7 @@ function BranchInspector({ input }: { input: RopsInspectorInput }) {
         <RopsFieldRow label="forked_from_sequence_num" field={view.forkedFromSequenceNum} formatter={(v) => `#${v}`} />
       </RopsSection>
       {view.metadata.value && Object.keys(view.metadata.value).length > 0 && (
-        <RopsSection title="Raw Attributes (metadata)" collapsible defaultOpen={false}>
+        <RopsSection title="Recorded Attributes (metadata)" collapsible defaultOpen={false}>
           <JsonBlock value={view.metadata.value} />
         </RopsSection>
       )}
@@ -643,6 +682,121 @@ function CheckpointInspector({ input }: { input: RopsInspectorInput }) {
 // Shared sub-components
 // ---------------------------------------------------------------------------
 
+function SelectedActivityPrioritySection({
+  node,
+  view,
+  evidence,
+  rels,
+  nodes,
+}: {
+  node: GraphNode;
+  view: { label?: RopsField; name?: RopsField; statusLabel: RopsField; status: RopsField };
+  evidence: import('@/lib/rops/nodeEvidence').NodeCorrelatedEvidence;
+  rels: ReturnType<typeof deriveRelationships>;
+  nodes: readonly GraphNode[];
+}) {
+  const activity = node.activity;
+  if (!activity && !evidence.toolInput && !evidence.toolOutput && !evidence.failureReason && rels.length === 0) {
+    return null;
+  }
+
+  const downstreamNodes = rels
+    .filter((rel) => rel.kind === 'children' || rel.kind === 'dependency')
+    .flatMap((rel) => resolveRelationshipTargets(rel.nodeIds, nodes))
+    .map((item) => item.label)
+    .slice(0, 3);
+
+  const record = activity?.operator_facing_record;
+  const outcomeText = displayText(
+    record?.status_or_outcome.value ?? activity?.outcome ?? view.statusLabel.value ?? view.status.value,
+    'unknown',
+  );
+  const viewTitle = view.label?.value ?? view.name?.value;
+  const activityTitle = displayText(
+    record?.primary_label ?? activity?.title ?? activity?.label ?? activity?.action ?? viewTitle,
+    'Activity',
+  );
+  const actionText = displayText(record?.action.value ?? activity?.action ?? viewTitle, 'Activity');
+  const triggerText = displayText(
+    record?.trigger.value ?? activity?.subtitle ?? activity?.action ?? viewTitle,
+    'not recorded',
+  );
+
+  return (
+    <RopsSection title="Selected activity">
+      <div className="rounded-lg border border-[rgba(129,140,248,0.12)] bg-[rgba(129,140,248,0.04)] p-2 space-y-1.5">
+        <div className="text-[11px] font-medium text-[#d0d4ea]">
+          {activityTitle}
+          <span className="mx-1.5 text-[#4f536d]">|</span>
+          <span>{actionText}</span>
+          <span className="mx-1.5 text-[#4f536d]">|</span>
+          <span className={activity?.status === 'failed' ? 'text-[#f87171]' : activity?.status === 'waiting' ? 'text-[#fbbf24]' : 'text-[#a5b4fc]'}>
+            {outcomeText}
+          </span>
+          {activity?.duration_ms !== undefined && (
+            <span className="text-[#8f95b2]"> | {formatDurationMs(activity.duration_ms)}</span>
+          )}
+          <ProvenanceTag provenance="projection" />
+        </div>
+        {activity?.subtitle && <div className="font-mono text-[9px] text-[#6b708a]">{activity.subtitle}</div>}
+        {record?.limitation && <div className="text-[10px] text-[#fbbf24]">{record.limitation}</div>}
+        <div className="grid gap-1.5 text-[10px]">
+          <RopsFieldRow label="trigger" field={packEvidence('trigger', triggerText)} />
+          <RopsFieldRow
+            label="inputs"
+            field={packEvidence('inputs', record?.input.value ?? evidence.toolInput ?? evidence.searchQuery ?? evidence.retrievalBackend ?? record?.input.condition ?? 'not recorded')}
+          />
+          <RopsFieldRow
+            label="outputs"
+            field={packEvidence('outputs', record?.output.value ?? evidence.toolOutput ?? evidence.producedOutputs?.length ?? record?.output.condition ?? 'not recorded')}
+          />
+          <RopsFieldRow
+            label="error_or_wait_reason"
+            field={packEvidence('error_or_wait_reason', record?.status_or_outcome.value === 'Waiting' ? record?.evidence_condition.value ?? 'waiting' : evidence.failureReason ?? evidence.failureCause ?? 'not recorded')}
+          />
+          <RopsFieldRow
+            label="downstream_activity"
+            field={packEvidence('downstream_activity', record?.downstream_effect.value ?? (downstreamNodes.length > 0 ? downstreamNodes.join(', ') : 'not recorded'))}
+          />
+          <RopsFieldRow
+            label="artifacts"
+            field={packEvidence('artifacts', record?.artifacts.value ?? evidence.producedOutputs?.length ?? 0)}
+          />
+          <RopsFieldRow
+            label="evidence_condition"
+            field={packEvidence('evidence_condition', record?.evidence_condition.value ?? record?.evidence_condition.condition ?? 'recorded')}
+          />
+        </div>
+      </div>
+    </RopsSection>
+  );
+}
+
+function ActivityOverview({ node }: { node: GraphNode }) {
+  const activity = node.activity;
+  if (!activity) return null;
+  return (
+    <RopsSection title="Selected activity">
+      <div className="rounded-lg border border-[rgba(129,140,248,0.12)] bg-[rgba(129,140,248,0.04)] p-2">
+        <div className="text-[11px] font-medium text-[#d0d4ea]">
+          {activity.action}
+          <span className="mx-1.5 text-[#4f536d]">·</span>
+          <span className={activity.status === 'failed' ? 'text-[#f87171]' : activity.status === 'waiting' ? 'text-[#fbbf24]' : 'text-[#a5b4fc]'}>
+            {activity.outcome}
+          </span>
+          {activity.duration_ms !== undefined && (
+            <span className="text-[#8f95b2]"> · {formatDurationMs(activity.duration_ms)}</span>
+          )}
+          <ProvenanceTag provenance="projection" />
+        </div>
+        {activity.subtitle && (
+          <div className="mt-1 font-mono text-[9px] text-[#6b708a]">{activity.subtitle}</div>
+        )}
+      </div>
+    </RopsSection>
+  );
+}
+
 function PanelShell({
   objectType,
   name,
@@ -654,6 +808,7 @@ function PanelShell({
   profile?: ProjectionProfile;
   children: React.ReactNode;
 }) {
+  const [showMissing, setShowMissing] = useState(false);
   return (
     <div className="rounded-xl border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.015)] p-3.5 space-y-3">
       <div className="flex items-center justify-between">
@@ -675,22 +830,69 @@ function PanelShell({
       <div className="text-[13px] font-semibold text-white tracking-wide">
         {name}
       </div>
-      {children}
+      <div className="flex items-center justify-between rounded-md bg-[rgba(255,255,255,0.02)] px-2 py-1 text-[9px] text-[#6b708a]">
+        <span>{showMissing ? 'Observed and absent fields' : 'Observed fields · optional gaps hidden'}</span>
+        <button
+          type="button"
+          onClick={() => setShowMissing((value) => !value)}
+          className="text-[#818cf8] hover:text-[#a5b4fc]"
+        >
+          {showMissing ? 'Hide missing fields' : 'Show missing fields'}
+        </button>
+      </div>
+      <MissingFieldsProvider showMissing={showMissing}>
+        {children}
+      </MissingFieldsProvider>
     </div>
   );
 }
 
-function DerivedRelationshipRows({ rels }: { rels: ReturnType<typeof deriveRelationships> }) {
+function DerivedRelationshipRows({
+  rels,
+  nodes,
+  onSelectNode,
+}: {
+  rels: ReturnType<typeof deriveRelationships>;
+  nodes: readonly GraphNode[];
+  onSelectNode?: (nodeId: string) => void;
+}) {
   if (rels.length === 0) {
     return <span className="text-[10px] text-[#5d6180] italic">none derived</span>;
   }
+  const relationshipLabels: Record<string, string> = {
+    parent: 'Triggered by',
+    children: 'Next',
+    producer: 'Produced by',
+    consumer: 'Produced',
+    dependency: 'Called',
+  };
   return (
     <>
       {rels.map((r) => (
         <div key={r.kind} className="flex justify-between items-start gap-3 border-b border-[rgba(255,255,255,0.04)] pb-1.5">
-          <span className="text-[#8f95b2] text-[10px] font-semibold shrink-0">{r.kind}</span>
-          <div className="text-right min-w-0">
-            <span className="text-[11px] text-[#d0d4ea] font-mono break-all">{r.nodeIds.join(', ')}</span>
+          <span className="text-[#8f95b2] text-[10px] font-semibold shrink-0">
+            {relationshipLabels[r.kind] ?? r.kind}
+          </span>
+          <div className="min-w-0 space-y-1 text-right">
+            {resolveRelationshipTargets(r.nodeIds, nodes).map((target) => {
+              return (
+                <button
+                  key={target.id}
+                  type="button"
+                  onClick={() => onSelectNode?.(target.id)}
+                  disabled={!onSelectNode || !target.resolved}
+                  className="block w-full text-right text-[10px] text-[#d0d4ea] hover:text-[#a5b4fc] disabled:hover:text-[#d0d4ea]"
+                  title={target.resolved ? `Open ${target.label}` : `Unresolved runtime id: ${target.id}`}
+                >
+                  {target.label}
+                  {target.resolved && (
+                    <span className="ml-1 text-[9px] text-[#6b708a]">
+                      · {target.type} · {target.status}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
             <ProvenanceTag provenance="projection" />
           </div>
         </div>

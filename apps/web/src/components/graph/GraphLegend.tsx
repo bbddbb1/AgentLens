@@ -50,10 +50,17 @@ export function GraphLegend() {
     setEdgeTypeVisible,
     bundleEdges,
     setBundleEdges,
+    hiddenContext,
   } = useGraphStore();
 
   return (
     <div className="absolute bottom-4 left-4 z-50">
+      {hiddenContext && !isOpen && (
+        <div className="mb-2 w-72 rounded-lg border border-[rgba(129,140,248,0.18)] bg-[rgba(18,19,26,0.92)] px-2.5 py-2 text-[10px] text-[#cfd3e6] shadow-[0_8px_24px_rgba(0,0,0,0.28)]">
+          <div className="font-semibold text-[#a5b4fc]">Recorded context disclosure</div>
+          <div className="mt-1">{hiddenContext.disclosure}</div>
+        </div>
+      )}
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -136,6 +143,16 @@ export function GraphLegend() {
                 />
                 Bundle parallel edges
               </label>
+
+              {hiddenContext && (
+                <div className="rounded-lg border border-[rgba(129,140,248,0.18)] bg-[rgba(129,140,248,0.06)] px-2.5 py-2 text-[10px] text-[#cfd3e6]">
+                  <div className="font-semibold text-[#a5b4fc]">Recorded context disclosure</div>
+                  <div className="mt-1">{hiddenContext.disclosure}</div>
+                  {hiddenContext.inspectHint && (
+                    <div className="mt-1 text-[#8f95b2]">{hiddenContext.inspectHint}</div>
+                  )}
+                </div>
+              )}
             </div>
           </motion.div>
         )}

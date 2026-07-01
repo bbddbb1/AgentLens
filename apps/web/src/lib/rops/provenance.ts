@@ -182,6 +182,32 @@ export interface DerivedRelationship {
   readonly provenance: Provenance;
 }
 
+export interface ReadableRelationshipTarget {
+  readonly id: string;
+  readonly label: string;
+  readonly type?: string;
+  readonly status?: string;
+  readonly resolved: boolean;
+}
+
+/** Resolve projected relationship ids to human-readable runtime node identities. */
+export function resolveRelationshipTargets(
+  nodeIds: readonly string[],
+  nodes: readonly GraphNode[],
+): ReadableRelationshipTarget[] {
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  return nodeIds.map((id) => {
+    const node = nodesById.get(id);
+    return {
+      id,
+      label: node?.activity?.label ?? node?.label ?? id,
+      type: node?.type,
+      status: node?.status,
+      resolved: Boolean(node),
+    };
+  });
+}
+
 /** Derive `children`/`producer`/`consumer`/`parent` adjacency from edges (spec 6.4). */
 export function deriveRelationships(
   nodeId: string,
@@ -394,15 +420,6 @@ export const PAYLOAD_WHITELIST: readonly string[] = [
   'gen_ai.usage.output_tokens',
   'gen_ai.request.temperature',
   'gen_ai.response.finish_reason',
-  // BSOps domain event payloads (normalized from basestation.aiops.* span events)
-  'hypothesis.description',
-  'hypothesis.confidence',
-  'decision.type',
-  'decision.summary',
-  'decision.confidence',
-  'basestation.aiops.evidence.count',
-  'basestation.aiops.workflow.step_name',
-  'basestation.aiops.artifact.type',
   // No-schema Evidence keys: these have no semconv/SDK/projection, so they are
   // only present when an emitter set them verbatim. Whitelisting classifies
   // them as recognized Evidence (L2+ presentable) rather than unrecognized
@@ -589,7 +606,7 @@ function buildLlmRows(
 }
 
 function buildToolRows(ev: NodeCorrelatedEvidence | undefined): ProfileEvidenceRow[] {
-  const e = ev ?? {};
+  const e: Partial<NodeCorrelatedEvidence> = ev ?? {};
   return [
     { label: 'tool_name', field: evidence('tool_name', e.toolName) },
     { label: 'tool_input', field: evidence('tool_input', e.toolInput) },
@@ -601,7 +618,7 @@ function buildToolRows(ev: NodeCorrelatedEvidence | undefined): ProfileEvidenceR
 }
 
 function buildRetrievalRows(ev: NodeCorrelatedEvidence | undefined): ProfileEvidenceRow[] {
-  const e = ev ?? {};
+  const e: Partial<NodeCorrelatedEvidence> = ev ?? {};
   return [
     { label: 'retrieval.backend', field: evidence('retrieval.backend', e.retrievalBackend) },
     { label: 'search.query', field: evidence('search.query', e.searchQuery) },
@@ -648,7 +665,7 @@ function buildWorkflowStepRows(
   payload: Record<string, unknown> | undefined,
   ev: NodeCorrelatedEvidence | undefined,
 ): ProfileEvidenceRow[] {
-  const e = ev ?? {};
+  const e: Partial<NodeCorrelatedEvidence> = ev ?? {};
   const stepId = payload?.['gen_ai.workflow.step_id'];
   return [
     {
@@ -699,7 +716,7 @@ export function buildProfileEvidenceRows(
       };
     // 'agent' | 'checkpoint' | 'human' | 'mission' | 'generic' — no payload
     // promotion here; their inspectors use dedicated views and keep all
-    // workload-specific / `basestation.aiops.*` attributes verbatim as raw.
+    // workload-specific attributes verbatim as raw.
     default:
       return { rows: [], leftoverPayload: payload };
   }

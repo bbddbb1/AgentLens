@@ -16,6 +16,7 @@ import { useGraphStore } from '@/stores/graphStore';
 import { useAuditStore } from '@/stores/auditStore';
 import { collectNodeEvidence } from '@/lib/rops/nodeEvidence';
 import { formatDurationMs } from '@/lib/rops/provenance';
+import type { RuntimeActivity } from '@agentlens/protocol';
 
 const roleIcons: Record<string, React.ReactNode> = {
   planner: <Brain size={16} />,
@@ -63,6 +64,7 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
   const satelliteCounts = nodeData.satelliteCounts as
     | { tools: number; memory: number; artifacts: number }
     | undefined;
+  const activity = nodeData.activity as RuntimeActivity | undefined;
 
   // ROPS R-4: exactly one L1 headline metric — duration_ms when completed,
   // else error_count when >0, else none. Deterministic, evidence/projection only.
@@ -174,8 +176,23 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
         </div>
       )}
 
+      {activity && (
+        <div className="mt-1 text-[10px] leading-relaxed text-[#9498b0]">
+          <span className="text-[#cfd3e6]">{activity.action}</span>
+          <span className="mx-1 text-[#4f536d]">·</span>
+          <span style={{ color: statusColor }}>{activity.outcome}</span>
+          {activity.duration_ms !== undefined && (
+            <>
+              <span className="mx-1 text-[#4f536d]">·</span>
+              <span>{formatDurationMs(activity.duration_ms)}</span>
+            </>
+          )}
+          <span className="ml-1 text-[8px] font-mono uppercase text-[#6b708a]">[projection]</span>
+        </div>
+      )}
+
       {/* ROPS R-4: single L1 headline metric */}
-      {headlineMetric && (
+      {!activity && headlineMetric && (
         <div className="mt-0.5 flex items-center gap-1.5">
           <span className="text-[10px] text-[#9498b0]">{headlineMetric.display}</span>
           <span className="text-[8px] font-mono tracking-wider uppercase text-[#6b708a]">

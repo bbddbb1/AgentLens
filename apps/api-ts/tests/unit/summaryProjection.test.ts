@@ -32,17 +32,17 @@ describe('describeRuntimeEvent', () => {
     expect(describeRuntimeEvent(event('task.started', { task: 'Collect logs', agent_id: 'worker' }, 2))).toContain('Collect logs');
   });
 
-  it('describes BSOps domain events after normalization', () => {
+  it('does not turn workload events into Core narrative', () => {
     expect(
       describeRuntimeEvent(
         event('hypothesis.proposed', { 'hypothesis.description': 'RF interference on sector 3' }, 3),
       ),
-    ).toContain('RF interference');
+    ).toBeNull();
     expect(
       describeRuntimeEvent(
         event('decision.made', { 'decision.type': 'root_cause', 'decision.summary': 'Faulty antenna' }, 4),
       ),
-    ).toContain('root_cause');
+    ).toBeNull();
   });
 });
 
@@ -66,7 +66,9 @@ describe('projectRuntimeSummary', () => {
     });
 
     expect(summary.progress.length).toBeGreaterThanOrEqual(4);
-    expect(summary.actions.some((a) => a.text.includes('search'))).toBe(true);
+    expect(summary.activities?.some((activity) => activity.kind === 'tool')).toBe(true);
+    expect(summary.activities?.some((activity) => activity.kind === 'human')).toBe(true);
+    expect(summary.actions.some((a) => a.text.includes('Approval needed'))).toBe(true);
     expect(summary.pending_work.some((p) => p.kind === 'interrupt')).toBe(true);
     expect(summary.requires_human).toBe(true);
     expect(summary.headline).toContain('human');
@@ -98,7 +100,7 @@ describe('projectRuntimeSummary', () => {
     expect(partial.progress.some((p) => p.text.includes('Step 2'))).toBe(false);
   });
 
-  it('classifies memory writes as evidence', () => {
+  it('falls back to event identity for memory writes when no stronger invocation identity exists', () => {
     const events = [
       event('memory.written', { memory_key: 'findings', agent_id: 'researcher' }, 0),
     ];
@@ -112,11 +114,14 @@ describe('projectRuntimeSummary', () => {
       events,
     });
 
-    expect(summary.evidence.length).toBe(1);
-    expect(summary.evidence[0].source).toBe('findings');
+    expect(summary.evidence.length).toBe(0);
+    expect(summary.activities).toHaveLength(1);
+    expect(summary.activities[0]?.id).toBe('memory:event:e-0');
+    expect(summary.activities[0]?.kind).toBe('memory');
+    expect(summary.agents[0]?.facts.produced_outputs[0]?.id).toBe('findings');
   });
 
-  it('surfaces failures as warnings', () => {
+  it('does not infer run-level blocking from child failure evidence alone even when the failed activity is visible', () => {
     const events = [
       event('task.failed', { task: 'Fetch data', agent_id: 'worker' }, 0),
     ];
@@ -130,8 +135,12 @@ describe('projectRuntimeSummary', () => {
       events,
     });
 
-    expect(summary.warnings.length).toBe(1);
-    expect(summary.is_blocked).toBe(true);
+    expect(summary.warnings.length).toBeGreaterThanOrEqual(1);
+    expect(summary.is_blocked).toBe(false);
+    expect(summary.activities).toHaveLength(1);
+    expect(summary.activities[0]?.kind).toBe('workflow');
+    expect(summary.agents[0]?.facts.status).toBe('failed');
+    expect(summary.agents[0]?.facts.warnings).toHaveLength(1);
   });
 
   it('projects per-agent node state from registration goal and events', () => {
@@ -155,5 +164,26 @@ describe('projectRuntimeSummary', () => {
     expect(agent!.generated?.current_understanding).toContain('Executor Router');
     expect(agent!.facts.status).toBe('active');
     expect(agent!.recent_runtime_events.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('keeps frame overview authority instead of auto-selecting the first activity', () => {
+    const events = [
+      event('tool.called', { agent_id: 'planner', tool_name: 'search' }, 0),
+    ];
+
+    const summary = projectRuntimeSummary({
+      mission_id: 'm1',
+      branch_id: 'main',
+      objective: 'Test',
+      status: 'active',
+      phase: 'executing',
+      events,
+    });
+
+    expect(summary.selected_activity_state).toEqual({
+      kind: 'overview',
+      reason: 'frame_overview',
+    });
+    expect(summary.selected_activity_id).toBeUndefined();
   });
 });

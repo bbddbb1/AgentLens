@@ -88,6 +88,7 @@ export function EdgeInspector() {
     baseEdges,
     highlightedEdgeId,
     setHighlightedEdgeId,
+    hiddenContext,
   } = useGraphStore();
 
   const connections = useMemo(() => {
@@ -116,7 +117,18 @@ export function EdgeInspector() {
       </div>
 
       {connections.length === 0 ? (
-        <p className="text-[11px] text-[#5d6180] italic">No connections for this node.</p>
+        hiddenContext?.kind === 'hidden_recorded_context' ? (
+          <div className="space-y-1">
+            <p className="text-[11px] text-[#cfd3e6]">{hiddenContext.disclosure}</p>
+            {hiddenContext.inspectHint && (
+              <p className="text-[10px] text-[#8f95b2]">{hiddenContext.inspectHint}</p>
+            )}
+          </div>
+        ) : hiddenContext?.kind === 'missing_relationship_evidence' ? (
+          <p className="text-[11px] text-[#5d6180] italic">{hiddenContext.disclosure}</p>
+        ) : (
+          <p className="text-[11px] text-[#5d6180] italic">No connections for this node.</p>
+        )
       ) : (
         <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
           {connections.map((row) => {

@@ -259,6 +259,21 @@ There is **no `Workflow` type** in the protocol. "Workflow" is the `gen_ai.workf
 
 ### 3.5 ToolInvocation
 
+---
+
+## Runtime Story Validation References
+
+For the coherent runtime execution story feature, use the following companion artifacts
+when validating frame consistency and evidence-grounded disclosure:
+
+- `apps/api-ts/tests/fixtures/runtimeStoryCorpus.ts`
+- `apps/web/tests/fixtures/runtimeStoryFixtures.ts`
+- `specs/001-runtime-execution-story/quickstart.md`
+- `specs/001-runtime-execution-story/usability-evaluation-template.md`
+
+If the external BSOps harness is not present in the local environment, treat the in-repo
+corpus fixtures and runtime-story unit suites as the required fallback validation path.
+
 **Mapped core**: the `tool.called` / `tool.completed` / `tool.failed` events (`RuntimeEventType`); payload keys `gen_ai.tool.name`, `gen_ai.tool.input`, `gen_ai.tool.output`, `gen_ai.tool.status` (`semconv.ts:26-29`); surfaced as `ProducedOutput` with `type === 'tool'` and `value = { input, output }` (`projectionScratch.ts:234-249`). There is no first-class `ToolInvocation` node type today; task/tool nodes exist only as `GraphNode` with `type === 'tool'`. ROPS presents a ToolInvocation as the event-bound record.
 
 | Field | Source | Class |

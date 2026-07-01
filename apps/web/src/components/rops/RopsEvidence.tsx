@@ -1,14 +1,14 @@
 /**
  * ROPS Level 4 — Evidence View (spec section 5.2 R-6 / 6 / 9.4 / 11).
  *
- * The audit fallback. Shows the raw `EventEnvelope` and its `payload` / `metadata`
+ * The audit fallback. Shows the recorded `EventEnvelope` and its `payload` / `metadata`
  * / `model` / `causal` / `policy` / `error` / `content_hash` / `previous_hash`
  * verbatim. L4 is where an operator verifies a projection against the ledger:
  * "if a projection looks wrong, L4 is where the operator verifies against the
  * ledger." (spec R-6)
  *
  * Nothing is interpreted. Unrecognized payload/metadata keys appear verbatim
- * under "Raw Attributes" (spec 8.2). No truncation of raw evidence (spec 7.4):
+ * under "Recorded Attributes" (spec 8.2). No truncation of recorded evidence (spec 7.4):
  * wrap/scroll only.
  */
 'use client';
@@ -30,7 +30,7 @@ export function RopsEvidence({ envelope, onClose }: RopsEvidenceProps) {
         <FileText size={20} className="text-[#5d6180] mx-auto mb-2" />
         <div className="text-[11px] text-[#9498b0]">No evidence selected.</div>
         <div className="text-[10px] text-[#5d6180] mt-1">
-          Use the L4 action on an inspector field or event to open the raw EventEnvelope.
+          Use the L4 action on an inspector field or event to open the recorded EventEnvelope.
         </div>
       </div>
     );
@@ -101,7 +101,7 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
 
       {/* Unrecognized payload keys — L4 only, verbatim (spec 8.2) */}
       {unrecognized.length > 0 && (
-        <EvidenceSection title="Payload (raw / unrecognized)">
+        <EvidenceSection title="Payload (verbatim / unrecognized)">
           <div className="text-[9px] text-[#6b708a] mb-1">
             Keys not in the ROPS whitelist. Shown verbatim; never interpreted.
           </div>
@@ -111,7 +111,7 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
 
       {/* Metadata — L4 only (spec 5.1 / 8.2) */}
       {metadata && Object.keys(metadata).length > 0 && (
-        <EvidenceSection title="Metadata (raw)">
+        <EvidenceSection title="Metadata (verbatim)">
           <RawKeyValue entries={Object.entries(metadata) as Array<[string, unknown]>} onCopy={copy} copied={copied} />
         </EvidenceSection>
       )}

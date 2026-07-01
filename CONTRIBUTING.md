@@ -40,13 +40,23 @@ We follow a standard **Fork → Branch → Pull Request** model:
 
 Changes to protocol, replay, governance, or branch semantics must respect AgentLens core rules. Before merging, verify:
 
+- Raw recorded telemetry remains the source of truth; projections disclose evidence gaps
+  instead of inferring hidden intent or domain meaning.
+- The L0 raw evidence, L1 universal deterministic projection, and L2 optional lens
+  boundaries remain one-way; L2 cannot alter core runtime facts.
 - Canonical history is append-only; corrections are new events.
 - Replay must be deterministic from canonical events (gaps → explicit markers).
 - Branches are isolated histories with lineage, not UI filters.
 - Semantic conventions (`EventEnvelope`, `semconv`) are the compatibility boundary.
 - Governance decisions (policy, HITL) are ledger events, not side channels.
+- Existing evidence and runtime concepts are reused before proposing new schemas, node
+  kinds, or replay semantics.
+- Runtime-affecting behavior is specified first and validated with a domain-specific
+  workload plus at least one generic/non-domain fixture.
 
-See [docs/explanation/architecture.md#design-constraints](docs/explanation/architecture.md#design-constraints) for the full list and review checklist.
+The [AgentLens Constitution](.specify/memory/constitution.md) is authoritative. See
+[docs/explanation/architecture.md#design-constraints](docs/explanation/architecture.md#design-constraints)
+for the detailed architecture rules and review checklist.
 
 ## Coding Standards
 

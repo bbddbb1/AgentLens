@@ -5,7 +5,12 @@
 import { create } from 'zustand';
 import type { Node, Edge } from '@xyflow/react';
 
-import type { EdgeType, GraphEdge, GraphNode, GraphSnapshot } from '@agentlens/protocol';
+import type {
+  EdgeType,
+  GraphEdge,
+  GraphNode,
+  GraphSnapshot,
+} from '@agentlens/protocol';
 export type { GraphEdge, GraphNode, GraphSnapshot } from '@agentlens/protocol';
 
 import {
@@ -14,6 +19,7 @@ import {
   defaultEdgeVisibility,
   edgeVisibilityFromPreset,
   getZoomBand,
+  type HiddenGraphContext,
   type EdgeLayerPreset,
   type FocusDepth,
   type TracePreset,
@@ -47,6 +53,7 @@ interface GraphStore {
   visibleEdgeCount: number;
   totalEdgeCount: number;
   satelliteCounts: Record<string, { tools: number; memory: number; artifacts: number }>;
+  hiddenContext: HiddenGraphContext | null;
   layoutPositions: Record<string, { x: number; y: number }>;
 
   setNodes: (nodes: Node[]) => void;
@@ -136,6 +143,8 @@ function graphNodesToFlowNodes(
       sourceSpanId: gn.source_span_id,
       sourceEventId: gn.source_event_id,
       spanId: gn.span_id,
+      projectionProfile: gn.projection_profile,
+      activity: gn.activity,
       hasPendingInterrupt: false,
       satelliteCounts: satelliteCounts[gn.id],
       highlighted: highlightedNodeIds.includes(gn.id),
@@ -184,6 +193,7 @@ function buildDisplayGraph(state: GraphStore): Pick<
   | 'totalEdgeCount'
   | 'zoomBand'
   | 'satelliteCounts'
+  | 'hiddenContext'
 > {
   const visibility = computeVisibleGraph({
     nodes: state.baseNodes,
@@ -250,6 +260,7 @@ function buildDisplayGraph(state: GraphStore): Pick<
     totalEdgeCount: visibility.totalEdgeCount,
     zoomBand: visibility.zoomBand,
     satelliteCounts: visibility.satelliteCounts,
+    hiddenContext: visibility.hiddenContext,
   };
 }
 
@@ -280,6 +291,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   visibleEdgeCount: 0,
   totalEdgeCount: 0,
   satelliteCounts: {},
+  hiddenContext: null,
   layoutPositions: {},
 
   setNodes: (nodes) => set({ nodes }),
@@ -426,6 +438,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
         totalEdgeCount: 0,
         zoomBand: getZoomBandFromLevel(state.zoomLevel),
         satelliteCounts: {},
+        hiddenContext: null,
       });
       return;
     }

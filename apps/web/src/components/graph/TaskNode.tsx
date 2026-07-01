@@ -14,6 +14,7 @@ import { useGraphStore } from '@/stores/graphStore';
 import { useAuditStore } from '@/stores/auditStore';
 import { collectNodeEvidence } from '@/lib/rops/nodeEvidence';
 import { formatDurationMs } from '@/lib/rops/provenance';
+import type { RuntimeActivity } from '@agentlens/protocol';
 
 const statusIcons: Record<string, React.ReactNode> = {
   idle: <Circle size={14} className="text-[#5d6180]" />,
@@ -31,6 +32,7 @@ function TaskNodeComponent({ data, selected }: NodeProps) {
   const metadata = (nodeData.metadata as Record<string, unknown>) || {};
   const progress = typeof metadata.progress === 'number' ? metadata.progress : undefined;
   const color = '#67e8f9';
+  const activity = nodeData.activity as RuntimeActivity | undefined;
 
   // ROPS R-4: L1 headline metric — duration_ms (projection) when completed,
   // else error_count (evidence) when >0, else progress if present.
@@ -87,6 +89,11 @@ function TaskNodeComponent({ data, selected }: NodeProps) {
               {label}
             </div>
           </Tooltip>
+          {activity?.subtitle && (
+            <div className="mt-0.5 truncate text-[9px] font-mono text-[#5d6180]">
+              {activity.subtitle}
+            </div>
+          )}
           {summary && summary !== label && (
             <Tooltip content={summary} side="right">
               <div className="text-[10px] text-[#5d6180] mt-1 line-clamp-1">
@@ -94,7 +101,19 @@ function TaskNodeComponent({ data, selected }: NodeProps) {
               </div>
             </Tooltip>
           )}
-          {headlineMetric && (
+          {activity ? (
+            <div className="mt-1 text-[9px] text-[#9498b0]">
+              <span className="text-[#cfd3e6]">{activity.action}</span>
+              <span className="mx-1 text-[#4f536d]">·</span>
+              <span>{activity.outcome}</span>
+              {activity.duration_ms !== undefined && (
+                <>
+                  <span className="mx-1 text-[#4f536d]">·</span>
+                  <span>{formatDurationMs(activity.duration_ms)}</span>
+                </>
+              )}
+            </div>
+          ) : headlineMetric && (
             <div className="mt-1 flex items-center gap-1.5">
               <span className="text-[9px] text-[#9498b0]">{headlineMetric.display}</span>
               {headlineMetric.provenance !== 'evidence' && (

@@ -116,13 +116,37 @@ extrasRouter.get('/api/v1/missions/:missionId/runtime-summary', async (req, res)
   }
 });
 
+extrasRouter.get('/api/v1/missions/:missionId/explanation', async (req, res) => {
+  try {
+    const mission = await missionStore.getMission(req.params.missionId);
+    if (!mission) return res.status(404).json({ detail: 'Mission not found' });
+
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    const sequenceNum = req.query.sequence_num !== undefined ? Number(req.query.sequence_num) : undefined;
+    const explanation = await missionStore.getRuntimeExplanation(
+      req.params.missionId,
+      branchId,
+      Number.isFinite(sequenceNum) ? sequenceNum : undefined,
+    );
+    if (!explanation) return res.status(404).json({ detail: 'Mission not found' });
+
+    return res.json(explanation);
+  } catch (error) {
+    return respondRouteError(res, error, 'Failed to load runtime explanation');
+  }
+});
+
 extrasRouter.post('/api/v1/missions/:missionId/runtime-summary/enhance', async (req, res) => {
   try {
     const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
     const summary = await missionStore.getRuntimeSummary(req.params.missionId, branchId, undefined, true);
     if (!summary) return res.status(404).json({ detail: 'Mission not found' });
+    const explanation = await missionStore.getRuntimeExplanation(req.params.missionId, branchId);
 
     await publishMissionEvent(req.params.missionId, 'runtime.summary.updated', { runtime_summary: summary });
+    if (explanation) {
+      await publishMissionEvent(req.params.missionId, 'runtime.explanation.updated', { runtime_explanation: explanation });
+    }
     return res.status(201).json(summary);
   } catch (error) {
     return respondRouteError(res, error, 'Failed to enhance runtime summary');

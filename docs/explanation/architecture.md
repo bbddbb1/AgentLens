@@ -1,7 +1,7 @@
 # Architecture
 
 Status: accepted  
-Last updated: 2026-06-11  
+Last updated: 2026-06-29
 Audience: maintainers, adapter authors
 
 AgentLens is **runtime infrastructure for autonomous agent execution**. It records execution as a canonical, branch-aware, append-only event ledger and derives observability, governance, replay, and human control from that ledger.
@@ -24,7 +24,27 @@ The UI is a projection over runtime truth — not the architecture. For current 
 
 Your agent application (LangGraph, CrewAI, custom) emits OTel spans/events via SDK adapters. AgentLens ingests OTLP, normalizes to the ledger, replays state, and serves projections (graph, policy, HITL, branch APIs) to the web UI.
 
-OpenTelemetry is the **transport and ecosystem bridge**. AgentLens defines the **agent runtime semantic layer** above raw spans: actors, causality, policy decisions, branch identity, interrupts, and provenance.
+OpenTelemetry is the **transport and ecosystem bridge**. AgentLens records versioned,
+workload-neutral runtime contracts above raw spans: observed actors, explicit
+relationships, policy decisions, branch identity, interrupts, and provenance. A core
+fact exists only when recorded evidence supports it; timing or framework convention alone
+does not establish causality or intent.
+
+### Constitutional projection layers
+
+The [AgentLens Constitution](../../.specify/memory/constitution.md) defines a one-way
+semantic architecture:
+
+| Layer | Responsibility | Authority |
+|---|---|---|
+| **L0 - Raw evidence** | Recorded telemetry and its durable evidence representation, including provenance, integrity, redaction, and ordering | Source of runtime truth |
+| **L1 - Universal projection** | Deterministic, frame-scoped reconstruction of workload-neutral runtime facts supported by L0 | Core read model; never independent truth |
+| **L2 - Domain/framework lens** | Optional labels, interpretations, and presentation context for a workload or framework | Decoration only |
+
+Dependencies flow L0 to L1 to L2. L2 must not feed identity, lifecycle, outcome,
+topology, causality, provenance, or frame membership back into L1. Facts that cannot be
+expressed universally remain lens decoration or raw evidence. AgentLens is therefore a
+passive runtime observability platform, not a workload-domain reasoning system.
 
 ### Existing building blocks
 
@@ -116,7 +136,8 @@ Events are **versioned**. Old records must remain interpretable after protocol c
 Three levels — strengthen them in order:
 
 1. **Projection replay** — Rebuild state graphs and runtime state from events. *Current focus.*
-2. **Diagnostic replay** — Explain why a state was true (causality, policy, provenance).
+2. **Diagnostic replay** — Explain why a state was true only when recorded causality,
+   policy, and provenance evidence supports the explanation.
 3. **Execution replay** — Re-run or fork under controlled external dependency policies.
 
 Replay must distinguish:
@@ -208,11 +229,14 @@ Strengthening `mission_events` and `EventEnvelope` has higher leverage than new 
 
 ### Semantics over spans
 
-Consume OTel spans and events; normalize to agent runtime semantics:
+Consume OTel spans and events; normalize recorded fields to universal agent runtime
+semantics:
 
 actor, causality, model provenance, tool effects, policy, branch lineage, interrupts, state transitions, memory/artifact interactions, error attribution.
 
-Plain traces are necessary but insufficient.
+Each projected semantic fact must retain evidence provenance. Missing semantic evidence
+stays missing; adapter conventions and temporal proximity are not substitutes. Plain
+traces are necessary but insufficient.
 
 ### Governance as execution
 
@@ -341,6 +365,18 @@ Redaction, encryption, minimization, and retention apply **before** data is stor
 | Client-side encryption, redaction markers | UI masking as security |
 | Retention by event class | Privacy controls added only after ingestion |
 
+### 11. Lenses cannot redefine core runtime truth
+
+Domain and framework lenses may add labels or context after universal projection. They
+must not create or change core identity, lifecycle, outcome, topology, causality,
+provenance, replay behavior, or frame membership.
+
+| Allowed | Rejected |
+|---|---|
+| Optional namespaced decoration with evidence references | Domain-specific node kinds in L1 |
+| Framework labels over stable core identities | Lens-only metadata changing core status |
+| Raw evidence fallback for unprojectable semantics | A domain fixture defining universal causality |
+
 ### Review checklist
 
 Before merging protocol, replay, or governance changes:
@@ -352,6 +388,9 @@ Before merging protocol, replay, or governance changes:
 - [ ] Are policy and HITL outcomes recorded as events?
 - [ ] Is provenance attached at write time?
 - [ ] Does UI/API expose projection, not private state?
+- [ ] Is each L1 fact evidence-backed and deterministic within one explicit frame?
+- [ ] Can the same behavior pass both a domain-specific and a generic/non-domain fixture?
+- [ ] Are L2 lenses unable to mutate core runtime semantics?
 
 ## Planned evolution (Gen 1–4)
 

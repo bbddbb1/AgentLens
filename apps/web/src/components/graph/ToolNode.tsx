@@ -12,6 +12,8 @@ import { RopsHover } from '@/components/rops/RopsHover';
 import { useGraphStore } from '@/stores/graphStore';
 import { useAuditStore } from '@/stores/auditStore';
 import { collectNodeEvidence } from '@/lib/rops/nodeEvidence';
+import { formatDurationMs } from '@/lib/rops/provenance';
+import type { RuntimeActivity } from '@agentlens/protocol';
 
 const toolIcons: Record<string, React.ReactNode> = {
   memory: <Database size={14} />,
@@ -27,6 +29,7 @@ function ToolNodeComponent({ data, selected }: NodeProps) {
   const invocationCount = typeof metadata.invocationCount === 'number' ? metadata.invocationCount : undefined;
   const color = nodeType === 'memory' ? '#34d399' : nodeType === 'artifact' ? '#fb923c' : '#fbbf24';
   const Icon = toolIcons[nodeType] || <Wrench size={14} />;
+  const activity = nodeData.activity as RuntimeActivity | undefined;
 
   const [isHoverOpen, setIsHoverOpen] = useState(false);
   const baseNodes = useGraphStore((s) => s.baseNodes);
@@ -73,6 +76,19 @@ function ToolNodeComponent({ data, selected }: NodeProps) {
           </div>
         )}
       </div>
+      {activity && (
+        <div className="mt-1.5 text-[9px] text-[#9498b0]">
+          <span className="text-[#cfd3e6]">{activity.action}</span>
+          <span className="mx-1 text-[#4f536d]">·</span>
+          <span>{activity.outcome}</span>
+          {activity.duration_ms !== undefined && (
+            <>
+              <span className="mx-1 text-[#4f536d]">·</span>
+              <span>{formatDurationMs(activity.duration_ms)}</span>
+            </>
+          )}
+        </div>
+      )}
 
       <Handle
         type="source"
