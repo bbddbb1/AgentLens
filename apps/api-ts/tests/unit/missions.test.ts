@@ -445,6 +445,8 @@ describe('missionStore — getAuditEvents and EventEnvelope', () => {
     expect(event.model).toEqual({ model_name: 'gemini-3.5-flash' });
     expect(event.error).toEqual({ source: 'model', cause: 'hallucination' });
     expect(event.policy).toEqual({ rule_id: 'rule1', decision: 'allow' });
+    expect(response.integrity.is_valid).toBeNull();
+    expect(response.integrity.verification_status).toBe('unsupported');
   });
 
   it('filters by branch and sequence number in getAuditEvents query', async () => {

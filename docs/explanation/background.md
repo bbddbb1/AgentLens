@@ -46,8 +46,8 @@ Instead of forcing developers to adopt a proprietary runtime or coupling directl
 *   **Schema-Driven Ingestion**: The data plane transmits telemetry using standard HTTP/JSON traces at `/v1/traces`.
 *   **Decoupled Instrumentation**: Frameworks like LangGraph use a non-invasive callback handler (`sdk-langgraph`) that runs out-of-band and does not alter agent execution.
 
-### Telemetry Normalization & EventEnvelope
-At the ingestion boundary (`SpanNormalizer.ts`), OTLP spans and attribute maps are parsed into a rich, structured **`EventEnvelope`** schema:
+### Telemetry Normalization & Projected EventEnvelope
+At the ingestion boundary, OTLP spans and attribute maps are persisted as span evidence. The server derives compatible **`EventEnvelope`** values for replay and presentation from that evidence:
 1.  **Actor Attribution**: Classifies *WHO* generated the event (`actor_type: 'agent' | 'tool' | 'human' | 'policy' | 'system'`).
 2.  **Causal Context**: Captures *WHY* the event occurred by establishing chronological and parent-child span lineages (`parent_span_id`, `tool_call_id`, `decision_for_event_id`).
 3.  **Model Provenance**: Attributes decisions to exact LLM parameters (tokens used, temperature, stop reason, version).
@@ -56,9 +56,9 @@ At the ingestion boundary (`SpanNormalizer.ts`), OTLP spans and attribute maps a
 
 ---
 
-## 3. Event-Sourced Replay & Dynamic Graph Projections
+## 3. Span-Driven Replay & Dynamic Graph Projections
 
-The AgentLens control plane is built on an **Event-Sourced** architecture. The database does not maintain a mutable "latest state" of the graph. Instead, the canonical source of truth is the **immutable event ledger** (`mission_events` table).
+The current AgentLens control plane persists OTLP spans (including span events), interrupts, and branch/control records. Replay, graph snapshots, current runtime state, summaries, and `EventEnvelope`-shaped timeline values are deterministic server-side projections; they are not a persisted event ledger.
 
 ### The Replay Algorithm (`replayMissionEvents`)
 To project the execution graph at any sequence number:
@@ -69,13 +69,10 @@ To project the execution graph at any sequence number:
     *   `span.started` → Transitions agent/task status.
     *   `tool.called` → Spawns a tool node and connects it with a `uses` edge.
     *   `delegation` / `handoff.requested` → Creates a `delegation` edge between agents.
-4.  Optionally persist structural snapshots (`graph_snapshots` table) to support instantaneous time-travel navigation.
+4.  Derive a structural snapshot on demand for time-travel navigation.
 
-### Cryptographic Ledgers for Tamper Evidence
-To guarantee the historical audit trail is tamper-proof, every event appended to a branch is cryptographically bound using a SHA-256 hash chain:
-$$\text{content\_hash} = \text{SHA256}(\text{mission\_id} + \text{branch\_id} + \text{sequence\_num} + \text{event\_type} + \text{payload} + \text{previous\_hash})$$
-
-If a payload is tampered with, or if an event is deleted/inserted out of order, the `verifyMissionIntegrity` API detects the lineage break immediately, flagging the mission as `COMPROMISED` in the UI.
+### Integrity Reporting
+The current span-backed persistence does not persist or verify a hash chain. Until that support exists, `verifyMissionIntegrity` reports `unsupported` / not verified and the UI makes no claim that evidence is cryptographically secure or compromised.
 
 ---
 

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { CreateMissionSchema, OtlpIngestRequestSchema, UpdateMissionSchema } from '@agentlens/protocol';
+import { CreateMissionSchema, OtlpIngestRequestSchema, SPAN_PROJECTION_VERSION, UpdateMissionSchema, type GraphSnapshotsResponse, type ReplayUpdatedMissionRealtimeMessage } from '@agentlens/protocol';
 import { publishMissionEvent } from '../realtime/events.js';
 import { missionStore } from '../services/missionStore.js';
 
@@ -144,8 +144,12 @@ missionsRouter.post('/api/v1/ingest/otlp', async (req, res) => {
   );
   if (!ingestResult) return res.status(400).json({ detail: 'No spans accepted' });
 
-  const branchId = parsed.data.branch_id;
-  const missionId = parsed.data.mission_id;
+  const branchId = ingestResult.branch_id;
+  const missionId = ingestResult.mission_id;
+  if (ingestResult.evidence_changed) {
+    const replayUpdated: ReplayUpdatedMissionRealtimeMessage = { type: 'replay.updated', mission_id: missionId, branch_id: branchId };
+    void publishMissionEvent(replayUpdated.mission_id, replayUpdated.type, { branch_id: replayUpdated.branch_id }).catch(() => undefined);
+  }
   if (missionId) {
     void missionStore.getRuntimeSummary(missionId, branchId).then((runtimeSummary) => {
       if (runtimeSummary) {
@@ -160,7 +164,7 @@ missionsRouter.post('/api/v1/ingest/otlp', async (req, res) => {
     void missionStore.scheduleNodeProjectionEnhancements(missionId, branchId).catch(() => undefined);
   }
 
-  return res.status(202).json({ accepted: parsed.data.spans.length, mission_id: parsed.data.mission_id });
+  return res.status(202).json({ accepted: parsed.data.spans.length, mission_id: missionId });
 });
 
 
@@ -180,8 +184,12 @@ missionsRouter.post('/v1/traces', async (req, res) => {
   );
   if (!ingestResult) return res.status(400).json({ partialSuccess: { rejectedSpans: parsed.data.spans.length, errorMessage: 'No spans accepted' } });
 
-  const branchId = parsed.data.branch_id;
-  const missionId = parsed.data.mission_id;
+  const branchId = ingestResult.branch_id;
+  const missionId = ingestResult.mission_id;
+  if (ingestResult.evidence_changed) {
+    const replayUpdated: ReplayUpdatedMissionRealtimeMessage = { type: 'replay.updated', mission_id: missionId, branch_id: branchId };
+    void publishMissionEvent(replayUpdated.mission_id, replayUpdated.type, { branch_id: replayUpdated.branch_id }).catch(() => undefined);
+  }
   if (missionId) {
     void missionStore.getRuntimeSummary(missionId, branchId).then((runtimeSummary) => {
       if (runtimeSummary) {
@@ -211,5 +219,6 @@ missionsRouter.get('/api/v1/missions/:missionId/graph/snapshots', async (req, re
   const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
   const snapshots = await missionStore.getSnapshots(req.params.missionId, offset, limit, branchId);
   if (!snapshots) return res.status(404).json({ detail: 'Mission not found' });
-  return res.json({ snapshots, offset, limit, count: snapshots.length });
+  const response: GraphSnapshotsResponse = { projection_version: SPAN_PROJECTION_VERSION, snapshots, offset, limit, count: snapshots.length };
+  return res.json(response);
 });

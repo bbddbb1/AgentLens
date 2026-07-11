@@ -1,0 +1,28 @@
+{
+  "fixture_id": "llm_token_usage",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "kind": "agent",
+        "name": "reasoner"
+      },
+      {
+        "kind": "llm",
+        "model": "gpt-4o-mini",
+        "run_id": "6c6c6d2d-7275-6e00-0000-000000000000",
+        "tokens_input": 11,
+        "tokens_output": 7
+      }
+    ],
+    "coverage_notes": "Token usage depends on provider metadata; matrix status is partial."
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "6ba71c9af25c63619e2c4fa00bdb9927fb4a3bc6377074b3506932a818ae5c49"
+  }
+}

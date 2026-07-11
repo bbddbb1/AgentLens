@@ -1,0 +1,31 @@
+{
+  "fixture_id": "tool_failed",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "kind": "agent",
+        "name": "researcher",
+        "outcome": "success"
+      },
+      {
+        "kind": "tool",
+        "name": "web_search",
+        "never_success": true,
+        "outcome": "failed",
+        "run_id": "746f6f6c-2d66-6169-6c65-642d746f6f6c"
+      }
+    ],
+    "safety": {
+      "failure_never_success": true
+    }
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "accbd9de38b4a85b4eceb4b8d66763976c70aed73c61dfce2ff2bfc3488aba1d"
+  }
+}

@@ -166,6 +166,18 @@ class TestAgentLensOtlpJsonExporter:
 
         assert result == SpanExportResult.SUCCESS
 
+    @pytest.mark.parametrize("status_code", [200, 202])
+    def test_export_accepts_every_representative_2xx_response(self, status_code):
+        from opentelemetry.sdk.trace.export import SpanExportResult
+        exporter = AgentLensOtlpJsonExporter(endpoint="http://localhost:8001/v1/traces")
+        span = self._make_mock_span()
+        mock_response = MagicMock(status_code=status_code)
+        with patch.object(exporter, '_client') as mock_client:
+            mock_client.post.return_value = mock_response
+            result = exporter.export([span])
+
+        assert result == SpanExportResult.SUCCESS
+
     @patch.dict("os.environ", {"AGENTLENS_SANDBOX_MODE": "1", "AGENTLENS_SANDBOX_OUTPUT_DIR": "/tmp/test_sandbox"})
     def test_export_sandbox_mode(self):
         import json
@@ -201,6 +213,18 @@ class TestAgentLensOtlpJsonExporter:
 
         mock_response = MagicMock()
         mock_response.status_code = 500
+        with patch.object(exporter, '_client') as mock_client:
+            mock_client.post.return_value = mock_response
+            result = exporter.export([span])
+
+        assert result == SpanExportResult.FAILURE
+
+    @pytest.mark.parametrize("status_code", [400, 500])
+    def test_export_rejects_non_2xx_response(self, status_code):
+        from opentelemetry.sdk.trace.export import SpanExportResult
+        exporter = AgentLensOtlpJsonExporter(endpoint="http://localhost:8001/v1/traces")
+        span = self._make_mock_span()
+        mock_response = MagicMock(status_code=status_code)
         with patch.object(exporter, '_client') as mock_client:
             mock_client.post.return_value = mock_response
             result = exporter.export([span])

@@ -77,8 +77,10 @@ export function RightSidebar({
     return {
       events: auditEvents,
       integrity: auditIntegrity ?? {
-        is_valid: true,
-        hash_chain_status: 'valid',
+        is_valid: null,
+        verification_status: 'unsupported',
+        verification_reason: 'Cryptographic hash verification is not implemented for this span-backed runtime evidence.',
+        hash_chain_status: 'not_verified',
         branch_id: currentBranchId ?? 'main',
         total_events: auditEvents.length,
       },
@@ -513,27 +515,24 @@ export function RightSidebar({
                 </div>
               ) : auditData?.integrity ? (
                 <div className={`rounded-xl border p-3 flex items-start gap-3 ${
-                  auditData.integrity.is_valid
+                  auditData.integrity.is_valid === true
                     ? 'border-[rgba(52,211,153,0.18)] bg-[rgba(52,211,153,0.04)]'
                     : 'border-[rgba(244,63,94,0.18)] bg-[rgba(244,63,94,0.04)]'
                 }`}>
-                  {auditData.integrity.is_valid ? (
+                  {auditData.integrity.is_valid === true ? (
                     <Shield size={20} className="text-[#34d399] shrink-0 mt-0.5" />
                   ) : (
                     <ShieldAlert size={20} className="text-[#f43f5e] shrink-0 mt-0.5" />
                   )}
                   <div className="space-y-1">
                     <div className="text-xs font-bold text-[#eef1fa] flex items-center gap-1.5">
-                      Ledger Hash Chain: 
-                      <span className={auditData.integrity.is_valid ? 'text-[#34d399]' : 'text-[#f43f5e]'}>
-                        {auditData.integrity.is_valid ? 'SECURE' : 'COMPROMISED'}
+                      Integrity verification:
+                      <span className={auditData.integrity.is_valid === true ? 'text-[#34d399]' : auditData.integrity.is_valid === false ? 'text-[#f43f5e]' : 'text-[#fbbf24]'}>
+                        {auditData.integrity.is_valid === true ? 'VERIFIED' : auditData.integrity.is_valid === false ? 'INVALID' : 'NOT VERIFIED'}
                       </span>
                     </div>
                     <p className="text-[10px] text-[#9498b0] leading-relaxed">
-                      {auditData.integrity.is_valid 
-                        ? 'All event payloads mathematically tied. Integrity cryptographically proven via SHA-256.'
-                        : 'Tampering or hash broken detected in branch ledger! Verify sequence parameters.'
-                      }
+                      {auditData.integrity.verification_reason}
                     </p>
                     <div className="text-[9px] font-mono text-[#5d6180]">
                       Branch: {auditData.integrity.branch_id} 鈥?Verified: {auditData.integrity.total_events} events

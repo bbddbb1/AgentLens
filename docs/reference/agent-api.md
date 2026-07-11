@@ -123,19 +123,17 @@ sequenceDiagram
     User->>SDK: lens.mission("objective")
     SDK->>SDK: start span (mission)
     SDK->>API: POST /v1/traces (batch)
-    API->>DB: INSERT mission_events
-    API->>DB: replay & build snapshot
-    API->>WS: broadcast graph.snapshot.created
-    WS->>UI: push snapshot frame
+    API->>DB: INSERT spans and control evidence
+    API->>WS: broadcast replay.updated
+    WS->>UI: reload derived replay for the branch
 
     User->>SDK: mission.agent("planner")
     SDK->>SDK: start span (agent task)
     SDK->>SDK: agent.record_handoff("researcher", ...)
     SDK->>API: POST /v1/traces (batch)
-    API->>DB: INSERT events (delegation, handoff)
-    API->>DB: replay & build snapshot
-    API->>WS: broadcast updated graph
-    WS->>UI: push updated frame
+    API->>DB: INSERT spans and control evidence
+    API->>WS: broadcast replay.updated
+    WS->>UI: reload derived replay for the branch
 
     User->>SDK: agent.request_human_review("risk")
     SDK->>SDK: add_event(INTERRUPT_REQUESTED)

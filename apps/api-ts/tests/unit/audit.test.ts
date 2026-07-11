@@ -9,11 +9,12 @@ vi.mock('../../src/db/postgres.js', () => ({
 }));
 
 describe('Audit Integrity Verification', () => {
-  it('returns a valid stub report', async () => {
-    // mock getMission to return something if needed, but verifyMissionIntegrity doesn't even call getMission in its stub implementation
+  it('returns an unsupported, unevaluated report', async () => {
     const report = await missionStore.verifyMissionIntegrity('550e8400-e29b-41d4-a716-446655440000');
-    expect(report.is_valid).toBe(true);
+    expect(report.is_valid).toBeNull();
+    expect(report.verification_status).toBe('unsupported');
     expect(report.branch_reports).toHaveLength(1);
-    expect(report.branch_reports[0].is_valid).toBe(true);
+    expect(report.branch_reports[0].is_valid).toBeNull();
+    expect(report.branch_reports[0].verification_status).toBe('unsupported');
   });
 });

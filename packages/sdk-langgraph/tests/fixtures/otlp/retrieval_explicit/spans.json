@@ -1,0 +1,70 @@
+{
+  "adapter": "AgentLensLangGraphCallbackHandler",
+  "fixture_id": "retrieval_explicit",
+  "generator": "packages/sdk-langgraph/tests/helpers/capture_otlp.py",
+  "library_versions": {
+    "agentlens_sdk_core": "0.1.0",
+    "agentlens_sdk_langgraph": "0.1.0",
+    "langchain_core": "1.3.3",
+    "langgraph": "1.1.10",
+    "opentelemetry_api": "1.41.1"
+  },
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "0486b89dd043af089e30fe0817af2f95fbbd0d5269c46ea5b15273237398a033"
+  },
+  "spans": [
+    {
+      "attributes": {
+        "agent.span.kind": "invoke_agent",
+        "agentlens.langgraph.activity_correlation_id": "72657472-2d61-6765-6e74-000000000000",
+        "agentlens.langgraph.run_id": "72657472-2d61-6765-6e74-000000000000",
+        "agentlens.native_execution_key": "langgraph|run:72657472-2d61-6765-6e74-000000000000",
+        "gen_ai.agent.framework": "langgraph",
+        "gen_ai.agent.id": "rag",
+        "gen_ai.agent.name": "rag",
+        "gen_ai.agent.role": "rag",
+        "gen_ai.agent.task": "rag"
+      },
+      "end_time_unix_nano": "1000501000000",
+      "events": [
+        {
+          "attributes": {
+            "agentlens.langgraph.activity_correlation_id": "72657472-2d72-756e-0000-000000000000",
+            "agentlens.langgraph.parent_run_id": "72657472-2d61-6765-6e74-000000000000",
+            "agentlens.langgraph.retrieval": "true",
+            "agentlens.langgraph.run_id": "72657472-2d72-756e-0000-000000000000",
+            "agentlens.native_execution_key": "langgraph|run:72657472-2d72-756e-0000-000000000000",
+            "gen_ai.tool.input": "what is LangGraph?",
+            "gen_ai.tool.name": "vector_store",
+            "gen_ai.tool.status": "active"
+          },
+          "name": "agent.tool.call",
+          "time_unix_nano": "1000001000000"
+        },
+        {
+          "attributes": {
+            "agentlens.langgraph.activity_correlation_id": "72657472-2d72-756e-0000-000000000000",
+            "agentlens.langgraph.parent_run_id": "72657472-2d61-6765-6e74-000000000000",
+            "agentlens.langgraph.retrieval": "true",
+            "agentlens.langgraph.run_id": "72657472-2d72-756e-0000-000000000000",
+            "agentlens.native_execution_key": "langgraph|run:72657472-2d72-756e-0000-000000000000",
+            "gen_ai.tool.name": "vector_store",
+            "gen_ai.tool.output": "documents:2",
+            "gen_ai.tool.status": "success"
+          },
+          "name": "agent.tool.call",
+          "time_unix_nano": "1000001001000"
+        }
+      ],
+      "name": "agent:rag",
+      "operation_name": "agent:rag",
+      "parent_span_id": "",
+      "span_id": "0000000000000001",
+      "start_time_unix_nano": "1000001000000",
+      "status_code": "OK",
+      "status_message": "",
+      "trace_id": "00000000000000000000000000000001"
+    }
+  ]
+}

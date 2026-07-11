@@ -1,0 +1,31 @@
+{
+  "fixture_id": "unresolved_target",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "kind": "agent",
+        "name": "supervisor"
+      }
+    ],
+    "relationships": [
+      {
+        "fabricate_edge": false,
+        "kind": "handoff",
+        "resolution": "unresolved",
+        "target": "missing_agent"
+      }
+    ],
+    "safety": {
+      "no_fabricated_edge": true
+    }
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "384a3f43e5a0fc22a1560ed889a42f7ae38218c6878e73753c45b981f0bd0582"
+  }
+}

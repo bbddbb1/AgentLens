@@ -1,0 +1,27 @@
+{
+  "fixture_id": "interrupt_request",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "interrupt_request_id": "intr-42",
+        "issues_control": false,
+        "kind": "agent",
+        "name": "approver",
+        "observes_interrupt": true
+      }
+    ],
+    "deferred": [
+      "approval_control",
+      "resume_control"
+    ]
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "687de3809a23376087c0b802c35629a9269ade9bda7fb2f2db7cdb827b158e97"
+  }
+}

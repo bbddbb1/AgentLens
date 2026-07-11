@@ -1,0 +1,23 @@
+{
+  "fixture_id": "checkpoint_reference",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "checkpoint_id": "ckpt-99",
+        "checkpoint_ns": "",
+        "checkpoint_payload_captured": false,
+        "kind": "agent",
+        "name": "node_a"
+      }
+    ]
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "d33f160112ee0ed9d7d5b8255b06fa9bd81e5f014f5093f03dcb4920e79b0bf1"
+  }
+}

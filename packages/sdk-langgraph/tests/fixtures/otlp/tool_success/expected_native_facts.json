@@ -1,0 +1,36 @@
+{
+  "fixture_id": "tool_success",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "kind": "agent",
+        "name": "researcher",
+        "outcome": "success",
+        "run_id": "746f6f6c-2d73-7563-6365-73732d616765"
+      },
+      {
+        "activity_correlation_id": "746f6f6c-2d73-7563-6365-73732d746f6f",
+        "kind": "tool",
+        "name": "web_search",
+        "outcome": "success",
+        "run_id": "746f6f6c-2d73-7563-6365-73732d746f6f"
+      }
+    ],
+    "relationships": [
+      {
+        "child_run_id": "746f6f6c-2d73-7563-6365-73732d746f6f",
+        "kind": "parent_child",
+        "parent_run_id": "746f6f6c-2d73-7563-6365-73732d616765"
+      }
+    ]
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "8e0129904cee0b4f4e051807d354bd6745420555db7906c9426cae4052ddfdf3"
+  }
+}

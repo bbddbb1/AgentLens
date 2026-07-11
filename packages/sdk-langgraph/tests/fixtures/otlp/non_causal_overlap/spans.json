@@ -1,0 +1,64 @@
+{
+  "adapter": "AgentLensLangGraphCallbackHandler",
+  "fixture_id": "non_causal_overlap",
+  "generator": "packages/sdk-langgraph/tests/helpers/capture_otlp.py",
+  "library_versions": {
+    "agentlens_sdk_core": "0.1.0",
+    "agentlens_sdk_langgraph": "0.1.0",
+    "langchain_core": "1.3.3",
+    "langgraph": "1.1.10",
+    "opentelemetry_api": "1.41.1"
+  },
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "b846d7e4e1e2f327ea0c12ad066e7a5df838aa1bd70e7a0149f4c7521862e2bf"
+  },
+  "spans": [
+    {
+      "attributes": {
+        "agent.span.kind": "invoke_agent",
+        "agentlens.langgraph.activity_correlation_id": "6f766572-6c61-702d-6100-000000000000",
+        "agentlens.langgraph.run_id": "6f766572-6c61-702d-6100-000000000000",
+        "agentlens.native_execution_key": "langgraph|run:6f766572-6c61-702d-6100-000000000000",
+        "gen_ai.agent.framework": "langgraph",
+        "gen_ai.agent.id": "alpha",
+        "gen_ai.agent.name": "alpha",
+        "gen_ai.agent.role": "alpha",
+        "gen_ai.agent.task": "alpha"
+      },
+      "end_time_unix_nano": "1000501000000",
+      "events": [],
+      "name": "agent:alpha",
+      "operation_name": "agent:alpha",
+      "parent_span_id": "",
+      "span_id": "0000000000000001",
+      "start_time_unix_nano": "1000001000000",
+      "status_code": "OK",
+      "status_message": "",
+      "trace_id": "00000000000000000000000000000001"
+    },
+    {
+      "attributes": {
+        "agent.span.kind": "invoke_agent",
+        "agentlens.langgraph.activity_correlation_id": "6f766572-6c61-702d-6200-000000000000",
+        "agentlens.langgraph.run_id": "6f766572-6c61-702d-6200-000000000000",
+        "agentlens.native_execution_key": "langgraph|run:6f766572-6c61-702d-6200-000000000000",
+        "gen_ai.agent.framework": "langgraph",
+        "gen_ai.agent.id": "beta",
+        "gen_ai.agent.name": "beta",
+        "gen_ai.agent.role": "beta",
+        "gen_ai.agent.task": "beta"
+      },
+      "end_time_unix_nano": "1000502000000",
+      "events": [],
+      "name": "agent:beta",
+      "operation_name": "agent:beta",
+      "parent_span_id": "0000000000000001",
+      "span_id": "0000000000000002",
+      "start_time_unix_nano": "1000002000000",
+      "status_code": "OK",
+      "status_message": "",
+      "trace_id": "00000000000000000000000000000001"
+    }
+  ]
+}

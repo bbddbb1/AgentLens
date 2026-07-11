@@ -59,8 +59,10 @@ logs/
 # Personal / local agent & IDE tooling
 .cursor/
 .gemini/
+.codex/
 .agents/
 .firecrawl/
+.codex-logs
 ORIGINAL_REQUEST.md
 PROJECT.md
 

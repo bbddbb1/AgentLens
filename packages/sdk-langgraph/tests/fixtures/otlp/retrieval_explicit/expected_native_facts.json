@@ -1,0 +1,28 @@
+{
+  "fixture_id": "retrieval_explicit",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "kind": "agent",
+        "name": "rag"
+      },
+      {
+        "kind": "retrieval",
+        "name": "vector_store",
+        "outcome": "success",
+        "retrieval_marker": true,
+        "run_id": "72657472-2d72-756e-0000-000000000000"
+      }
+    ],
+    "notes": "Tool names alone must not claim Retrieval."
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "0486b89dd043af089e30fe0817af2f95fbbd0d5269c46ea5b15273237398a033"
+  }
+}

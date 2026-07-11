@@ -1,0 +1,36 @@
+{
+  "fixture_id": "explicit_handoff",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "kind": "agent",
+        "name": "supervisor",
+        "run_id": "68616e64-6f66-662d-7061-72656e740000"
+      },
+      {
+        "kind": "agent",
+        "name": "specialist",
+        "run_id": "68616e64-6f66-662d-6368-696c64000000"
+      }
+    ],
+    "handoff_edges_expected": 1,
+    "notes": "Handoff requires explicit langgraph_handoff/handoff_to evidence; Command.goto/output goto is not handoff.",
+    "relationships": [
+      {
+        "explicit": true,
+        "kind": "handoff",
+        "resolution": "resolved",
+        "target": "specialist"
+      }
+    ]
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "f3e4c546c683682eb3b86a604633022c7971158182c44cf247cf4a08cd66c60d"
+  }
+}

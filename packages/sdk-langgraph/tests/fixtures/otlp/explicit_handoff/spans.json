@@ -1,0 +1,88 @@
+{
+  "adapter": "AgentLensLangGraphCallbackHandler",
+  "fixture_id": "explicit_handoff",
+  "generator": "packages/sdk-langgraph/tests/helpers/capture_otlp.py",
+  "library_versions": {
+    "agentlens_sdk_core": "0.1.0",
+    "agentlens_sdk_langgraph": "0.1.0",
+    "langchain_core": "1.3.3",
+    "langgraph": "1.1.10",
+    "opentelemetry_api": "1.41.1"
+  },
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "f3e4c546c683682eb3b86a604633022c7971158182c44cf247cf4a08cd66c60d"
+  },
+  "spans": [
+    {
+      "attributes": {
+        "agent.span.kind": "invoke_agent",
+        "agentlens.langgraph.activity_correlation_id": "68616e64-6f66-662d-7061-72656e740000",
+        "agentlens.langgraph.run_id": "68616e64-6f66-662d-7061-72656e740000",
+        "agentlens.native_execution_key": "langgraph|run:68616e64-6f66-662d-7061-72656e740000",
+        "gen_ai.agent.framework": "langgraph",
+        "gen_ai.agent.id": "supervisor",
+        "gen_ai.agent.name": "supervisor",
+        "gen_ai.agent.role": "supervisor",
+        "gen_ai.agent.task": "supervisor"
+      },
+      "end_time_unix_nano": "1000501000000",
+      "events": [
+        {
+          "attributes": {
+            "agentlens.langgraph.activity_correlation_id": "68616e64-6f66-662d-6368-696c64000000",
+            "agentlens.langgraph.explicit_handoff": "true",
+            "agentlens.langgraph.parent_run_id": "68616e64-6f66-662d-7061-72656e740000",
+            "agentlens.langgraph.run_id": "68616e64-6f66-662d-6368-696c64000000",
+            "gen_ai.agent.handoff.reason": "langgraph.explicit_handoff",
+            "gen_ai.agent.handoff.target": "specialist"
+          },
+          "name": "agent.handoff.requested",
+          "time_unix_nano": "1000001000000"
+        }
+      ],
+      "name": "agent:supervisor",
+      "operation_name": "agent:supervisor",
+      "parent_span_id": "",
+      "span_id": "0000000000000001",
+      "start_time_unix_nano": "1000001000000",
+      "status_code": "OK",
+      "status_message": "",
+      "trace_id": "00000000000000000000000000000001"
+    },
+    {
+      "attributes": {
+        "agent.span.kind": "invoke_agent",
+        "agentlens.langgraph.activity_correlation_id": "68616e64-6f66-662d-6368-696c64000000",
+        "agentlens.langgraph.parent_run_id": "68616e64-6f66-662d-7061-72656e740000",
+        "agentlens.langgraph.run_id": "68616e64-6f66-662d-6368-696c64000000",
+        "agentlens.native_execution_key": "langgraph|run:68616e64-6f66-662d-6368-696c64000000",
+        "gen_ai.agent.framework": "langgraph",
+        "gen_ai.agent.id": "specialist",
+        "gen_ai.agent.name": "specialist",
+        "gen_ai.agent.role": "specialist",
+        "gen_ai.agent.task": "specialist"
+      },
+      "end_time_unix_nano": "1000502000000",
+      "events": [
+        {
+          "attributes": {
+            "agentlens.langgraph.explicit_handoff": "true",
+            "gen_ai.agent.handoff.reason": "langgraph.explicit_handoff",
+            "gen_ai.agent.handoff.target": "specialist"
+          },
+          "name": "agent.handoff.requested",
+          "time_unix_nano": "1000002000000"
+        }
+      ],
+      "name": "agent:specialist",
+      "operation_name": "agent:specialist",
+      "parent_span_id": "0000000000000001",
+      "span_id": "0000000000000002",
+      "start_time_unix_nano": "1000002000000",
+      "status_code": "OK",
+      "status_message": "",
+      "trace_id": "00000000000000000000000000000001"
+    }
+  ]
+}

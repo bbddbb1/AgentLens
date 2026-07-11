@@ -1,0 +1,26 @@
+{
+  "fixture_id": "unknown_telemetry",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "framework": "langgraph",
+        "kind": "agent",
+        "name": "node_x",
+        "thread_id": "thread-u"
+      }
+    ],
+    "safety": {
+      "no_fabricated_semantics": true,
+      "unknown_degrades_safely": true
+    }
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "c00f2d4fe42d11a3db40296d2815c22505f50f9168b7a65567850b15b390e166"
+  }
+}

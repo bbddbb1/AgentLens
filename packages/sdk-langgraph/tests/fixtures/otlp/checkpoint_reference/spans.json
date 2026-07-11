@@ -1,0 +1,43 @@
+{
+  "adapter": "AgentLensLangGraphCallbackHandler",
+  "fixture_id": "checkpoint_reference",
+  "generator": "packages/sdk-langgraph/tests/helpers/capture_otlp.py",
+  "library_versions": {
+    "agentlens_sdk_core": "0.1.0",
+    "agentlens_sdk_langgraph": "0.1.0",
+    "langchain_core": "1.3.3",
+    "langgraph": "1.1.10",
+    "opentelemetry_api": "1.41.1"
+  },
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "d33f160112ee0ed9d7d5b8255b06fa9bd81e5f014f5093f03dcb4920e79b0bf1"
+  },
+  "spans": [
+    {
+      "attributes": {
+        "agent.span.kind": "invoke_agent",
+        "agentlens.langgraph.activity_correlation_id": "636b7074-2d61-6765-6e74-000000000000",
+        "agentlens.langgraph.checkpoint_id": "ckpt-99",
+        "agentlens.langgraph.run_id": "636b7074-2d61-6765-6e74-000000000000",
+        "agentlens.langgraph.thread_id": "thread-ckpt",
+        "agentlens.native_execution_key": "langgraph|thread:thread-ckpt|run:636b7074-2d61-6765-6e74-000000000000",
+        "gen_ai.agent.framework": "langgraph",
+        "gen_ai.agent.id": "node_a",
+        "gen_ai.agent.name": "node_a",
+        "gen_ai.agent.role": "node_a",
+        "gen_ai.agent.task": "node_a"
+      },
+      "end_time_unix_nano": "1000501000000",
+      "events": [],
+      "name": "agent:node_a",
+      "operation_name": "agent:node_a",
+      "parent_span_id": "",
+      "span_id": "0000000000000001",
+      "start_time_unix_nano": "1000001000000",
+      "status_code": "OK",
+      "status_message": "",
+      "trace_id": "00000000000000000000000000000001"
+    }
+  ]
+}

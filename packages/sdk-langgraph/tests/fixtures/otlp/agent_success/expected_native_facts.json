@@ -1,0 +1,27 @@
+{
+  "fixture_id": "agent_success",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "framework": "langgraph",
+        "has_native_execution_key": true,
+        "kind": "agent",
+        "name": "researcher",
+        "outcome": "success",
+        "run_id": "6167656e-742d-7375-6363-6573732d7275",
+        "thread_id": "thread-1"
+      }
+    ],
+    "intentional_legacy_corrections": [],
+    "relationships": []
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "783a04e8b5de0d2a2245161b1d2da0aef2757f910ce0285e5a294bd0a7eab621"
+  }
+}

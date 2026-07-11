@@ -1,3 +1,4 @@
+import { SPAN_PROJECTION_VERSION } from '@agentlens/protocol';
 import type {
   GraphSnapshot,
   GraphNode,
@@ -10,8 +11,61 @@ import type {
 } from '@agentlens/protocol';
 import { scanEventsToScratch } from '@agentlens/protocol';
 import { applyHierarchicalLayout } from '../graphLayout.js';
+import { normalizeSpansToFacts } from './normalization/index.js';
+import { originFrameworkFromAttrs } from './normalization/agentLensCompat.js';
+import { assembleModelProvenance } from './normalization/otelGenAi.js';
+import { hasLangGraphMarkers, langGraphActivityCorrelationId, langGraphRunId } from './normalization/langgraph.js';
 
 export type MaturityTier = 'L1' | 'L2' | 'L3';
+
+function indexNormalizedActivities(facts: ReturnType<typeof normalizeSpansToFacts>) {
+  const bySpanId = new Map<string, (typeof facts.activities)[number]>();
+  /** Prefer run/correlation keys so repeated same-name events stay distinct. */
+  const byInvocationKey = new Map<string, (typeof facts.activities)[number]>();
+  const bySpanEventIndex = new Map<string, (typeof facts.activities)[number]>();
+  for (const activity of facts.activities) {
+    for (const source of activity.source_references) {
+      if (!source.span_id) continue;
+      if (source.event_name) {
+        const runId = activity.native_runtime_identity?.run_id ?? activity.correlation.run_id;
+        const correlationId = activity.native_runtime_identity?.activity_correlation_id
+          ?? activity.correlation.activity_correlation_id;
+        if (runId) {
+          byInvocationKey.set(`${source.span_id}:${source.event_name}:run:${runId}`, activity);
+        }
+        if (correlationId) {
+          byInvocationKey.set(`${source.span_id}:${source.event_name}:correlation:${correlationId}`, activity);
+        }
+        if (source.event_index !== undefined) {
+          bySpanEventIndex.set(`${source.span_id}:${source.event_name}:${source.event_index}`, activity);
+        }
+      } else {
+        bySpanId.set(source.span_id, activity);
+      }
+    }
+  }
+  return { bySpanId, byInvocationKey, bySpanEventIndex };
+}
+
+function lookupNormalizedEventActivity(
+  index: ReturnType<typeof indexNormalizedActivities>,
+  spanId: string,
+  eventName: string,
+  eventAttrs: Record<string, any>,
+  eventIndex: number,
+) {
+  const runId = langGraphRunId(eventAttrs);
+  const correlationId = langGraphActivityCorrelationId(eventAttrs);
+  if (runId) {
+    const byRun = index.byInvocationKey.get(`${spanId}:${eventName}:run:${runId}`);
+    if (byRun) return byRun;
+  }
+  if (correlationId) {
+    const byCorrelation = index.byInvocationKey.get(`${spanId}:${eventName}:correlation:${correlationId}`);
+    if (byCorrelation) return byCorrelation;
+  }
+  return index.bySpanEventIndex.get(`${spanId}:${eventName}:${eventIndex}`);
+}
 
 function parseAttrJson(val: any): any {
   if (val === undefined || val === null) return undefined;
@@ -23,46 +77,6 @@ function parseAttrJson(val: any): any {
     }
   }
   return val;
-}
-
-/**
- * Assemble ModelProvenance from verbatim runtime attributes. Prefers an
- * explicit structured form (`agentlens.model` / `model` JSON); otherwise
- * composes the block from individual `gen_ai.*` attributes the runtime
- * emitted. Only fields that actually exist at runtime are set — none are
- * invented. This lets the ROPS inspector model provenance block populate
- * (provider, model_name, model_version, tokens, temperature, stop_reason)
- * from real telemetry instead of showing "not recorded".
- */
-function assembleModelProvenance(attrs: Record<string, any>): any {
-  const structured = parseAttrJson(attrs['agentlens.model'] ?? attrs['model']);
-  if (structured && typeof structured === 'object') {
-    return structured;
-  }
-  const out: Record<string, any> = {};
-  const provider = attrs['gen_ai.system'];
-  const modelName = attrs['gen_ai.request.model'];
-  const modelVersion = attrs['gen_ai.model.version'];
-  const tokensIn = attrs['gen_ai.usage.input_tokens'];
-  const tokensOut = attrs['gen_ai.usage.output_tokens'];
-  const temperature = attrs['gen_ai.request.temperature'];
-  const stopReason = attrs['gen_ai.response.finish_reason'];
-  if (provider !== undefined) out.provider = String(provider);
-  if (modelName !== undefined) out.model_name = String(modelName);
-  if (modelVersion !== undefined) out.model_version = String(modelVersion);
-  if (tokensIn !== undefined) out.tokens_input = Number(tokensIn);
-  if (tokensOut !== undefined) out.tokens_output = Number(tokensOut);
-  if (temperature !== undefined) out.temperature = Number(temperature);
-  if (stopReason !== undefined) out.stop_reason = String(stopReason);
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function originFrameworkFromAttrs(attrs: Record<string, any>): string | undefined {
-  const value =
-    attrs['agentlens.origin_framework'] ??
-    attrs['origin_framework'] ??
-    attrs['gen_ai.agent.framework'];
-  return value !== undefined && value !== null ? String(value) : undefined;
 }
 
 function normalizeCausalContext(
@@ -208,12 +222,12 @@ function findAgentSpanId(agentId: string, spans: any[], currentSpanStartTime?: n
   return bestSpan.span_id;
 }
 
-function resolveNodeId(id: string, spans: any[], currentSpanStartTime?: number): string {
+function resolveNodeId(id: string, spans: any[], currentSpanStartTime?: number): string | undefined {
   if (spans.some((s) => s.span_id === id)) {
     return id;
   }
   const resolved = findAgentSpanId(id, spans, currentSpanStartTime);
-  return resolved ?? id;
+  return resolved;
 }
 
 function nodeLabel(nodeType: NodeType, label: string, attrs: Record<string, any>, tier: MaturityTier): string {
@@ -388,6 +402,10 @@ export function projectTraceSnapshot(
     });
   }
 
+  const normalizedFacts = normalizeSpansToFacts(visibleSpans);
+  const { bySpanId: normalizedActivityBySpanId } = indexNormalizedActivities(normalizedFacts);
+  const nodeIdByActivityId = new Map<string, string>();
+
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   const addedNodes = new Set<string>();
@@ -405,26 +423,10 @@ export function projectTraceSnapshot(
         const eventAttrs = event.attributes ?? {};
         const eventName = event.name;
 
-        if (eventName === 'agent.handoff.requested' || eventName === 'agent.delegation') {
-          const source = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
-          const target = eventAttrs['gen_ai.agent.handoff.target'] ?? eventAttrs['target_agent_id'] ?? eventAttrs['gen_ai.agent.delegation.target'];
-          if (source && target) {
-            const resolvedSource = span.span_id;
-            const resolvedTarget = resolveNodeId(String(target), visibleSpans, Number(span.start_time_unix_nano));
-            edges.push({
-              id: `edge-${span.span_id}-handoff-${eventIdx++}`,
-              source: resolvedSource,
-              target: resolvedTarget,
-              type: 'delegation',
-              status: 'completed',
-              evidenceSpanId: span.span_id,
-              evidence_span_id: span.span_id,
-              source_span_id: span.span_id,
-              source_event_id: eventName,
-              metadata: { ...eventAttrs },
-            });
-          }
-        } else if (
+        // LangGraph relationship facts are normalized before generic projection.
+        if (hasLangGraphMarkers({ ...attrs, ...eventAttrs })) continue;
+
+        if (
           eventName === 'agent.review' ||
           eventName === 'agent.review.approved' ||
           eventName === 'agent.review.changes_requested' ||
@@ -436,6 +438,7 @@ export function projectTraceSnapshot(
           if (source && target) {
             const resolvedSource = span.span_id;
             const resolvedTarget = resolveNodeId(String(target), visibleSpans, Number(span.start_time_unix_nano));
+            if (!resolvedTarget) continue;
             edges.push({
               id: `edge-${span.span_id}-review-${eventIdx++}`,
               source: resolvedSource,
@@ -466,6 +469,7 @@ export function projectTraceSnapshot(
       if (source && target && hasValidTarget) {
         const resolvedSource = resolveNodeId(String(source), visibleSpans, Number(span.start_time_unix_nano));
         const resolvedTarget = resolveNodeId(String(target), visibleSpans, Number(span.start_time_unix_nano));
+        if (!resolvedSource || !resolvedTarget) continue;
         edges.push({
           id: `edge-${span.span_id}`,
           source: resolvedSource,
@@ -485,7 +489,13 @@ export function projectTraceSnapshot(
     const nodeId = span.span_id;
     let nodeType: NodeType = 'task';
     let label = operationName;
-    const status: any = span.status_code === 'ERROR' ? 'failed' : span.status_code === 'OK' ? 'completed' : 'active';
+    const normalizedActivity = normalizedActivityBySpanId.get(span.span_id);
+    const status: any =
+      normalizedActivity?.outcome === 'failure'
+        ? 'failed'
+        : normalizedActivity?.outcome === 'success'
+          ? 'completed'
+          : span.status_code === 'ERROR' ? 'failed' : span.status_code === 'OK' ? 'completed' : 'active';
     let agentId: string | undefined;
     let agentRole: string | undefined;
     let agentTeam: string | undefined;
@@ -560,6 +570,9 @@ export function projectTraceSnapshot(
         error_count: span.status_code === 'ERROR' ? 1 : 0,
         metadata: {
           ...attrs,
+          ...(normalizedActivity?.native_runtime_identity
+            ? { native_runtime_identity: normalizedActivity.native_runtime_identity }
+            : {}),
         },
         maturityTier: tier,
         maturity_tier: tier,
@@ -569,7 +582,27 @@ export function projectTraceSnapshot(
         source_event_id: undefined,
         projection_profile: projectionProfile,
       });
+      if (normalizedActivity) nodeIdByActivityId.set(normalizedActivity.id, nodeId);
     }
+  }
+
+  for (const relationship of normalizedFacts.relationships) {
+    if (relationship.kind !== 'handoff' || relationship.resolution !== 'resolved' || !relationship.target_activity_id) continue;
+    const source = nodeIdByActivityId.get(relationship.source_activity_id);
+    const target = nodeIdByActivityId.get(relationship.target_activity_id);
+    if (!source || !target) continue;
+    edges.push({
+      id: `edge-${relationship.source.span_id}-handoff-${relationship.source.event_name ?? 'event'}`,
+      source,
+      target,
+      type: 'delegation',
+      status: 'completed',
+      evidenceSpanId: relationship.source.span_id,
+      evidence_span_id: relationship.source.span_id,
+      source_span_id: relationship.source.span_id,
+      source_event_id: relationship.source.event_name,
+      metadata: {},
+    });
   }
 
   // 4. L1/L2 Hierarchy dependencies (parent_span_id fallback)
@@ -619,6 +652,11 @@ export function projectReplay(
   interrupts: any[] = []
 ): ReplayStateResponse {
   const sortedSpans = [...spans].sort((a, b) => Number(a.start_time_unix_nano) - Number(b.start_time_unix_nano));
+  const normalizedFacts = normalizeSpansToFacts(sortedSpans);
+  const normalizedActivityIndex = indexNormalizedActivities(normalizedFacts);
+  const {
+    bySpanId: normalizedActivityBySpanId,
+  } = normalizedActivityIndex;
   const timestamps = Array.from(new Set(sortedSpans.map((s) => Number(s.start_time_unix_nano)))).sort((a, b) => a - b);
 
   const snapshots = timestamps.map((ts, idx) => {
@@ -659,6 +697,10 @@ export function projectReplay(
     const operationName = span.operation_name ?? span.name ?? 'span';
     const agentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
     const eventBranchId = span.branch_id ?? branchId;
+    const normalizedActivity = normalizedActivityBySpanId.get(span.span_id);
+    const nativeRuntimeMetadata = normalizedActivity?.native_runtime_identity
+      ? { native_runtime_identity: normalizedActivity.native_runtime_identity }
+      : {};
 
     events.push({
       id: span.span_id,
@@ -679,6 +721,7 @@ export function projectReplay(
       },
       metadata: {
         maturity_tier: tier,
+        ...nativeRuntimeMetadata,
       },
       actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
       actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
@@ -695,6 +738,7 @@ export function projectReplay(
     if (Array.isArray(span.events)) {
       let eventIdx = 0;
       for (const otelEvent of span.events) {
+        const currentEventIndex = eventIdx;
         const eventTimeIso = otelEvent.time
           ? new Date(otelEvent.time).toISOString()
           : startIso;
@@ -710,6 +754,16 @@ export function projectReplay(
             : undefined,
         };
         const mergedAttrs = { ...attrs, ...eventAttrs };
+        const eventActivity = lookupNormalizedEventActivity(
+          normalizedActivityIndex,
+          span.span_id,
+          otelEvent.name,
+          eventAttrs,
+          currentEventIndex,
+        );
+        const eventNativeRuntimeMetadata = eventActivity?.native_runtime_identity
+          ? { native_runtime_identity: eventActivity.native_runtime_identity }
+          : {};
         events.push({
           id: `${span.span_id}-event-${eventIdx++}`,
           mission_id: missionId,
@@ -725,6 +779,7 @@ export function projectReplay(
           payload: mergedPayload,
           metadata: {
             maturity_tier: tier,
+            ...eventNativeRuntimeMetadata,
           },
           actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
           actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
@@ -760,6 +815,7 @@ export function projectReplay(
         },
         metadata: {
           maturity_tier: tier,
+          ...nativeRuntimeMetadata,
         },
       actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
       actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
@@ -909,6 +965,7 @@ export function projectReplay(
   return {
     mission_id: missionId,
     branch_id: branchId,
+    projection_version: SPAN_PROJECTION_VERSION,
     total_frames: snapshots.length,
     duration_seconds: durationSeconds,
     branches: [

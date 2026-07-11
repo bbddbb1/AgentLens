@@ -159,7 +159,7 @@ class AgentLensOtlpJsonExporter(SpanExporter):
                 json={"resourceSpans": resource_spans},
                 headers=self._headers(),
             )
-            return SpanExportResult.SUCCESS if response.status_code == 200 else SpanExportResult.FAILURE
+            return SpanExportResult.SUCCESS if 200 <= response.status_code < 300 else SpanExportResult.FAILURE
         except Exception:
             return SpanExportResult.FAILURE
 

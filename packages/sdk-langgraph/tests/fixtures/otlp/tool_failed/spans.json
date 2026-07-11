@@ -1,0 +1,67 @@
+{
+  "adapter": "AgentLensLangGraphCallbackHandler",
+  "fixture_id": "tool_failed",
+  "generator": "packages/sdk-langgraph/tests/helpers/capture_otlp.py",
+  "library_versions": {
+    "agentlens_sdk_core": "0.1.0",
+    "agentlens_sdk_langgraph": "0.1.0",
+    "langchain_core": "1.3.3",
+    "langgraph": "1.1.10",
+    "opentelemetry_api": "1.41.1"
+  },
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "accbd9de38b4a85b4eceb4b8d66763976c70aed73c61dfce2ff2bfc3488aba1d"
+  },
+  "spans": [
+    {
+      "attributes": {
+        "agent.span.kind": "invoke_agent",
+        "agentlens.langgraph.activity_correlation_id": "746f6f6c-2d66-6169-6c65-642d6167656e",
+        "agentlens.langgraph.run_id": "746f6f6c-2d66-6169-6c65-642d6167656e",
+        "agentlens.native_execution_key": "langgraph|run:746f6f6c-2d66-6169-6c65-642d6167656e",
+        "gen_ai.agent.framework": "langgraph",
+        "gen_ai.agent.id": "researcher",
+        "gen_ai.agent.name": "researcher",
+        "gen_ai.agent.role": "researcher",
+        "gen_ai.agent.task": "researcher"
+      },
+      "end_time_unix_nano": "1000501000000",
+      "events": [
+        {
+          "attributes": {
+            "agentlens.langgraph.activity_correlation_id": "746f6f6c-2d66-6169-6c65-642d746f6f6c",
+            "agentlens.langgraph.parent_run_id": "746f6f6c-2d66-6169-6c65-642d6167656e",
+            "agentlens.langgraph.run_id": "746f6f6c-2d66-6169-6c65-642d746f6f6c",
+            "agentlens.native_execution_key": "langgraph|run:746f6f6c-2d66-6169-6c65-642d746f6f6c",
+            "gen_ai.tool.input": "q",
+            "gen_ai.tool.name": "web_search",
+            "gen_ai.tool.status": "active"
+          },
+          "name": "agent.tool.call",
+          "time_unix_nano": "1000001000000"
+        },
+        {
+          "attributes": {
+            "agentlens.langgraph.activity_correlation_id": "746f6f6c-2d66-6169-6c65-642d746f6f6c",
+            "agentlens.langgraph.parent_run_id": "746f6f6c-2d66-6169-6c65-642d6167656e",
+            "agentlens.langgraph.run_id": "746f6f6c-2d66-6169-6c65-642d746f6f6c",
+            "agentlens.native_execution_key": "langgraph|run:746f6f6c-2d66-6169-6c65-642d746f6f6c",
+            "gen_ai.tool.name": "web_search",
+            "gen_ai.tool.status": "error"
+          },
+          "name": "agent.tool.call",
+          "time_unix_nano": "1000001001000"
+        }
+      ],
+      "name": "agent:researcher",
+      "operation_name": "agent:researcher",
+      "parent_span_id": "",
+      "span_id": "0000000000000001",
+      "start_time_unix_nano": "1000001000000",
+      "status_code": "OK",
+      "status_message": "",
+      "trace_id": "00000000000000000000000000000001"
+    }
+  ]
+}

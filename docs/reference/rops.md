@@ -69,7 +69,7 @@ The UI exposes runtime. It never interprets runtime.
 
 ### P2 — Projections are disposable; the ledger is authoritative
 
-`MissionEventRecord` / `EventEnvelope` is the canonical ledger. `GraphNode`, `GraphEdge`, `GraphSnapshot`, `RuntimeState`, `RuntimeAgentState`, `RuntimeNodeProjection`, and `RuntimeSummary` are disposable projections rebuildable from events (the `RuntimeProjection` base interface and the `source: 'deterministic' | 'llm'` flag make this explicit). ROPS treats projections as a presentation source but never as ground truth. When a projection and the underlying event disagree, the event wins (see section 6, Evidence View).
+Persisted OTLP spans (including their span events), interrupts, and replay-branch/control records are the current durable evidence. `MissionEventRecord` / `EventEnvelope`, `GraphNode`, `GraphEdge`, `GraphSnapshot`, `RuntimeState`, `RuntimeAgentState`, `RuntimeNodeProjection`, and `RuntimeSummary` are disposable server-side projections. ROPS treats projections as a presentation source but never as ground truth; when they disagree, recorded durable evidence wins.
 
 ### P3 — Provenance is labeled
 

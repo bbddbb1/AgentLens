@@ -1,0 +1,59 @@
+{
+  "adapter": "AgentLensLangGraphCallbackHandler",
+  "fixture_id": "interrupt_resume",
+  "generator": "packages/sdk-langgraph/tests/helpers/capture_otlp.py",
+  "library_versions": {
+    "agentlens_sdk_core": "0.1.0",
+    "agentlens_sdk_langgraph": "0.1.0",
+    "langchain_core": "1.3.3",
+    "langgraph": "1.1.10",
+    "opentelemetry_api": "1.41.1"
+  },
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "189b4ef24361f9e3c1acbd9ae7ac7863884da2b246230f8b31984b1622453f49"
+  },
+  "spans": [
+    {
+      "attributes": {
+        "agent.span.kind": "invoke_agent",
+        "agentlens.langgraph.activity_correlation_id": "72657375-6d65-2d61-6765-6e7400000000",
+        "agentlens.langgraph.resume_of_interrupt_id": "intr-42",
+        "agentlens.langgraph.run_id": "72657375-6d65-2d61-6765-6e7400000000",
+        "agentlens.native_execution_key": "langgraph|run:72657375-6d65-2d61-6765-6e7400000000",
+        "gen_ai.agent.framework": "langgraph",
+        "gen_ai.agent.id": "approver",
+        "gen_ai.agent.name": "approver",
+        "gen_ai.agent.role": "approver",
+        "gen_ai.agent.task": "approver"
+      },
+      "end_time_unix_nano": "1000501000000",
+      "events": [
+        {
+          "attributes": {
+            "agentlens.langgraph.resume_of_interrupt_id": "intr-42",
+            "agentlens.langgraph.run_id": "72657375-6d65-2d61-6765-6e7400000000",
+            "gen_ai.agent.interrupt.id": "intr-42"
+          },
+          "name": "agent.interrupt.resumed",
+          "time_unix_nano": "1000001000000"
+        },
+        {
+          "attributes": {
+            "gen_ai.agent.memory.key": "approver.outputs"
+          },
+          "name": "agent.memory.write",
+          "time_unix_nano": "1000001001000"
+        }
+      ],
+      "name": "agent:approver",
+      "operation_name": "agent:approver",
+      "parent_span_id": "",
+      "span_id": "0000000000000001",
+      "start_time_unix_nano": "1000001000000",
+      "status_code": "OK",
+      "status_message": "",
+      "trace_id": "00000000000000000000000000000001"
+    }
+  ]
+}

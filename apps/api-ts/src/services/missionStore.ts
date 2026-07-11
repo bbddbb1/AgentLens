@@ -5,6 +5,7 @@ import {
   MissionAttributes,
   type AttributeMap,
   type CreateInterruptInput,
+  type CurrentGraphResponse,
   type CreateReplayBranchInput,
   type DecideInterruptInput,
   type EventEnvelope,
@@ -20,6 +21,7 @@ import {
   type RuntimeExplanationProjection,
   type RuntimeSummary,
   type RuntimeNodeProjection,
+  SPAN_PROJECTION_VERSION,
   projectRuntimeExplanation,
 } from '@agentlens/protocol';
 import { BuiltInRules, PolicyEngine } from './policyEngine.js';
@@ -266,13 +268,20 @@ export interface ArtifactRecord {
 
 export interface IngestResult {
   accepted: boolean;
+  mission_id: string;
+  branch_id: string;
+  evidence_changed: boolean;
 }
 
 export interface IntegrityReport {
-  is_valid: boolean;
+  is_valid: boolean | null;
+  verification_status: 'verified' | 'unsupported';
+  verification_reason: string;
   branch_reports: Array<{
     branch_id: string;
-    is_valid: boolean;
+    is_valid: boolean | null;
+    verification_status: 'verified' | 'unsupported';
+    verification_reason: string;
     errors: string[];
   }>;
 }
@@ -542,8 +551,10 @@ class MissionStore {
       return {
         events: [],
         integrity: {
-          is_valid: true,
-          hash_chain_status: 'valid',
+          is_valid: null,
+          verification_status: 'unsupported',
+          verification_reason: 'Cryptographic hash verification is not implemented for span-backed runtime evidence.',
+          hash_chain_status: 'not_verified',
           branch_id: branchId,
           total_events: 0,
         },
@@ -554,8 +565,10 @@ class MissionStore {
     return {
       events,
       integrity: {
-        is_valid: true,
-        hash_chain_status: 'valid',
+        is_valid: null,
+        verification_status: 'unsupported',
+        verification_reason: 'Cryptographic hash verification is not implemented for span-backed runtime evidence.',
+        hash_chain_status: 'not_verified',
         branch_id: branchId,
         total_events: events.length,
       },
@@ -564,11 +577,15 @@ class MissionStore {
 
   async verifyMissionIntegrity(missionId: string): Promise<IntegrityReport> {
     return {
-      is_valid: true,
+      is_valid: null,
+      verification_status: 'unsupported',
+      verification_reason: 'Cryptographic hash verification is not implemented for span-backed runtime evidence.',
       branch_reports: [
         {
           branch_id: 'main',
-          is_valid: true,
+          is_valid: null,
+          verification_status: 'unsupported',
+          verification_reason: 'Cryptographic hash verification is not implemented for span-backed runtime evidence.',
           errors: [],
         },
       ],
@@ -746,7 +763,7 @@ class MissionStore {
         );
         if (batchResult.rowCount === 0) {
           await client.query('COMMIT');
-          return { accepted: true };
+          return { accepted: true, mission_id: missionId, branch_id: branchId, evidence_changed: false };
         }
       }
 
@@ -811,7 +828,7 @@ class MissionStore {
 
       await this.recordInterruptsFromSpans(client, missionId, spans, branchId);
       await client.query('COMMIT');
-      return { accepted: true };
+      return { accepted: true, mission_id: missionId, branch_id: branchId, evidence_changed: true };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -880,11 +897,12 @@ class MissionStore {
   async getCurrentGraph(
     missionId: string,
     branchId = ROOT_BRANCH_ID,
-  ): Promise<{ mission_id: string; current: GraphSnapshot | null; total_snapshots: number } | null> {
+  ): Promise<CurrentGraphResponse | null> {
     const replay = await this.getReplayFromTelemetry(missionId, branchId);
     if (!replay) return null;
     return {
       mission_id: missionId,
+      projection_version: SPAN_PROJECTION_VERSION,
       current: replay.snapshots[replay.snapshots.length - 1] ?? null,
       total_snapshots: replay.snapshots.length,
     };

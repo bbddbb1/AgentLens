@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { SPAN_PROJECTION_VERSION } from '@agentlens/protocol';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -38,6 +39,7 @@ import { api } from '@/lib/api';
 import { matchNodeToActivity, resolveSelectedActivity } from '@/lib/runtimeFocus';
 import { sequenceNumThroughFrame } from '@/lib/replayFrame';
 import { selectedFrameAuthority } from '@/lib/runtimeAuthority';
+import { shouldReloadReplayForRealtimeMessage } from '@/lib/replayRealtime';
 import { useGraphStore, type GraphSnapshot } from '@/stores/graphStore';
 import type { Mission } from '@/stores/missionStore';
 import { useReplayStore } from '@/stores/replayStore';
@@ -347,6 +349,7 @@ function buildDemoReplay(): ReplayStateResponse {
   return {
     mission_id: 'demo-mission',
     branch_id: 'main',
+    projection_version: SPAN_PROJECTION_VERSION,
     total_frames: snapshots.length,
     duration_seconds: durationSeconds,
     branches,
@@ -631,6 +634,8 @@ export default function MissionWorkspacePage() {
       try {
         const message = JSON.parse(event.data) as {
           type: string;
+          mission_id?: string;
+          branch_id?: string;
           mission?: Mission;
           runtime_summary?: unknown;
           runtime_explanation?: unknown;
@@ -642,11 +647,6 @@ export default function MissionWorkspacePage() {
         if (message.type === 'mission.updated' && message.mission) {
           setMission(message.mission);
         }
-        
-        const reloadTypes = [
-          'graph.snapshot.created', 'interrupt.created', 'interrupt.decided', 'interrupt.resumed',
-          'branch.sandbox.queued', 'branch.sandbox.started', 'branch.sandbox.completed', 'branch.sandbox.failed', 'branch.sandbox.timeout',
-        ];
         
         if (
           message.type === 'runtime.summary.updated'
@@ -664,11 +664,8 @@ export default function MissionWorkspacePage() {
           setRuntimeExplanationState(explanation);
         }
 
-        if (reloadTypes.includes(message.type)) {
-          const msgBranchId = message.branch?.id || message.snapshot?.branch_id || message.interrupt?.branch_id || message.job?.branch_id;
-          if (!msgBranchId || msgBranchId === currentBranchId) {
-            void loadReplay(currentBranchId ?? undefined);
-          }
+        if (shouldReloadReplayForRealtimeMessage(message, currentBranchId)) {
+          void loadReplay(currentBranchId ?? undefined);
         }
       } catch {
         // Ignore malformed realtime messages.

@@ -1,0 +1,28 @@
+{
+  "fixture_id": "non_causal_overlap",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "kind": "agent",
+        "name": "alpha"
+      },
+      {
+        "kind": "agent",
+        "name": "beta"
+      }
+    ],
+    "relationships": [],
+    "safety": {
+      "overlap_does_not_create_causality": true
+    }
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "b846d7e4e1e2f327ea0c12ad066e7a5df838aa1bd70e7a0149f4c7521862e2bf"
+  }
+}

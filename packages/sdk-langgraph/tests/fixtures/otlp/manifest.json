@@ -1,0 +1,19 @@
+{
+  "fixtures": [
+    "agent_success",
+    "tool_success",
+    "tool_failed",
+    "parent_child_correlation",
+    "llm_token_usage",
+    "retrieval_explicit",
+    "interrupt_request",
+    "interrupt_resume",
+    "checkpoint_reference",
+    "explicit_handoff",
+    "unresolved_target",
+    "non_causal_overlap",
+    "unknown_telemetry"
+  ],
+  "primary_oracle": "native_facts",
+  "root": "D:/code/AgentLens/packages/sdk-langgraph/tests/fixtures/otlp"
+}

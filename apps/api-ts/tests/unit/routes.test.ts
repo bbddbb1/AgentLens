@@ -10,6 +10,9 @@ const mockStore = {
   updateMission: vi.fn(),
   deleteMission: vi.fn(),
   ingestSpans: vi.fn(),
+  getRuntimeSummary: vi.fn(),
+  getRuntimeExplanation: vi.fn(),
+  scheduleNodeProjectionEnhancements: vi.fn(),
   getCurrentGraph: vi.fn(),
   getSnapshots: vi.fn(),
   getReplayFromTelemetry: vi.fn(),
@@ -57,6 +60,10 @@ let app: express.Express;
 
 beforeEach(async () => {
   vi.resetAllMocks();
+  mockPublishEvent.mockResolvedValue(undefined);
+  mockStore.getRuntimeSummary.mockResolvedValue(null);
+  mockStore.getRuntimeExplanation.mockResolvedValue(null);
+  mockStore.scheduleNodeProjectionEnhancements.mockResolvedValue(undefined);
   // Re-import routes after mock reset to get fresh instances
   const { missionsRouter } = await import('../../src/routes/missions.js');
   const { extrasRouter } = await import('../../src/routes/extras.js');
@@ -182,6 +189,44 @@ describe('POST /api/v1/ingest/otlp', () => {
       .send({ spans: [{ trace_id: '', span_id: '', operation_name: '' }] });
     expect(res.status).toBe(400);
   });
+
+  it('retains HTTP 202 and publishes one replay update after evidence-changing ingest', async () => {
+    mockStore.ingestSpans.mockResolvedValueOnce({ accepted: true, mission_id: '550e8400-e29b-41d4-a716-446655440000', branch_id: 'main', evidence_changed: true });
+    mockStore.getRuntimeSummary.mockResolvedValueOnce(null);
+    mockStore.getRuntimeExplanation.mockResolvedValueOnce(null);
+    mockStore.scheduleNodeProjectionEnhancements.mockResolvedValueOnce(undefined);
+
+    const res = await request(app).post('/api/v1/ingest/otlp').send({
+      mission_id: '550e8400-e29b-41d4-a716-446655440000',
+      spans: [{ trace_id: 'trace', span_id: 'span', operation_name: 'agent.run', start_time_unix_nano: 1, end_time_unix_nano: 2, attributes: {} }],
+    });
+
+    expect(res.status).toBe(202);
+    expect(mockPublishEvent).toHaveBeenCalledWith('550e8400-e29b-41d4-a716-446655440000', 'replay.updated', { branch_id: 'main' });
+  });
+
+  it('does not publish a replay update for a duplicate-batch no-op', async () => {
+    mockStore.ingestSpans.mockResolvedValueOnce({ accepted: true, mission_id: '550e8400-e29b-41d4-a716-446655440000', branch_id: 'main', evidence_changed: false });
+
+    const res = await request(app).post('/api/v1/ingest/otlp').send({
+      mission_id: '550e8400-e29b-41d4-a716-446655440000',
+      spans: [{ trace_id: 'trace', span_id: 'span', operation_name: 'agent.run', start_time_unix_nano: 1, end_time_unix_nano: 2, attributes: {} }],
+    });
+
+    expect(res.status).toBe(202);
+    expect(mockPublishEvent).not.toHaveBeenCalledWith(expect.anything(), 'replay.updated', expect.anything());
+  });
+
+  it('retains HTTP 202 for standard OTLP JSON ingest', async () => {
+    mockStore.ingestSpans.mockResolvedValueOnce({ accepted: true, mission_id: '550e8400-e29b-41d4-a716-446655440000', branch_id: 'main', evidence_changed: true });
+
+    const res = await request(app).post('/v1/traces').send({
+      resourceSpans: [{ resource: { attributes: [{ key: 'agentlens.mission.id', value: { stringValue: '550e8400-e29b-41d4-a716-446655440000' } }] }, scopeSpans: [{ spans: [{ traceId: 'trace', spanId: 'span', name: 'agent.run', startTimeUnixNano: '1', endTimeUnixNano: '2', status: { code: 1 } }] }] }],
+    });
+
+    expect(res.status).toBe(202);
+    expect(res.body.partialSuccess.rejectedSpans).toBe(0);
+  });
 });
 
 // ====================================================================
@@ -191,11 +236,12 @@ describe('POST /api/v1/ingest/otlp', () => {
 describe('GET /api/v1/missions/:missionId/graph', () => {
   it('returns graph for mission', async () => {
     mockStore.getCurrentGraph.mockResolvedValueOnce({
-      mission_id: 'm1', current: null, total_snapshots: 0,
+      mission_id: 'm1', projection_version: 'span_projection.v1', current: null, total_snapshots: 0,
     });
 
     const res = await request(app).get('/api/v1/missions/m1/graph');
     expect(res.status).toBe(200);
+    expect(res.body.projection_version).toBe('span_projection.v1');
   });
 
   it('returns 404 for unknown mission', async () => {
@@ -214,6 +260,17 @@ describe('GET /api/v1/missions/:missionId/replay', () => {
     mockStore.getMission.mockResolvedValueOnce(null);
     const res = await request(app).get('/api/v1/missions/unknown/replay');
     expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /api/v1/missions/:missionId/graph/snapshots', () => {
+  it('returns the span projection version without removing snapshot fields', async () => {
+    mockStore.getSnapshots.mockResolvedValueOnce([]);
+
+    const res = await request(app).get('/api/v1/missions/m1/graph/snapshots');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ projection_version: 'span_projection.v1', snapshots: [], offset: 0, limit: 50, count: 0 });
   });
 });
 

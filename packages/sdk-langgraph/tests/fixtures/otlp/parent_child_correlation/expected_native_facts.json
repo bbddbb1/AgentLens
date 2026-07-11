@@ -1,0 +1,41 @@
+{
+  "fixture_id": "parent_child_correlation",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "kind": "agent",
+        "name": "supervisor",
+        "run_id": "70617265-6e74-2d72-756e-000000000000"
+      },
+      {
+        "kind": "agent",
+        "name": "worker",
+        "parent_run_id": "70617265-6e74-2d72-756e-000000000000",
+        "run_id": "6368696c-642d-7275-6e00-000000000000"
+      }
+    ],
+    "handoff_edges_expected": 0,
+    "intentional_legacy_corrections": [
+      {
+        "description": "Ordinary parent-child nesting is correlation only; legacy emitted handoff events.",
+        "id": "parent_child_not_handoff"
+      }
+    ],
+    "relationships": [
+      {
+        "child_run_id": "6368696c-642d-7275-6e00-000000000000",
+        "kind": "parent_child",
+        "parent_run_id": "70617265-6e74-2d72-756e-000000000000"
+      }
+    ]
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "dea9e7af7dd2cfd83be9b6f4f22130a48c03a0c19ac0b630039d07a46cba3885"
+  }
+}

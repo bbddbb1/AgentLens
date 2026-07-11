@@ -142,6 +142,67 @@ describe('projectTraceSnapshot', () => {
     const childNode = snapshot.nodes.find(n => n.id === 'span2');
     expect(childNode!.status).toBe('active');
   });
+
+  it('does not fabricate edges for unresolved relationship targets or timing overlap', () => {
+    const snapshot = projectTraceSnapshot('m1', 'main', [
+      {
+        span_id: 'source', trace_id: 'trace', name: 'agent.run',
+        start_time_unix_nano: '1000000', end_time_unix_nano: '3000000', status_code: 'OK',
+        attributes: { 'gen_ai.agent.id': 'planner' },
+        events: [{ name: 'agent.handoff.requested', attributes: { 'gen_ai.agent.handoff.target': 'missing-agent' } }],
+      },
+      {
+        span_id: 'overlap', trace_id: 'trace', name: 'agent.run',
+        start_time_unix_nano: '2000000', end_time_unix_nano: '4000000', status_code: 'OK',
+        attributes: { 'gen_ai.agent.id': 'worker' }, events: [],
+      },
+    ]);
+
+    expect(snapshot.nodes.map((node) => node.id)).toEqual(['source', 'overlap']);
+    expect(snapshot.edges).toEqual([]);
+  });
+
+  it('requires explicit LangGraph handoff evidence and carries native identity metadata', () => {
+    const base = {
+      trace_id: 'trace-lg',
+      start_time_unix_nano: '1000000',
+      end_time_unix_nano: '2000000',
+      status_code: 'OK',
+    };
+    const snapshot = projectTraceSnapshot('m1', 'main', [
+      {
+        ...base,
+        span_id: 'planner',
+        attributes: {
+          'gen_ai.agent.id': 'planner',
+          'agentlens.langgraph.run_id': 'run-planner',
+          'agentlens.langgraph.thread_id': 'thread-1',
+        },
+        events: [{
+          name: 'agent.handoff.requested',
+          attributes: { 'gen_ai.agent.handoff.target': 'worker' },
+        }],
+      },
+      {
+        ...base,
+        span_id: 'worker',
+        start_time_unix_nano: '3000000',
+        attributes: {
+          'gen_ai.agent.id': 'worker',
+          'agentlens.langgraph.run_id': 'run-worker',
+        },
+      },
+    ]);
+
+    expect(snapshot.edges.filter((edge) => edge.type === 'delegation')).toHaveLength(0);
+    expect(snapshot.nodes.find((node) => node.id === 'planner')?.metadata).toMatchObject({
+      native_runtime_identity: {
+        framework: 'langgraph',
+        thread_id: 'thread-1',
+        run_id: 'run-planner',
+      },
+    });
+  });
 });
 
 describe('projectReplay', () => {
@@ -184,6 +245,7 @@ describe('projectReplay', () => {
     expect(replay.events[2].event_type).toBe('span.completed');
 
     expect(replay.snapshots).toHaveLength(1); // One start timestamp for spans
+    expect(replay.projection_version).toBe('span_projection.v1');
   });
 
   it('emits task.started (not tool.called) for execute_tool span start', () => {

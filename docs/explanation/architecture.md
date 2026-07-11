@@ -4,7 +4,7 @@ Status: accepted
 Last updated: 2026-06-29
 Audience: maintainers, adapter authors
 
-AgentLens is **runtime infrastructure for autonomous agent execution**. It records execution as a canonical, branch-aware, append-only event ledger and derives observability, governance, replay, and human control from that ledger.
+AgentLens is **runtime infrastructure for autonomous agent execution**. Its current implementation persists OTLP spans (including span events), interrupts, and branch/control records, then derives observability, replay, graph snapshots, and human-control views from that durable evidence.
 
 The UI is a projection over runtime truth — not the architecture. For current implementation (ingest paths, tables, APIs, replay algorithm), see [agent-api.md](../reference/agent-api.md).
 
@@ -14,15 +14,15 @@ The UI is a projection over runtime truth — not the architecture. For current 
 
 | Owns | Does not own |
 |---|---|
-| Canonical `EventEnvelope` and semantic conventions | Agent framework schedulers or orchestration |
-| Append-only mission event ledger | End-to-end agent framework |
+| Span/control evidence and semantic conventions | Agent framework schedulers or orchestration |
+| Derived `EventEnvelope` compatibility shape | End-to-end agent framework |
 | Replay, branch lineage, state reconstruction | Workflow authoring / low-code builders |
 | Policy and HITL as runtime events | Vector memory backends |
 | Adapter translation into canonical events | Mutable UI state as source of truth |
 
 ### Data plane vs control plane
 
-Your agent application (LangGraph, CrewAI, custom) emits OTel spans/events via SDK adapters. AgentLens ingests OTLP, normalizes to the ledger, replays state, and serves projections (graph, policy, HITL, branch APIs) to the web UI.
+Your agent application (LangGraph, CrewAI, custom) emits OTel spans/events via SDK adapters. AgentLens ingests OTLP as durable span evidence, derives replay state, and serves projections (graph, policy, HITL, branch APIs) to the web UI.
 
 OpenTelemetry is the **transport and ecosystem bridge**. AgentLens records versioned,
 workload-neutral runtime contracts above raw spans: observed actors, explicit
@@ -51,9 +51,9 @@ passive runtime observability platform, not a workload-domain reasoning system.
 The repo already contains the primitives this model depends on:
 
 - OTLP ingestion and span normalization
-- `EventEnvelope` and AgentLens semantic conventions (`packages/protocol`, `packages/otel-semconv`)
-- Append-only `mission_events` with branch and hash-chain fields
-- Replay engine and graph snapshots
+- Derived `EventEnvelope` compatibility values and AgentLens semantic conventions (`packages/protocol`, `packages/otel-semconv`)
+- Persisted spans, interrupts, ingest batches, and replay-branch/control records
+- Replay engine and derived graph snapshots
 - HITL interrupts and built-in policy evaluation
 - Branch manager and sandbox jobs
 - Python/TS SDKs and LangGraph adapter

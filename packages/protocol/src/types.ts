@@ -552,8 +552,8 @@ export interface RuntimeAgentSummary {
 }
 
 /**
- * Operator-oriented runtime summary — a disposable projection over the event ledger.
- * Not canonical state; rebuildable from EventEnvelope records at any time.
+ * Operator-oriented runtime summary — a disposable projection over durable span/control evidence.
+ * Not canonical state; rebuildable from the derived replay event stream at any time.
  */
 export interface RuntimeSummary {
   mission_id: string;
@@ -759,15 +759,36 @@ export interface RuntimeState {
   edges: GraphEdge[];
 }
 
+/** Version of the durable-span replay and graph projection. */
+export const SPAN_PROJECTION_VERSION = 'span_projection.v1' as const;
+export type SpanProjectionVersion = typeof SPAN_PROJECTION_VERSION;
+
 export interface ReplayStateResponse {
   mission_id: string;
   branch_id: string;
+  /** Identifies the deterministic projection used to derive this response. */
+  projection_version: SpanProjectionVersion;
   total_frames: number;
   duration_seconds: number | null;
   branches: ReplayBranch[];
   events: EventEnvelope[];
   snapshots: GraphSnapshot[];
   current_state: RuntimeState | null;
+}
+
+export interface CurrentGraphResponse {
+  mission_id: string;
+  projection_version: SpanProjectionVersion;
+  current: GraphSnapshot | null;
+  total_snapshots: number;
+}
+
+export interface GraphSnapshotsResponse {
+  projection_version: SpanProjectionVersion;
+  snapshots: GraphSnapshot[];
+  offset: number;
+  limit: number;
+  count: number;
 }
 
 /** Actor types for event attribution — identifies WHO caused an event. */
@@ -822,11 +843,11 @@ export interface PolicyDecision {
 }
 
 /**
- * EventEnvelope — the canonical event record for the AgentLens control plane.
+ * EventEnvelope — a derived replay-event shape for the AgentLens control plane.
  *
  * This extends MissionEventRecord with richer attribution, causal context,
- * provenance, and cryptographic integrity fields. It is the target schema
- * for the immutable event ledger.
+ * provenance, and optional future integrity fields. The current span-backed
+ * runtime derives it on demand and does not persist an envelope ledger.
  *
  * During migration, events may have nullable envelope fields. The system
  * must tolerate partial envelopes from legacy ingestion paths.
@@ -855,33 +876,49 @@ export interface EventEnvelope extends MissionEventRecord {
   source_span_id?: string;
   source_event_id?: string;
 
-  /** SHA-256 hash of (payload + metadata + previous_hash) for tamper evidence. */
+  /** Reserved for future persisted tamper evidence; absent in the current runtime. */
   content_hash?: string;
 
-  /** Content hash of the previous event in this branch for hash-chain integrity. */
+  /** Reserved for future hash-chain integrity; absent in the current runtime. */
   previous_hash?: string;
 }
 
 export interface AuditBranchReport {
   branch_id: string;
-  is_valid: boolean;
+  /** `null` means verification has not been implemented or run. */
+  is_valid: boolean | null;
+  verification_status: IntegrityVerificationStatus;
+  verification_reason: string;
   event_count: number;
   error_count: number;
 }
 
+export type IntegrityVerificationStatus = 'verified' | 'unsupported';
+
 export interface AuditIntegrityReport {
-  is_valid: boolean;
+  is_valid: boolean | null;
+  verification_status: IntegrityVerificationStatus;
+  verification_reason: string;
   branch_reports: AuditBranchReport[];
 }
 
 export interface MissionAuditEventResponse {
   events: EventEnvelope[];
   integrity: {
-    is_valid: boolean;
-    hash_chain_status: 'valid' | 'broken';
+    is_valid: boolean | null;
+    verification_status: IntegrityVerificationStatus;
+    verification_reason: string;
+    hash_chain_status: 'valid' | 'broken' | 'not_verified';
     branch_id: string;
     total_events: number;
   };
+}
+
+/** Canonical best-effort notification that durable replay evidence changed. */
+export interface ReplayUpdatedMissionRealtimeMessage {
+  type: 'replay.updated';
+  mission_id: string;
+  branch_id: string;
 }
 
 export interface OperatorRailContext {

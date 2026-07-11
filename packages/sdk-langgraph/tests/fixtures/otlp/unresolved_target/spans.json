@@ -1,0 +1,51 @@
+{
+  "adapter": "AgentLensLangGraphCallbackHandler",
+  "fixture_id": "unresolved_target",
+  "generator": "packages/sdk-langgraph/tests/helpers/capture_otlp.py",
+  "library_versions": {
+    "agentlens_sdk_core": "0.1.0",
+    "agentlens_sdk_langgraph": "0.1.0",
+    "langchain_core": "1.3.3",
+    "langgraph": "1.1.10",
+    "opentelemetry_api": "1.41.1"
+  },
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "384a3f43e5a0fc22a1560ed889a42f7ae38218c6878e73753c45b981f0bd0582"
+  },
+  "spans": [
+    {
+      "attributes": {
+        "agent.span.kind": "invoke_agent",
+        "agentlens.langgraph.activity_correlation_id": "756e7265-736f-6c76-6564-2d706172656e",
+        "agentlens.langgraph.run_id": "756e7265-736f-6c76-6564-2d706172656e",
+        "agentlens.native_execution_key": "langgraph|run:756e7265-736f-6c76-6564-2d706172656e",
+        "gen_ai.agent.framework": "langgraph",
+        "gen_ai.agent.id": "supervisor",
+        "gen_ai.agent.name": "supervisor",
+        "gen_ai.agent.role": "supervisor",
+        "gen_ai.agent.task": "supervisor"
+      },
+      "end_time_unix_nano": "1000501000000",
+      "events": [
+        {
+          "attributes": {
+            "agentlens.langgraph.explicit_handoff": "true",
+            "gen_ai.agent.handoff.reason": "langgraph.explicit_handoff",
+            "gen_ai.agent.handoff.target": "missing_agent"
+          },
+          "name": "agent.handoff.requested",
+          "time_unix_nano": "1000001000000"
+        }
+      ],
+      "name": "agent:supervisor",
+      "operation_name": "agent:supervisor",
+      "parent_span_id": "",
+      "span_id": "0000000000000001",
+      "start_time_unix_nano": "1000001000000",
+      "status_code": "OK",
+      "status_message": "",
+      "trace_id": "00000000000000000000000000000001"
+    }
+  ]
+}

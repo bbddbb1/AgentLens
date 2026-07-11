@@ -1,0 +1,23 @@
+{
+  "fixture_id": "interrupt_resume",
+  "legacy_comparison": {
+    "authoritative": false,
+    "notes": "Legacy projection equality is secondary; native facts win."
+  },
+  "oracle": {
+    "activities": [
+      {
+        "issues_resume_command": false,
+        "kind": "agent",
+        "name": "approver",
+        "resume_of_interrupt_id": "intr-42"
+      }
+    ],
+    "notes": "Resume is observed only from explicit markers; not inferred from later activity."
+  },
+  "primary_oracle": "native_facts",
+  "semantic_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "189b4ef24361f9e3c1acbd9ae7ac7863884da2b246230f8b31984b1622453f49"
+  }
+}
