@@ -101,12 +101,14 @@ version = "0.1.0"
 source = { editable = "packages/sdk-maf" }
 dependencies = [
     { name = "agent-framework-core" },
+    { name = "httpx" },
     { name = "opentelemetry-sdk" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", specifier = "==1.10.0" },
+    { name = "httpx", specifier = ">=0.28.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.28.0" },
 ]
 

@@ -43,7 +43,8 @@ function deterministicStringify(obj: any): string {
 import type { Mission, MissionAggregate, MissionAgent, SemanticSummaryResult } from '../types/mission.js';
 import { pool } from '../db/postgres.js';
 import type { PoolClient } from 'pg';
-import { isLangGraphGovernanceControlAvailable, isLangGraphGovernanceEnabled } from '../config/features.js';
+import { isLangGraphGovernanceControlAvailable, isLangGraphGovernanceEnabled, isMafGovernanceControlAvailable } from '../config/features.js';
+import { MAF_IDENTITY_POLICY } from './interrupts/identityMatch.js';
 import { mapInterruptRowToRecord, serializeInterruptPublic } from './interrupts/publicSerializer.js';
 import { validateStructuredDecisionValue } from './interrupts/structuredDecisionBounds.js';
 import { applyRuntimeOutcome, ensureDeliveryAttempt } from './interrupts/deliveryLifecycle.js';
@@ -466,13 +467,15 @@ class MissionStore {
           });
           continue;
         }
-        if (event.name !== AgentEvents.INTERRUPT_REQUESTED) continue;
+        if (event.name !== AgentEvents.INTERRUPT_REQUESTED && event.name !== 'agentlens.maf.request_info') continue;
         interruptRequested = true;
         const attrs = { ...(span.attributes ?? {}), ...(event.attributes ?? {}) } as Record<string, unknown>;
+        const isMaf = event.name === 'agentlens.maf.request_info' || Object.keys(attrs).some((key) => key.startsWith('agentlens.maf.'));
         const interruptId =
           attributeValue(event.attributes, AgentAttributes.INTERRUPT_ID) ??
           attributeValue(span.attributes, AgentAttributes.INTERRUPT_ID) ??
           attributeValue(event.attributes, 'agentlens.langgraph.interrupt_request_id') ??
+          attributeValue(event.attributes, 'agentlens.maf.request_id') ??
           `${span.span_id}:interrupt`;
         const resumeToken = attributeValue(event.attributes, AgentAttributes.RESUME_TOKEN);
         const isLangGraph = Object.keys(attrs).some((key) => key.startsWith('agentlens.langgraph.'));
@@ -490,10 +493,22 @@ class MissionStore {
               mission_id: missionId,
               branch_id: branchId,
             }
-          : null;
+          : isMaf
+            ? {
+                framework: 'ms_agent_framework',
+                workflow_id: attributeValue(attrs, 'agentlens.maf.workflow_id') ?? attributeValue(attrs, 'workflow.id'),
+                executor_id: attributeValue(attrs, 'agentlens.maf.executor_id') ?? attributeValue(attrs, 'executor.id'),
+                request_id: attributeValue(attrs, 'agentlens.maf.request_id') ?? interruptId,
+                request_type: attributeValue(attrs, 'agentlens.maf.request_type'),
+                response_type: attributeValue(attrs, 'agentlens.maf.response_type'),
+                activity_correlation_id: attributeValue(attrs, 'agentlens.maf.activity_correlation_id'),
+                mission_id: missionId,
+                branch_id: branchId,
+              }
+            : null;
         const safePrompt = attributeValue(attrs, 'agentlens.langgraph.interrupt_prompt')
           ?? attributeValue(attrs, AgentAttributes.INTERRUPT_REASON);
-        const requestType = attributeValue(attrs, 'agentlens.langgraph.interrupt_request_type') ?? 'interrupt';
+        const requestType = attributeValue(attrs, 'agentlens.maf.request_type') ?? attributeValue(attrs, 'agentlens.langgraph.interrupt_request_type') ?? 'interrupt';
         const supportedRaw = attributeValue(attrs, 'agentlens.langgraph.supported_decisions');
         let supportedDecisionTypes: string[] = [];
         if (supportedRaw) {
@@ -507,7 +522,7 @@ class MissionStore {
         const requestLifecycle = 'pending';
         const initialActionability = isLangGraph
           ? (isLangGraphGovernanceControlAvailable() ? 'observed_only' : 'unavailable')
-          : 'observed_only';
+          : isMaf ? (isMafGovernanceControlAvailable() ? 'observed_only' : 'unavailable') : 'observed_only';
 
         // Scrub resume tokens from stored public-ish payload attributes.
         const scrubbedAttrs = { ...(event.attributes ?? {}) } as Record<string, unknown>;
@@ -574,7 +589,7 @@ class MissionStore {
             resumeToken ? hashToken(resumeToken) : null,
             JSON.stringify({ event: event.name, attributes: scrubbedAttrs }),
             attributeValue(event.attributes, AgentAttributes.TIMEOUT_AT) ?? null,
-            isLangGraph ? 'langgraph' : null,
+            isLangGraph ? 'langgraph' : isMaf ? 'ms_agent_framework' : null,
             nativeIdentity ? JSON.stringify(nativeIdentity) : null,
             JSON.stringify([{ trace_id: span.trace_id, span_id: span.span_id, event_name: event.name }]),
             requestType,
@@ -586,12 +601,14 @@ class MissionStore {
           ],
         );
 
-        if (isLangGraph) {
+        if (isLangGraph || isMaf) {
           await reconcileInterruptActionability(client, {
             missionId,
             branchId,
             interruptId,
             identityAmbiguous: ambiguity.identityAmbiguous,
+            framework: isMaf ? 'ms_agent_framework' : 'langgraph',
+            identityPolicy: isMaf ? MAF_IDENTITY_POLICY : undefined,
           });
         }
       }
