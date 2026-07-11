@@ -9,6 +9,7 @@ import {
   isLangGraphRetrieval,
   nativeRuntimeIdentity,
 } from './langgraph.js';
+import { hasMafMarkers, mafNativeRuntimeIdentity } from './maf.js';
 import {
   genAiTokenUsage,
   lifecycleFromEventAttrs,
@@ -37,6 +38,11 @@ const NATIVE_IDENTITY_FIELDS: Array<keyof NativeRuntimeIdentity> = [
   'checkpoint_ns',
   'activity_correlation_id',
   'native_execution_key',
+  'workflow_id',
+  'executor_id',
+  'request_id',
+  'request_type',
+  'response_type',
 ];
 
 /**
@@ -110,12 +116,20 @@ export function normalizeSpansToFacts(spans: any[]): NormalizedRuntimeFacts {
           source: sourceReference(span, Object.keys(event.attributes ?? {}), 'langgraph', event.name),
         });
       }
+      if (typeof event?.name === 'string' && event.name.startsWith('agentlens.maf.')
+        && !['agentlens.maf.request_info', 'agentlens.maf.response_accepted'].includes(event.name)) {
+        diagnostics.push({
+          code: 'unknown_telemetry',
+          message: `Unsupported MAF event ${event.name} on ${span?.span_id ?? 'span'}`,
+          source: sourceReference(span, Object.keys(event.attributes ?? {}), 'maf', event.name),
+        });
+      }
     }
   }
   const candidates = ordered.flatMap((span) => [
     candidateForSpan(span, diagnostics),
     ...(span.events ?? [])
-      .filter((event: any) => ['agent.tool.call', 'gen_ai.call', 'gen_ai.error', 'agent.interrupt.requested', 'agent.interrupt.resumed'].includes(event.name))
+      .filter((event: any) => ['agent.tool.call', 'gen_ai.call', 'gen_ai.error', 'agent.interrupt.requested', 'agent.interrupt.resumed', 'agentlens.maf.request_info', 'agentlens.maf.response_accepted'].includes(event.name))
       .map((event: any) => candidateForSpan(span, diagnostics, event)),
   ]);
   const groups = new Map<string, Candidate[]>();
@@ -231,15 +245,20 @@ function candidateForSpan(span: any, diagnostics: NormalizationDiagnostics[], ev
     : undefined;
   // Per-candidate identity follows attribute merge (event attrs overlay span attrs).
   // Field-wise first-wins across candidates happens only in mergeCandidates.
-  const identity = nativeRuntimeIdentity(
+  const langGraphIdentity = nativeRuntimeIdentity(
     event && !hasLangGraphMarkers(eventAttrs) && priorEventIdentityAttrs
       ? { ...attrs, ...priorEventIdentityAttrs }
       : attrs,
   );
+  const identity = langGraphIdentity ?? mafNativeRuntimeIdentity(attrs);
   const source = sourceReference(
     span,
     Object.keys(attrs),
-    identity?.framework === 'langgraph' || hasLangGraphMarkers(attrs) ? 'langgraph' : 'agentlens-compat',
+    identity?.framework === 'langgraph' || hasLangGraphMarkers(attrs)
+      ? 'langgraph'
+      : identity?.framework === 'ms_agent_framework' || hasMafMarkers(attrs)
+        ? 'maf'
+        : 'agentlens-compat',
     event?.name,
     eventIndex,
   );
@@ -247,10 +266,13 @@ function candidateForSpan(span: any, diagnostics: NormalizationDiagnostics[], ev
     isLangGraphRetrieval(attrs) ? 'retrieval'
       : event?.name === 'agent.tool.call' ? 'tool'
       : event?.name === 'gen_ai.call' || event?.name === 'gen_ai.error' ? 'llm'
-        : event?.name === 'agent.interrupt.requested' || event?.name === 'agent.interrupt.resumed' ? 'interrupt'
+        : event?.name === 'agent.interrupt.requested' || event?.name === 'agent.interrupt.resumed' || event?.name === 'agentlens.maf.request_info' ? 'interrupt'
           : activityKindFromCompat(attrs, operationName);
   if (kind === 'unknown' && Object.keys(attrs).some((key) => key.startsWith('agentlens.langgraph.'))) {
     diagnostics.push({ code: 'unknown_telemetry', message: `Unsupported LangGraph telemetry on ${span?.span_id ?? 'span'}`, source });
+  }
+  if (kind === 'unknown' && Object.keys(attrs).some((key) => key.startsWith('agentlens.maf.'))) {
+    diagnostics.push({ code: 'unknown_telemetry', message: `Unsupported MAF telemetry on ${span?.span_id ?? 'span'}`, source });
   }
   const activityKey =
     identity?.run_id

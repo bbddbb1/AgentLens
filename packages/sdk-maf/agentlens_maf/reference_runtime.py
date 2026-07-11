@@ -111,11 +111,15 @@ class ReferenceReviewExecutor(Executor):
 
     @handler
     async def request_review(self, value: str, ctx: WorkflowContext[None, str]) -> None:
+        request = ReferenceReviewRequest(subject=value)
+        request_id = "agentlens-reference-review-request"
         await ctx.request_info(
-            ReferenceReviewRequest(subject=value),
+            request,
             ReferenceReviewResponse,
-            request_id="agentlens-reference-review-request",
+            request_id=request_id,
         )
+        from .enrichment import emit_enrichment, request_attributes
+        emit_enrichment("agentlens.maf.request_info", request_attributes(request_id, request))
 
     @response_handler
     async def handle_review_response(
@@ -125,6 +129,11 @@ class ReferenceReviewExecutor(Executor):
         ctx: WorkflowContext[None, str],
     ) -> None:
         outcome = "continued" if response.approved else "alternative"
+        from .enrichment import emit_enrichment, terminal_attributes
+        emit_enrichment(
+            "agentlens.maf.response_accepted",
+            terminal_attributes("agentlens-reference-review-request", response),
+        )
         await ctx.yield_output(f"{outcome}:{original_request.subject}:{response.note}")
 
 

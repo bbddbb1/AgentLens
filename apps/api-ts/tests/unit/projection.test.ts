@@ -128,6 +128,28 @@ describe('projectTraceSnapshot', () => {
     expect(transitionEdge!.target).toBe('span2');
   });
 
+  it('routes MAF-normalized identity through the existing snapshot projection', () => {
+    const snapshot = projectTraceSnapshot('m-maf', 'main', [{
+      span_id: 'maf-executor',
+      trace_id: 'maf-trace',
+      name: 'executor.process agentlens-reference-executor',
+      start_time_unix_nano: '100',
+      end_time_unix_nano: '200',
+      status_code: 'OK',
+      attributes: {
+        'workflow.id': 'workflow-1',
+        'executor.id': 'agentlens-reference-executor',
+        'agentlens.maf.request_id': 'request-1',
+      },
+    }]);
+
+    expect(snapshot.nodes[0]?.metadata?.native_runtime_identity).toMatchObject({
+      framework: 'ms_agent_framework',
+      workflow_id: 'workflow-1',
+      request_id: 'request-1',
+    });
+  });
+
   it('filters out future spans when maxTimeNs is provided', () => {
     // At 1.5ms, only the root span has started
     const snapshot = projectTraceSnapshot('m1', 'main', spans, 1500000);

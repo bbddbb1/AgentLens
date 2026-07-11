@@ -331,4 +331,71 @@ describe('normalizeSpansToFacts', () => {
     expect(facts.activities[0]?.native_runtime_identity?.native_execution_key).toBe('obs-key-1');
     expect(facts.activities[0]?.native_runtime_identity?.interrupt_request_id).toBe('interrupt-1');
   });
+
+  it('preserves MAF workflow, executor, and request identity in MAF terminology', () => {
+    const facts = normalizeSpansToFacts([
+      span({
+        attributes: {
+          'workflow.id': 'workflow-1',
+          'executor.id': 'executor-1',
+          'agentlens.maf.request_id': 'request-1',
+          'agentlens.maf.request_type': 'ReferenceReviewRequest',
+          'agentlens.maf.response_type': 'ReferenceReviewResponse',
+        },
+      }),
+    ]);
+
+    expect(facts.activities[0]?.native_runtime_identity).toMatchObject({
+      framework: 'ms_agent_framework',
+      workflow_id: 'workflow-1',
+      executor_id: 'executor-1',
+      request_id: 'request-1',
+      request_type: 'ReferenceReviewRequest',
+      response_type: 'ReferenceReviewResponse',
+    });
+    expect(facts.activities[0]?.native_runtime_identity?.thread_id).toBeUndefined();
+  });
+
+  it('normalizes bounded MAF request enrichment without LangGraph semantics', () => {
+    const facts = normalizeSpansToFacts([span({ events: [{
+      name: 'agentlens.maf.request_info',
+      attributes: {
+        'agentlens.maf.request_id': 'request-1',
+        'agentlens.maf.request_type': 'ReferenceReviewRequest',
+        'agentlens.maf.response_type': 'ReferenceReviewResponse',
+        'agentlens.maf.safe_data_state': 'bounded',
+      },
+    }] })]);
+
+    expect(facts.activities).toContainEqual(expect.objectContaining({
+      kind: 'interrupt',
+      native_runtime_identity: expect.objectContaining({ framework: 'ms_agent_framework', request_id: 'request-1' }),
+      source_references: [expect.objectContaining({ translator: 'maf', event_name: 'agentlens.maf.request_info' })],
+    }));
+  });
+
+  it('preserves explicit MAF failure and safely diagnoses unknown MAF telemetry', () => {
+    const facts = normalizeSpansToFacts([
+      span({
+        attributes: { 'workflow.id': 'workflow-failed', 'executor.id': 'executor-failed' },
+        status_code: 'ERROR',
+        events: [{ name: 'agentlens.maf.unrecognized', attributes: { 'agentlens.maf.workflow_id': 'workflow-failed' } }],
+      }),
+    ]);
+
+    expect(facts.activities[0]).toMatchObject({ outcome: 'failure', lifecycle: 'failed' });
+    expect(facts.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'unknown_telemetry',
+      source: expect.objectContaining({ translator: 'maf' }),
+    }));
+  });
+
+  it('does not infer MAF relationships from timestamp overlap or names', () => {
+    const facts = normalizeSpansToFacts([
+      span({ attributes: { 'workflow.id': 'workflow-1', 'executor.id': 'same-name' } }),
+      span({ span_id: 'span-2', attributes: { 'workflow.id': 'workflow-2', 'executor.id': 'same-name' } }),
+    ]);
+
+    expect(facts.relationships).toEqual([]);
+  });
 });

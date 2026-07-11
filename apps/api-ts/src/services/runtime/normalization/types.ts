@@ -9,7 +9,7 @@ export interface SourceReference {
   /** Stable 0-based index within the source span's events array when applicable. */
   event_index?: number;
   attribute_keys: string[];
-  translator: 'otel-genai' | 'agentlens-compat' | 'langgraph';
+  translator: 'otel-genai' | 'agentlens-compat' | 'langgraph' | 'maf';
 }
 
 export interface NativeRuntimeIdentity {
@@ -23,6 +23,11 @@ export interface NativeRuntimeIdentity {
   checkpoint_ns?: string;
   activity_correlation_id?: string;
   native_execution_key?: string;
+  workflow_id?: string;
+  executor_id?: string;
+  request_id?: string;
+  request_type?: string;
+  response_type?: string;
 }
 
 export interface NormalizedRelationship {

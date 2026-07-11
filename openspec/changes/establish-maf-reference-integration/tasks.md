@@ -10,18 +10,18 @@
 
 - [x] 2.1 Add the MAF-owned capability matrix with all required workflow, executor, Agent, Tool/function, lifecycle, failure, relationship, request/response, identity, model/token, source, and private bridge binding availability/governance binding readiness rows and truthful initial statuses, without exposing an executable control reference as an observability fact.
 - [x] 2.2 Configure MAF native observability and capture baseline OTel spans/events from the real reference workflow using the OTel SDK without hand-authoring telemetry.
-- [ ] 2.3 Add narrow MAF adapter enrichment for explicit streamed `request_info`, response/delivery correlation, and terminal outcome facts missing from native OTLP, with bounded safe data and source references.
+- [x] 2.3 Add narrow MAF adapter enrichment for explicit streamed `request_info`, response/delivery correlation, and terminal outcome facts missing from native OTLP, with bounded safe data and source references.
 - [ ] 2.4 Generate checked-in fixtures and expected-native-fact declarations for success, Agent/Tool, request, continuation, alternative, explicit failure, unknown telemetry, missing identity, conflicting identity, and unrelated later activity.
 - [ ] 2.5 Fingerprint the exact MAF distribution/runtime version and fixture-generation path in each fixture manifest and fail regeneration/conformance on version mismatch.
 - [ ] 2.6 Add executable matrix tests proving each row is fixture-backed while allowing `partial`, `not_observable`, and `not_applicable` completion states.
 
 ## 3. Private MAF Telemetry Translation
 
-- [ ] 3.1 Extend private normalized fact/source types only with the MAF workflow, executor, request, response, and correlation fields required by the matrix, without public protocol or persisted RuntimeEvidence types.
-- [ ] 3.2 Add `normalization/maf.ts` for MAF `workflow.*`, `executor.*`, request enrichment, and native identity rules while leaving standard GenAI Agent/Tool/model/token facts in generic OTel/GenAI translation.
-- [ ] 3.3 Integrate the MAF translator explicitly beside AgentLens compatibility and LangGraph translation, with no dynamic registry, profile selection, or plugin machinery.
-- [ ] 3.4 Add normalization tests for workflow/executor/Agent/Tool facts, explicit failure dominance, native request/response identity, source traceability, unknown telemetry, and no timing/name/order relationship inference.
-- [ ] 3.5 Route MAF normalized facts through existing `projectReplay()`, `projectTraceSnapshot()`, and explanation inputs while keeping all MAF keys/event interpretation out of generic projection code.
+- [x] 3.1 Extend private normalized fact/source types only with the MAF workflow, executor, request, response, and correlation fields required by the matrix, without public protocol or persisted RuntimeEvidence types.
+- [x] 3.2 Add `normalization/maf.ts` for MAF `workflow.*`, `executor.*`, request enrichment, and native identity rules while leaving standard GenAI Agent/Tool/model/token facts in generic OTel/GenAI translation.
+- [x] 3.3 Integrate the MAF translator explicitly beside AgentLens compatibility and LangGraph translation, with no dynamic registry, profile selection, or plugin machinery.
+- [x] 3.4 Add normalization tests for workflow/executor/Agent/Tool facts, explicit failure dominance, native request/response identity, source traceability, unknown telemetry, and no timing/name/order relationship inference.
+- [x] 3.5 Route MAF normalized facts through existing `projectReplay()`, `projectTraceSnapshot()`, and explanation inputs while keeping all MAF keys/event interpretation out of generic projection code.
 - [ ] 3.6 Add architectural and semantic tests proving MAF uses `span_projection.v1`, unresolved relationships create no edges, explicit relationships remain evidence-backed, and no second projector/public RuntimeEvidence is introduced.
 
 ## 4. Framework-Neutral Core Corrections
