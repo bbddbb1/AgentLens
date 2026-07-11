@@ -25,6 +25,7 @@ describe('MAF normalization architecture', () => {
     const normalization = readFileSync(resolve(root, 'src/services/runtime/normalization/normalize.ts'), 'utf8');
 
     expect(mafRoute).toContain('MAF_IDENTITY_POLICY');
+    expect(langGraphRoute).toContain('LANGGRAPH_IDENTITY_POLICY');
     expect(langGraphRoute).not.toContain('ms_agent_framework');
     expect(normalization).not.toMatch(/registry|adapter factory|dynamic dispatch/i);
     expect(mafRoute).not.toMatch(/registry|strategy|factory|discovery/i);

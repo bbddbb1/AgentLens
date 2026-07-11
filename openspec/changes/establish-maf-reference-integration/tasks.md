@@ -26,12 +26,12 @@
 
 ## 4. Framework-Neutral Core Corrections
 
-- [ ] 4.1 Migrate the private `langgraph_bridge_bindings` storage to an explicitly framework-scoped binding table while preserving existing LangGraph rows, lifecycle state, generation, leases, and hashes.
-- [ ] 4.2 Parameterize binding registration, renewal, expiry, authentication, and lookup by exact framework plus mission/branch without duplicating binding services for MAF.
-- [ ] 4.3 Refactor the private exact identity matcher so each explicit LangGraph or MAF route passes one small constant object containing expected framework, required native keys, and consistency keys; preserve LangGraph behavior and add no policy registry, strategy framework, adapter factory, dynamic dispatch, discovery, or public policy contract.
-- [ ] 4.4 Parameterize actionability reconciliation only by the route-supplied constant framework availability and identity policy instead of hard-coded LangGraph/thread rules, retaining binding-only, observation-only, optional-identity, and explicit-conflict safety behavior.
-- [ ] 4.5 Separate common service-token verification from independently disabled-by-default `LANGGRAPH_GOVERNANCE_ENABLED` and `MAF_GOVERNANCE_ENABLED` checks; fail MAF endpoints/actionability closed when enabled without configured authentication while leaving observability operational.
-- [ ] 4.6 Add or refactor thin explicit LangGraph and MAF private bridge route modules to call the same binding, actionability, claim, receipt, idempotency, and outcome services using their direct constant policies, without adding a policy/route/adapter registry, strategy, factory, or discovery layer.
+- [x] 4.1 Migrate the private `langgraph_bridge_bindings` storage to an explicitly framework-scoped binding table while preserving existing LangGraph rows, lifecycle state, generation, leases, and hashes.
+- [x] 4.2 Parameterize binding registration, renewal, expiry, authentication, and lookup by exact framework plus mission/branch without duplicating binding services for MAF.
+- [x] 4.3 Refactor the private exact identity matcher so each explicit LangGraph or MAF route passes one small constant object containing expected framework, required native keys, and consistency keys; preserve LangGraph behavior and add no policy registry, strategy framework, adapter factory, dynamic dispatch, discovery, or public policy contract.
+- [x] 4.4 Parameterize actionability reconciliation only by the route-supplied constant framework availability and identity policy instead of hard-coded LangGraph/thread rules, retaining binding-only, observation-only, optional-identity, and explicit-conflict safety behavior.
+- [x] 4.5 Separate common service-token verification from independently disabled-by-default `LANGGRAPH_GOVERNANCE_ENABLED` and `MAF_GOVERNANCE_ENABLED` checks; fail MAF endpoints/actionability closed when enabled without configured authentication while leaving observability operational.
+- [x] 4.6 Add or refactor thin explicit LangGraph and MAF private bridge route modules to call the same binding, actionability, claim, receipt, idempotency, and outcome services using their direct constant policies, without adding a policy/route/adapter registry, strategy, factory, or discovery layer.
 - [ ] 4.7 Add migration and service tests proving existing LangGraph bindings still register/renew/claim/receipt correctly; missing/invalid MAF authentication and control reference without service auth fail closed; and correctly authenticated wrong-framework, wrong-mission, and wrong-branch requests always fail.
 
 ## 5. Explicit MAF Interaction Observation

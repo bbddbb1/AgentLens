@@ -17,6 +17,7 @@ import {
   assertCurrentlyActionable,
   reconcileMissionBranchActionability,
 } from '../services/interrupts/reconcileActionability.js';
+import { LANGGRAPH_IDENTITY_POLICY } from '../services/interrupts/identityMatch.js';
 import { missionStore } from '../services/missionStore.js';
 
 export const langGraphBridgeRouter = Router();
@@ -79,6 +80,7 @@ langGraphBridgeRouter.post(
           leaseSeconds: parsed.data.lease_seconds,
           interruptId: parsed.data.interrupt_id,
           interactionRequestId: parsed.data.interaction_request_id,
+          framework: 'langgraph',
           nativeIdentity: {
             ...(parsed.data.native_identity as Record<string, string>),
             mission_id: req.params.missionId,
@@ -87,7 +89,7 @@ langGraphBridgeRouter.post(
           },
         });
         // Exact identity reconciliation for all interrupts in scope (not interrupt-id alone).
-        await reconcileMissionBranchActionability(client, req.params.missionId, req.params.branchId);
+        await reconcileMissionBranchActionability(client, req.params.missionId, req.params.branchId, 'langgraph', LANGGRAPH_IDENTITY_POLICY);
         await client.query('COMMIT');
         return res.status(201).json({
           binding_id: binding.id,
@@ -123,12 +125,13 @@ langGraphBridgeRouter.post(
           branchId: req.params.branchId,
           controlRef: parsed.data.control_ref,
           leaseSeconds: parsed.data.lease_seconds,
+          framework: 'langgraph',
         });
         if (!binding) {
           await client.query('ROLLBACK');
           return res.status(404).json({ detail: 'Active binding not found' });
         }
-        await reconcileMissionBranchActionability(client, req.params.missionId, req.params.branchId);
+        await reconcileMissionBranchActionability(client, req.params.missionId, req.params.branchId, 'langgraph', LANGGRAPH_IDENTITY_POLICY);
         await client.query('COMMIT');
         return res.json({
           binding_id: binding.id,
@@ -164,6 +167,7 @@ langGraphBridgeRouter.post(
           missionId: req.params.missionId,
           branchId: req.params.branchId,
           controlRef: parsed.data.control_ref,
+          framework: 'langgraph',
         });
         if (!binding) {
           await client.query('ROLLBACK');
@@ -174,6 +178,8 @@ langGraphBridgeRouter.post(
           missionId: req.params.missionId,
           branchId: req.params.branchId,
           interruptId: parsed.data.interrupt_id,
+          framework: 'langgraph',
+          identityPolicy: LANGGRAPH_IDENTITY_POLICY,
         });
         if (actionable.actionability !== 'actionable') {
           await client.query('COMMIT');
@@ -229,6 +235,7 @@ langGraphBridgeRouter.post(
           missionId: req.params.missionId,
           branchId: req.params.branchId,
           controlRef: parsed.data.control_ref,
+          framework: 'langgraph',
         });
         if (!binding) {
           await client.query('ROLLBACK');
