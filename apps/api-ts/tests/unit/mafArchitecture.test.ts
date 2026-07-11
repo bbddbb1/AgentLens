@@ -18,4 +18,21 @@ describe('MAF normalization architecture', () => {
     const exports = readFileSync(resolve(root, '../../packages/protocol/src/index.ts'), 'utf8');
     expect(exports).not.toContain('RuntimeEvidence');
   });
+
+  it('keeps framework route policies explicit without a registry or adapter factory', () => {
+    const mafRoute = readFileSync(resolve(root, 'src/routes/mafBridge.ts'), 'utf8');
+    const langGraphRoute = readFileSync(resolve(root, 'src/routes/langgraphBridge.ts'), 'utf8');
+    const normalization = readFileSync(resolve(root, 'src/services/runtime/normalization/normalize.ts'), 'utf8');
+
+    expect(mafRoute).toContain('MAF_IDENTITY_POLICY');
+    expect(langGraphRoute).not.toContain('ms_agent_framework');
+    expect(normalization).not.toMatch(/registry|adapter factory|dynamic dispatch/i);
+    expect(mafRoute).not.toMatch(/registry|strategy|factory|discovery/i);
+  });
+
+  it('keeps framework-specific SDK code out of the LangGraph package', () => {
+    const langGraphBridge = readFileSync(resolve(root, '../../packages/sdk-langgraph/agentlens_langgraph/governance_bridge.py'), 'utf8');
+    expect(langGraphBridge).not.toContain('MafGovernanceBridge');
+    expect(langGraphBridge).not.toContain('ms_agent_framework');
+  });
 });
