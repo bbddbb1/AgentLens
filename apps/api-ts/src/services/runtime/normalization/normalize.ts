@@ -17,6 +17,7 @@ import {
   outcomeFromOtel,
 } from './otelGenAi.js';
 import type {
+  NativeRuntimeIdentity,
   NormalizationDiagnostics,
   NormalizedActivity,
   NormalizedActivityKind,
@@ -24,6 +25,61 @@ import type {
   NormalizedRuntimeFacts,
   SourceReference,
 } from './types.js';
+
+const NATIVE_IDENTITY_FIELDS: Array<keyof NativeRuntimeIdentity> = [
+  'framework',
+  'thread_id',
+  'run_id',
+  'parent_run_id',
+  'interrupt_request_id',
+  'resume_of_interrupt_id',
+  'checkpoint_id',
+  'checkpoint_ns',
+  'activity_correlation_id',
+  'native_execution_key',
+];
+
+/**
+ * Merge native runtime identities field by field in first-recorded order.
+ * Later omissions do not clear earlier values; equal values coalesce;
+ * conflicting explicit values keep the first value and emit diagnostics.
+ */
+export function mergeNativeRuntimeIdentities(
+  entries: Array<{ identity?: NativeRuntimeIdentity; source?: SourceReference }>,
+): { identity?: NativeRuntimeIdentity; diagnostics: NormalizationDiagnostics[] } {
+  const merged: NativeRuntimeIdentity = {};
+  const fieldSources = new Map<keyof NativeRuntimeIdentity, SourceReference | undefined>();
+  const diagnostics: NormalizationDiagnostics[] = [];
+
+  for (const entry of entries) {
+    const identity = entry.identity;
+    if (!identity) continue;
+    for (const field of NATIVE_IDENTITY_FIELDS) {
+      const next = identity[field];
+      if (next === undefined || next === null || next === '') continue;
+      const current = merged[field];
+      if (current === undefined) {
+        merged[field] = next;
+        fieldSources.set(field, entry.source);
+        continue;
+      }
+      if (current === next) continue;
+      diagnostics.push({
+        code: 'conflicting_native_identity',
+        message: `Conflicting native identity field ${field}: retained "${current}", ignored "${next}"`,
+        source: fieldSources.get(field),
+        conflicting_source: entry.source,
+        field,
+        ambiguous_native_identity: true,
+      });
+    }
+  }
+
+  return {
+    identity: Object.values(merged).some((value) => value !== undefined) ? merged : undefined,
+    diagnostics,
+  };
+}
 
 interface Candidate {
   activity: NormalizedActivity;
@@ -173,15 +229,13 @@ function candidateForSpan(span: any, diagnostics: NormalizationDiagnostics[], ev
       .find((candidate: any) => candidate.name === event.name && hasLangGraphMarkers(candidate.attributes ?? {}))
       ?.attributes
     : undefined;
-  const inheritedIdentity = nativeRuntimeIdentity(attrs);
-  const eventIdentity = nativeRuntimeIdentity(
-    event && hasLangGraphMarkers(eventAttrs)
-      ? eventAttrs
-      : priorEventIdentityAttrs ?? (event ? eventAttrs : attrs),
+  // Per-candidate identity follows attribute merge (event attrs overlay span attrs).
+  // Field-wise first-wins across candidates happens only in mergeCandidates.
+  const identity = nativeRuntimeIdentity(
+    event && !hasLangGraphMarkers(eventAttrs) && priorEventIdentityAttrs
+      ? { ...attrs, ...priorEventIdentityAttrs }
+      : attrs,
   );
-  const identity = inheritedIdentity || eventIdentity
-    ? { ...inheritedIdentity, ...eventIdentity }
-    : undefined;
   const source = sourceReference(
     span,
     Object.keys(attrs),
@@ -243,11 +297,13 @@ function mergeCandidates(id: string, group: Candidate[], diagnostics: Normalizat
   const sourceReferences = sorted.flatMap((candidate) => candidate.activity.source_references)
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
   const firstWithTokens = sorted.find((candidate) => candidate.activity.token_usage)?.activity.token_usage;
-  // Prefer the most specific event-level identity (run_id on the event) over span-level merge order.
-  const firstIdentity = [...sorted]
-    .reverse()
-    .find((candidate) => candidate.activity.native_runtime_identity)?.activity.native_runtime_identity
-    ?? sorted.find((candidate) => candidate.activity.native_runtime_identity)?.activity.native_runtime_identity;
+  const { identity: mergedIdentity, diagnostics: identityDiagnostics } = mergeNativeRuntimeIdentities(
+    sorted.map((candidate) => ({
+      identity: candidate.activity.native_runtime_identity,
+      source: candidate.activity.source_references[0],
+    })),
+  );
+  diagnostics.push(...identityDiagnostics);
   const hasStarted = sorted.some((candidate) => candidate.activity.lifecycle === 'started');
   return {
     ...primary,
@@ -262,7 +318,7 @@ function mergeCandidates(id: string, group: Candidate[], diagnostics: Normalizat
           ? 'started'
           : primary.lifecycle,
     outcome: hasFailure ? 'failure' : hasSuccess ? 'success' : 'unknown',
-    native_runtime_identity: firstIdentity,
+    native_runtime_identity: mergedIdentity,
     token_usage: firstWithTokens,
     source_references: sourceReferences,
   };

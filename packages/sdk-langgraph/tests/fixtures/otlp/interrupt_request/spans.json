@@ -32,6 +32,8 @@
         {
           "attributes": {
             "agentlens.langgraph.interrupt_request_id": "intr-42",
+            "agentlens.langgraph.interrupt_request_type": "interrupt",
+            "agentlens.langgraph.supported_decisions": "[\"approve\",\"reject\"]",
             "gen_ai.agent.interrupt.id": "intr-42",
             "gen_ai.agent.interrupt.reason": "langgraph.interrupt"
           },

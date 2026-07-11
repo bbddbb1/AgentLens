@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeSpansToFacts } from '../../src/services/runtime/normalization/index.js';
+import {
+  hasAmbiguousNativeIdentity,
+  mergeNativeRuntimeIdentities,
+  normalizeSpansToFacts,
+} from '../../src/services/runtime/normalization/index.js';
 
 function span(overrides: Record<string, any> = {}) {
   return {
@@ -215,5 +219,116 @@ describe('normalizeSpansToFacts', () => {
       outcome: 'failure',
       lifecycle: 'failed',
     });
+  });
+
+  it('retains earlier native identity fields when a later lifecycle event is partial', () => {
+    const facts = normalizeSpansToFacts([
+      span({
+        attributes: {
+          'agentlens.langgraph.thread_id': 'thread-1',
+          'agentlens.langgraph.run_id': 'run-1',
+          'agentlens.langgraph.checkpoint_id': 'ckpt-1',
+          'agentlens.langgraph.activity_correlation_id': 'corr-1',
+          'agentlens.native_execution_key': 'obs-key-1',
+        },
+        events: [{
+          name: 'agent.interrupt.requested',
+          attributes: {
+            'agentlens.langgraph.interrupt_request_id': 'interrupt-1',
+            'agentlens.langgraph.run_id': 'run-1',
+          },
+        }],
+      }),
+    ]);
+
+    const activity = facts.activities.find((item) => item.native_runtime_identity?.run_id === 'run-1');
+    expect(activity?.native_runtime_identity).toMatchObject({
+      framework: 'langgraph',
+      thread_id: 'thread-1',
+      run_id: 'run-1',
+      checkpoint_id: 'ckpt-1',
+      activity_correlation_id: 'corr-1',
+      interrupt_request_id: 'interrupt-1',
+      native_execution_key: 'obs-key-1',
+    });
+    expect(facts.diagnostics.some((diagnostic) => diagnostic.code === 'conflicting_native_identity')).toBe(false);
+  });
+
+  it('coalesces equal repeated native identity values without conflict diagnostics', () => {
+    const facts = normalizeSpansToFacts([
+      span({
+        attributes: {
+          'agentlens.langgraph.run_id': 'run-1',
+          'agentlens.langgraph.thread_id': 'thread-1',
+          'agentlens.native_execution_key': 'obs-key-1',
+        },
+        events: [{
+          name: 'agent.tool.call',
+          attributes: {
+            'gen_ai.tool.name': 'search',
+            'agentlens.langgraph.run_id': 'run-1',
+            'agentlens.langgraph.thread_id': 'thread-1',
+            'agentlens.native_execution_key': 'obs-key-1',
+          },
+        }],
+      }),
+    ]);
+
+    expect(facts.activities[0]?.native_runtime_identity).toMatchObject({
+      run_id: 'run-1',
+      thread_id: 'thread-1',
+      native_execution_key: 'obs-key-1',
+    });
+    expect(facts.diagnostics.filter((diagnostic) => diagnostic.code === 'conflicting_native_identity')).toHaveLength(0);
+  });
+
+  it('keeps the first recorded native identity value and diagnoses explicit conflicts', () => {
+    const result = mergeNativeRuntimeIdentities([
+      {
+        identity: { run_id: 'run-a', thread_id: 'thread-1', native_execution_key: 'key-1' },
+        source: { attribute_keys: ['a'], translator: 'langgraph', span_id: 'span-a' },
+      },
+      {
+        identity: { run_id: 'run-b', thread_id: 'thread-1', native_execution_key: 'key-1' },
+        source: { attribute_keys: ['b'], translator: 'langgraph', span_id: 'span-b' },
+      },
+    ]);
+
+    expect(result.identity).toMatchObject({
+      run_id: 'run-a',
+      thread_id: 'thread-1',
+      native_execution_key: 'key-1',
+    });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'conflicting_native_identity',
+      field: 'run_id',
+      ambiguous_native_identity: true,
+      source: expect.objectContaining({ span_id: 'span-a' }),
+      conflicting_source: expect.objectContaining({ span_id: 'span-b' }),
+    }));
+    expect(hasAmbiguousNativeIdentity(result.diagnostics)).toBe(true);
+  });
+
+  it('treats native_execution_key as observational and never uses it to invent conflicts alone', () => {
+    const facts = normalizeSpansToFacts([
+      span({
+        attributes: {
+          'agentlens.langgraph.run_id': 'run-1',
+          'agentlens.native_execution_key': 'obs-key-1',
+        },
+        events: [{
+          name: 'agent.interrupt.requested',
+          attributes: {
+            'agentlens.langgraph.run_id': 'run-1',
+            'agentlens.langgraph.interrupt_request_id': 'interrupt-1',
+            // Same observational key retained; still not a control credential.
+            'agentlens.native_execution_key': 'obs-key-1',
+          },
+        }],
+      }),
+    ]);
+
+    expect(facts.activities[0]?.native_runtime_identity?.native_execution_key).toBe('obs-key-1');
+    expect(facts.activities[0]?.native_runtime_identity?.interrupt_request_id).toBe('interrupt-1');
   });
 });

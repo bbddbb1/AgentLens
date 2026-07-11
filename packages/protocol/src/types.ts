@@ -617,6 +617,7 @@ export interface InterruptRecord {
   interrupt_id: string;
   agent_id?: string;
   span_id?: string;
+  /** Legacy coarse status kept as a conservative compatibility view. */
   status: string;
   reason: string;
   resume_url?: string;
@@ -629,7 +630,48 @@ export interface InterruptRecord {
   expires_at?: string;
   decided_at?: string;
   resumed_at?: string;
+  /** Additive LangGraph governance axes (optional for legacy rows). */
+  request_lifecycle?: InterruptRequestLifecycle;
+  actionability?: InterruptActionability;
+  request_type?: string;
+  supported_decision_types?: InterruptSupportedDecisionType[];
+  safe_prompt?: string;
+  safe_input_schema?: Record<string, unknown>;
+  decision_state?: InterruptDecisionState;
+  decision_id?: string;
+  decision_actor?: string;
+  decision_type?: string;
+  decision_value_summary?: Record<string, unknown>;
+  delivery_state?: InterruptDeliveryState;
+  delivery_id?: string;
+  runtime_outcome?: InterruptRuntimeOutcome;
+  framework?: string;
+  governance_available?: boolean;
 }
+
+export type InterruptRequestLifecycle = 'pending' | 'resolved' | 'expired' | 'stale' | 'unsupported';
+export type InterruptActionability =
+  | 'actionable'
+  | 'observed_only'
+  | 'unsupported'
+  | 'identity_conflict'
+  | 'unavailable';
+export type InterruptSupportedDecisionType = 'approve' | 'reject' | 'structured_response';
+export type InterruptDecisionState = 'none' | 'recorded';
+export type InterruptDeliveryState =
+  | 'not_requested'
+  | 'pending'
+  | 'accepted'
+  | 'failed'
+  | 'stale'
+  | 'unknown';
+export type InterruptRuntimeOutcome =
+  | 'awaiting_interaction'
+  | 'resumed'
+  | 'continued_with_input'
+  | 'rejected_or_terminated'
+  | 'failed'
+  | 'unknown';
 
 export type RuntimeEventType =
   | 'mission.created'
@@ -724,6 +766,15 @@ export interface RuntimeInterruptState {
   payload: Record<string, unknown>;
   decision_payload?: Record<string, unknown>;
   updated_at: string;
+  request_lifecycle?: InterruptRequestLifecycle;
+  actionability?: InterruptActionability;
+  supported_decision_types?: InterruptSupportedDecisionType[];
+  decision_state?: InterruptDecisionState;
+  delivery_state?: InterruptDeliveryState;
+  runtime_outcome?: InterruptRuntimeOutcome;
+  governance_available?: boolean;
+  framework?: string;
+  safe_prompt?: string;
 }
 
 export type PendingMissionEvent = Omit<EventEnvelope, 'id' | 'sequence_num' | 'branch_sequence_num'>;

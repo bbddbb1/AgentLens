@@ -6,6 +6,7 @@ import { checkDatabaseHealth, initializeDatabase } from './db/postgres.js';
 import { missionsRouter } from './routes/missions.js';
 import { extrasRouter } from './routes/extras.js';
 import { branchesRouter } from './routes/branches.js';
+import { langGraphBridgeRouter } from './routes/langgraphBridge.js';
 import { realtimeManager } from './realtime/missions.js';
 import { sandboxRunner } from './services/runtime/SandboxJobRunner.js';
 
@@ -22,6 +23,7 @@ app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? '10mb' }));
 app.use(missionsRouter);
 app.use(extrasRouter);
 app.use(branchesRouter);
+app.use(langGraphBridgeRouter);
 
 app.get('/api/health', async (_req, res) => {
   try {

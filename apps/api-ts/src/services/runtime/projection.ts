@@ -878,7 +878,8 @@ export function projectReplay(
           interrupt_id: intr.interrupt_id,
           decision: intr.decision,
           comment: intr.decision_comment,
-          ...(intr.decision_payload ?? {}),
+          delivery_state: intr.delivery_state,
+          runtime_outcome: intr.runtime_outcome,
         },
         metadata: {},
         causal: {
@@ -956,9 +957,18 @@ export function projectReplay(
       decision: intr.decision ?? undefined,
       decision_comment: intr.decision_comment ?? undefined,
       resume_url: intr.resume_url ?? undefined,
-      payload: intr.payload ?? {},
-      decision_payload: intr.decision_payload ?? undefined,
+      payload: {},
+      decision_payload: intr.decision_value_summary ?? undefined,
       updated_at: intr.updated_at ? new Date(intr.updated_at).toISOString() : new Date().toISOString(),
+      request_lifecycle: intr.request_lifecycle ?? undefined,
+      actionability: intr.actionability ?? undefined,
+      supported_decision_types: intr.supported_decision_types ?? undefined,
+      decision_state: intr.decision_state ?? undefined,
+      delivery_state: intr.delivery_state ?? undefined,
+      runtime_outcome: intr.runtime_outcome ?? undefined,
+      governance_available: intr.governance_available === true,
+      framework: intr.framework ?? undefined,
+      safe_prompt: intr.safe_prompt ?? undefined,
     };
   }
 

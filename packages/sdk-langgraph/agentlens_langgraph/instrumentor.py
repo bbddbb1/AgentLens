@@ -227,6 +227,20 @@ def _extract_interrupt_payload(outputs: Any, metadata: Optional[Dict[str, Any]] 
         result[AgentAttributes.INTERRUPT_ID] = interrupt_id
     reason = _first_present(metadata, "interrupt_reason") or "langgraph.interrupt"
     result[AgentAttributes.INTERRUPT_REASON] = reason
+    # Display-safe request facts only — never export complete interrupt values or control context.
+    prompt = _first_present(metadata, "interrupt_prompt", "safe_prompt")
+    if prompt:
+        # Bound prompt length for display safety.
+        result[LangGraphNativeAttributes.INTERRUPT_PROMPT] = str(prompt)[:500]
+    request_type = _first_present(metadata, "interrupt_request_type", "request_type") or "interrupt"
+    result[LangGraphNativeAttributes.INTERRUPT_REQUEST_TYPE] = str(request_type)
+    supported = _first_present(metadata, "supported_decisions", "supported_decision_types")
+    if supported:
+        result[LangGraphNativeAttributes.SUPPORTED_DECISIONS] = (
+            supported if isinstance(supported, str) else str(supported)
+        )
+    else:
+        result[LangGraphNativeAttributes.SUPPORTED_DECISIONS] = '["approve","reject"]'
     return result
 
 

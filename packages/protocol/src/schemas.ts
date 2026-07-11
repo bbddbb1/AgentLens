@@ -83,6 +83,37 @@ export const ShareSchema = z.object({
 
 export const InterruptStatusSchema = z.enum(['pending', 'approved', 'rejected', 'resumed', 'expired', 'cancelled']);
 export const HumanDecisionSchema = z.enum(['approve', 'reject', 'revise', 'resume']);
+export const InterruptRequestLifecycleSchema = z.enum(['pending', 'resolved', 'expired', 'stale', 'unsupported']);
+export const InterruptActionabilitySchema = z.enum([
+  'actionable',
+  'observed_only',
+  'unsupported',
+  'identity_conflict',
+  'unavailable',
+]);
+export const InterruptSupportedDecisionTypeSchema = z.enum(['approve', 'reject', 'structured_response']);
+export const InterruptDecisionStateSchema = z.enum(['none', 'recorded']);
+export const InterruptDeliveryStateSchema = z.enum([
+  'not_requested',
+  'pending',
+  'accepted',
+  'failed',
+  'stale',
+  'unknown',
+]);
+export const InterruptRuntimeOutcomeSchema = z.enum([
+  'awaiting_interaction',
+  'resumed',
+  'continued_with_input',
+  'rejected_or_terminated',
+  'failed',
+  'unknown',
+]);
+
+/** Conservative bounds for operator-supplied structured decision values. */
+export const STRUCTURED_DECISION_MAX_SERIALIZED_BYTES = 16_384;
+export const STRUCTURED_DECISION_MAX_DEPTH = 6;
+export const STRUCTURED_DECISION_MAX_COLLECTION_SIZE = 64;
 
 export const CreateInterruptSchema = z.object({
   mission_id: z.string().uuid(),
@@ -100,6 +131,14 @@ export const DecideInterruptSchema = z.object({
   decision: HumanDecisionSchema,
   comment: z.string().optional(),
   payload: z.record(z.string(), z.unknown()).optional(),
+  idempotency_key: z.string().min(1),
+});
+
+/** Narrow LangGraph governance decision body (validated further against request schema). */
+export const LangGraphGovernanceDecisionSchema = z.object({
+  decision: InterruptSupportedDecisionTypeSchema,
+  comment: z.string().optional(),
+  value: z.unknown().optional(),
   idempotency_key: z.string().min(1),
 });
 
@@ -265,6 +304,7 @@ export type UpdateMissionInput = z.infer<typeof UpdateMissionSchema>;
 export type MissionEventEnvelope = z.infer<typeof MissionEventEnvelopeSchema>;
 export type CreateInterruptInput = z.infer<typeof CreateInterruptSchema>;
 export type DecideInterruptInput = z.infer<typeof DecideInterruptSchema>;
+export type LangGraphGovernanceDecisionInput = z.infer<typeof LangGraphGovernanceDecisionSchema>;
 export type ResumeInterruptInput = z.infer<typeof ResumeInterruptSchema>;
 export type CreateReplayBranchInput = z.infer<typeof CreateReplayBranchSchema>;
 export type PolicyDecisionType = z.infer<typeof PolicyDecisionTypeSchema>;

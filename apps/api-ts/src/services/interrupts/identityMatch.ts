@@ -1,0 +1,142 @@
+/**
+ * Exact identity matching between an observed LangGraph interrupt and a private bridge binding.
+ * Observational identifiers (including native_execution_key) are never match credentials.
+ */
+
+export type IdentityMatchResult =
+  | { status: 'match'; required: Record<string, string>; consistency: Record<string, string> }
+  | { status: 'missing_required'; field: string }
+  | { status: 'conflict'; field: string; left: string; right: string; diagnostic: string }
+  | { status: 'partial'; missingOptional: string[] };
+
+type RequiredIdentityField =
+  | 'mission_id'
+  | 'branch_id'
+  | 'framework'
+  | 'interaction_request_id'
+  | 'thread_id';
+
+const BASE_REQUIRED_FIELDS: RequiredIdentityField[] = [
+  'mission_id',
+  'branch_id',
+  'framework',
+  'interaction_request_id',
+];
+
+export interface GovernanceIdentitySide {
+  mission_id?: string;
+  branch_id?: string;
+  framework?: string;
+  interaction_request_id?: string;
+  /** Alias accepted for interaction_request_id. */
+  interrupt_request_id?: string;
+  thread_id?: string;
+  run_id?: string;
+  parent_run_id?: string;
+  checkpoint_id?: string;
+  checkpoint_ns?: string;
+  activity_correlation_id?: string;
+  /** Observational only — never used for matching. */
+  native_execution_key?: string;
+}
+
+export interface MatchOptions {
+  /** When true, thread_id is a required matching field for the reference graph. */
+  requireThreadId?: boolean;
+}
+
+function normalize(side: GovernanceIdentitySide): Record<string, string | undefined> {
+  return {
+    mission_id: side.mission_id,
+    branch_id: side.branch_id,
+    framework: side.framework,
+    interaction_request_id: side.interaction_request_id ?? side.interrupt_request_id,
+    thread_id: side.thread_id,
+    run_id: side.run_id,
+    parent_run_id: side.parent_run_id,
+    checkpoint_id: side.checkpoint_id,
+    checkpoint_ns: side.checkpoint_ns,
+    activity_correlation_id: side.activity_correlation_id,
+  };
+}
+
+/**
+ * Deterministic exact identity match. Does not use names, timing, topology,
+ * fuzzy inference, or native_execution_key.
+ */
+export function matchGovernanceIdentity(
+  observed: GovernanceIdentitySide,
+  binding: GovernanceIdentitySide,
+  options: MatchOptions = {},
+): IdentityMatchResult {
+  const left = normalize(observed);
+  const right = normalize(binding);
+  const required: RequiredIdentityField[] = [...BASE_REQUIRED_FIELDS];
+  if (options.requireThreadId !== false) {
+    // Reference scenario requires thread_id by default; callers may opt out.
+    required.push('thread_id');
+  }
+
+  for (const field of required) {
+    const a = left[field];
+    const b = right[field];
+    if (!a || !b) {
+      return { status: 'missing_required', field };
+    }
+    if (a !== b) {
+      return {
+        status: 'conflict',
+        field,
+        left: a,
+        right: b,
+        diagnostic: `identity_conflict:${field}:${a}!=${b}`,
+      };
+    }
+  }
+
+  if ((left.framework ?? right.framework) !== 'langgraph') {
+    return { status: 'missing_required', field: 'framework' };
+  }
+
+  const consistencyFields = [
+    'run_id',
+    'parent_run_id',
+    'checkpoint_id',
+    'checkpoint_ns',
+    'activity_correlation_id',
+  ] as const;
+  const missingOptional: string[] = [];
+  const consistency: Record<string, string> = {};
+
+  for (const field of consistencyFields) {
+    const a = left[field];
+    const b = right[field];
+    if (a && b && a !== b) {
+      return {
+        status: 'conflict',
+        field,
+        left: a,
+        right: b,
+        diagnostic: `identity_conflict:${field}:${a}!=${b}`,
+      };
+    }
+    if ((a && !b) || (!a && b)) {
+      missingOptional.push(field);
+      if (a) consistency[field] = a;
+      if (b) consistency[field] = b;
+      continue;
+    }
+    if (a && b) consistency[field] = a;
+  }
+
+  const requiredValues: Record<string, string> = {};
+  for (const field of required) {
+    requiredValues[field] = left[field]!;
+  }
+
+  if (missingOptional.length > 0) {
+    return { status: 'partial', missingOptional };
+  }
+
+  return { status: 'match', required: requiredValues, consistency };
+}

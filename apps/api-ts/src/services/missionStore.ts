@@ -43,6 +43,19 @@ function deterministicStringify(obj: any): string {
 import type { Mission, MissionAggregate, MissionAgent, SemanticSummaryResult } from '../types/mission.js';
 import { pool } from '../db/postgres.js';
 import type { PoolClient } from 'pg';
+import { isLangGraphGovernanceControlAvailable, isLangGraphGovernanceEnabled } from '../config/features.js';
+import { mapInterruptRowToRecord, serializeInterruptPublic } from './interrupts/publicSerializer.js';
+import { validateStructuredDecisionValue } from './interrupts/structuredDecisionBounds.js';
+import { applyRuntimeOutcome, ensureDeliveryAttempt } from './interrupts/deliveryLifecycle.js';
+import {
+  assertCurrentlyActionable,
+  reconcileInterruptActionability,
+} from './interrupts/reconcileActionability.js';
+import {
+  interruptIdsWithAmbiguousNativeIdentity,
+  resolveInterruptIdentityAmbiguity,
+  type StoredNativeIdentity,
+} from './interrupts/nativeIdentityAmbiguity.js';
 import { generateMissionSummary, generateWhyThisState, type WhyThisStateContext } from './semantic.js';
 import { buildRuntimeSummary, buildRuntimeSummaryWithOptionalLlm, buildNodeProjection, enhanceNodeProjectionWithLlm, isNodeProjectionCacheValid } from './runtimeSummary.js';
 import {
@@ -402,49 +415,151 @@ class MissionStore {
 
 
   private mapInterruptRow(row: Record<string, unknown>): InterruptRecord & { branch_id?: string } {
-    return {
-      id: String(row.id),
-      mission_id: String(row.mission_id),
-      branch_id: String(row.branch_id),
-      interrupt_id: String(row.interrupt_id),
-      agent_id: row.agent_id ? String(row.agent_id) : undefined,
-      span_id: row.span_id ? String(row.span_id) : undefined,
-      status: String(row.status),
-      reason: String(row.reason),
-      resume_url: row.resume_url ? String(row.resume_url) : undefined,
-      payload: (row.payload as Record<string, unknown>) ?? {},
-      decision: row.decision ? String(row.decision) : undefined,
-      decision_comment: row.decision_comment ? String(row.decision_comment) : undefined,
-      decision_payload: (row.decision_payload as Record<string, unknown>) ?? {},
-      created_at: new Date(String(row.created_at)).toISOString(),
-      updated_at: new Date(String(row.updated_at)).toISOString(),
-      expires_at: row.expires_at ? new Date(String(row.expires_at)).toISOString() : undefined,
-      decided_at: row.decided_at ? new Date(String(row.decided_at)).toISOString() : undefined,
-      resumed_at: row.resumed_at ? new Date(String(row.resumed_at)).toISOString() : undefined,
-    };
+    return mapInterruptRowToRecord(row);
+  }
+
+  /** Public interrupt serializer used by routes and websocket fan-out. */
+  serializeInterrupt(interrupt: InterruptRecord & { branch_id?: string }): InterruptRecord & { branch_id?: string } {
+    return serializeInterruptPublic(interrupt);
   }
 
   private async recordInterruptsFromSpans(client: PoolClient, missionId: string, spans: OtlpSpan[], branchId: string = ROOT_BRANCH_ID): Promise<boolean> {
     let interruptRequested = false;
+    // Propagate normalization identity conflicts into interrupt governance state.
+    const ambiguousInterruptIds = interruptIdsWithAmbiguousNativeIdentity(spans);
     for (const span of spans) {
       for (const event of span.events ?? []) {
+        if (event.name === 'agent.interrupt.resumed' || event.name === AgentEvents.INTERRUPT_RESUMED) {
+          const interruptId =
+            attributeValue(event.attributes, AgentAttributes.INTERRUPT_ID) ??
+            attributeValue(event.attributes, 'agentlens.langgraph.interrupt_request_id') ??
+            attributeValue(event.attributes, 'agentlens.langgraph.resume_of_interrupt_id');
+          if (!interruptId) continue;
+          const failed = attributeValue(event.attributes, 'agentlens.langgraph.runtime_failure') === 'true'
+            || attributeValue(event.attributes, 'gen_ai.error.type') !== undefined;
+          const continued = attributeValue(event.attributes, 'agentlens.langgraph.continued_with_input') === 'true';
+          const rejected = attributeValue(event.attributes, 'agentlens.langgraph.rejected_or_terminated') === 'true';
+          const deliveryId = attributeValue(event.attributes, 'agentlens.langgraph.delivery_id');
+          const resumeOf = attributeValue(event.attributes, 'agentlens.langgraph.resume_of_interrupt_id');
+          const correlatedInterrupt = interruptId || resumeOf;
+          if (!correlatedInterrupt) continue;
+          // Require explicit interrupt correlation — same-thread activity alone is insufficient.
+          const explicitlyCorrelated =
+            Boolean(attributeValue(event.attributes, AgentAttributes.INTERRUPT_ID))
+            || Boolean(attributeValue(event.attributes, 'agentlens.langgraph.interrupt_request_id'))
+            || Boolean(resumeOf)
+            || Boolean(deliveryId);
+          const outcome = failed
+            ? 'failed'
+            : rejected
+              ? 'rejected_or_terminated'
+              : continued
+                ? 'continued_with_input'
+                : 'resumed';
+          await applyRuntimeOutcome(client, {
+            missionId,
+            branchId,
+            interruptId: correlatedInterrupt,
+            outcome,
+            deliveryId: deliveryId || undefined,
+            correlated: explicitlyCorrelated,
+          });
+          continue;
+        }
         if (event.name !== AgentEvents.INTERRUPT_REQUESTED) continue;
         interruptRequested = true;
+        const attrs = { ...(span.attributes ?? {}), ...(event.attributes ?? {}) } as Record<string, unknown>;
         const interruptId =
           attributeValue(event.attributes, AgentAttributes.INTERRUPT_ID) ??
           attributeValue(span.attributes, AgentAttributes.INTERRUPT_ID) ??
+          attributeValue(event.attributes, 'agentlens.langgraph.interrupt_request_id') ??
           `${span.span_id}:interrupt`;
         const resumeToken = attributeValue(event.attributes, AgentAttributes.RESUME_TOKEN);
+        const isLangGraph = Object.keys(attrs).some((key) => key.startsWith('agentlens.langgraph.'));
+        const nativeIdentity = isLangGraph
+          ? {
+              framework: 'langgraph',
+              thread_id: attributeValue(attrs, 'agentlens.langgraph.thread_id'),
+              run_id: attributeValue(attrs, 'agentlens.langgraph.run_id'),
+              parent_run_id: attributeValue(attrs, 'agentlens.langgraph.parent_run_id'),
+              interrupt_request_id: attributeValue(attrs, 'agentlens.langgraph.interrupt_request_id') ?? interruptId,
+              checkpoint_id: attributeValue(attrs, 'agentlens.langgraph.checkpoint_id'),
+              checkpoint_ns: attributeValue(attrs, 'agentlens.langgraph.checkpoint_ns'),
+              activity_correlation_id: attributeValue(attrs, 'agentlens.langgraph.activity_correlation_id'),
+              native_execution_key: attributeValue(attrs, 'agentlens.native_execution_key'),
+              mission_id: missionId,
+              branch_id: branchId,
+            }
+          : null;
+        const safePrompt = attributeValue(attrs, 'agentlens.langgraph.interrupt_prompt')
+          ?? attributeValue(attrs, AgentAttributes.INTERRUPT_REASON);
+        const requestType = attributeValue(attrs, 'agentlens.langgraph.interrupt_request_type') ?? 'interrupt';
+        const supportedRaw = attributeValue(attrs, 'agentlens.langgraph.supported_decisions');
+        let supportedDecisionTypes: string[] = [];
+        if (supportedRaw) {
+          try {
+            const parsed = JSON.parse(supportedRaw);
+            if (Array.isArray(parsed)) supportedDecisionTypes = parsed.map(String);
+          } catch {
+            supportedDecisionTypes = supportedRaw.split(',').map((part) => part.trim()).filter(Boolean);
+          }
+        }
+        const requestLifecycle = 'pending';
+        const initialActionability = isLangGraph
+          ? (isLangGraphGovernanceControlAvailable() ? 'observed_only' : 'unavailable')
+          : 'observed_only';
+
+        // Scrub resume tokens from stored public-ish payload attributes.
+        const scrubbedAttrs = { ...(event.attributes ?? {}) } as Record<string, unknown>;
+        delete scrubbedAttrs[AgentAttributes.RESUME_TOKEN];
+        delete scrubbedAttrs['gen_ai.agent.resume.token'];
+
+        const existingResult = await client.query(
+          `
+            SELECT native_identity, identity_ambiguous
+            FROM interrupts
+            WHERE mission_id = $1 AND branch_id = $2 AND interrupt_id = $3
+            LIMIT 1
+          `,
+          [missionId, branchId, interruptId],
+        );
+        const existingRow = existingResult.rows[0] as
+          | { native_identity?: StoredNativeIdentity | null; identity_ambiguous?: boolean | null }
+          | undefined;
+        const ambiguity = resolveInterruptIdentityAmbiguity({
+          interruptId,
+          ambiguousInterruptIds,
+          previousIdentity: existingRow?.native_identity ?? null,
+          previouslyAmbiguous: existingRow?.identity_ambiguous,
+          nextIdentity: nativeIdentity,
+        });
+
         await client.query(
           `
             INSERT INTO interrupts (
-              id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11)
+              id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at,
+              framework, native_identity, source_refs, request_type, safe_prompt, supported_decision_types, actionability, request_lifecycle,
+              runtime_outcome, identity_ambiguous
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11,
+              $12, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18, $19, 'awaiting_interaction', $20
+            )
             ON CONFLICT (mission_id, branch_id, interrupt_id) DO UPDATE
             SET status = 'pending',
                 reason = EXCLUDED.reason,
                 resume_url = COALESCE(EXCLUDED.resume_url, interrupts.resume_url),
                 payload = interrupts.payload || EXCLUDED.payload,
+                framework = COALESCE(EXCLUDED.framework, interrupts.framework),
+                native_identity = COALESCE(EXCLUDED.native_identity, interrupts.native_identity),
+                source_refs = COALESCE(EXCLUDED.source_refs, interrupts.source_refs),
+                request_type = COALESCE(EXCLUDED.request_type, interrupts.request_type),
+                safe_prompt = COALESCE(EXCLUDED.safe_prompt, interrupts.safe_prompt),
+                supported_decision_types = CASE
+                  WHEN EXCLUDED.supported_decision_types = '[]'::jsonb THEN interrupts.supported_decision_types
+                  ELSE EXCLUDED.supported_decision_types
+                END,
+                request_lifecycle = COALESCE(interrupts.request_lifecycle, EXCLUDED.request_lifecycle),
+                identity_ambiguous = interrupts.identity_ambiguous OR EXCLUDED.identity_ambiguous,
                 updated_at = NOW()
           `,
           [
@@ -457,10 +572,28 @@ class MissionStore {
             attributeValue(event.attributes, AgentAttributes.INTERRUPT_REASON) ?? 'Human input required',
             attributeValue(event.attributes, AgentAttributes.INTERRUPT_RESUME_URL) ?? null,
             resumeToken ? hashToken(resumeToken) : null,
-            JSON.stringify({ event: event.name, attributes: event.attributes ?? {} }),
+            JSON.stringify({ event: event.name, attributes: scrubbedAttrs }),
             attributeValue(event.attributes, AgentAttributes.TIMEOUT_AT) ?? null,
+            isLangGraph ? 'langgraph' : null,
+            nativeIdentity ? JSON.stringify(nativeIdentity) : null,
+            JSON.stringify([{ trace_id: span.trace_id, span_id: span.span_id, event_name: event.name }]),
+            requestType,
+            safePrompt ?? null,
+            JSON.stringify(supportedDecisionTypes),
+            initialActionability,
+            requestLifecycle,
+            ambiguity.identityAmbiguous,
           ],
         );
+
+        if (isLangGraph) {
+          await reconcileInterruptActionability(client, {
+            missionId,
+            branchId,
+            interruptId,
+            identityAmbiguous: ambiguity.identityAmbiguous,
+          });
+        }
       }
     }
     return interruptRequested;
@@ -1393,6 +1526,22 @@ class MissionStore {
       params.push(branchId);
       whereClause += ` AND branch_id = $${params.length}`;
     }
+
+    // Re-evaluate live binding liveness before public reads for LangGraph rows.
+    if (branchId && isLangGraphGovernanceControlAvailable()) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { reconcileMissionBranchActionability } = await import('./interrupts/reconcileActionability.js');
+        await reconcileMissionBranchActionability(client, missionId, branchId);
+        await client.query('COMMIT');
+      } catch {
+        await client.query('ROLLBACK').catch(() => {});
+      } finally {
+        client.release();
+      }
+    }
+
     const result = await pool.query(
       `
         SELECT *
@@ -1411,6 +1560,159 @@ class MissionStore {
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [`${missionId}:${branchId}:${interruptId}`]);
+
+      const existingResult = await client.query(
+        `
+          SELECT * FROM interrupts
+          WHERE mission_id = $1 AND branch_id = $2 AND interrupt_id = $3
+          LIMIT 1
+        `,
+        [missionId, branchId, interruptId],
+      );
+      const existing = existingResult.rows[0] as Record<string, unknown> | undefined;
+      if (!existing) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      const existingMapped = this.mapInterruptRow(existing);
+      const isLangGraphFramework = String(existing.framework ?? '') === 'langgraph';
+      let liveActionability = String(existing.actionability ?? 'observed_only');
+      if (isLangGraphFramework) {
+        const live = await assertCurrentlyActionable(client, {
+          missionId,
+          branchId,
+          interruptId,
+        });
+        liveActionability = live.actionability;
+        if (live.actionability === 'identity_conflict' || live.diagnostic === 'conflicting_native_identity') {
+          await client.query('ROLLBACK');
+          throw new Error('Native identity is ambiguous or conflicting; decision rejected');
+        }
+      }
+      const isLangGraphGovernance =
+        isLangGraphGovernanceControlAvailable()
+        && isLangGraphFramework
+        && liveActionability === 'actionable';
+
+      if (isLangGraphFramework && isLangGraphGovernanceEnabled() && !isLangGraphGovernance) {
+        // Governance path exists but is not currently actionable (expired binding, etc.)
+        if (existing.decision_state !== 'recorded' && !existing.idempotency_key) {
+          await client.query('ROLLBACK');
+          throw new Error(`Request is not actionable (${liveActionability})`);
+        }
+      }
+
+      // Idempotent same-key/same-content replay.
+      if (existing.idempotency_key && String(existing.idempotency_key) === input.idempotency_key) {
+        const priorDecision = String(existing.decision ?? existing.decision_type ?? '');
+        const sameContent = priorDecision === input.decision;
+        if (!sameContent) {
+          await client.query('ROLLBACK');
+          throw new Error('Idempotency key conflict with different decision content');
+        }
+        await client.query('COMMIT');
+        return existingMapped;
+      }
+
+      if (existing.decision_state === 'recorded' || existing.decision || ['expired', 'cancelled', 'resumed'].includes(String(existing.status))) {
+        if (existing.idempotency_key && String(existing.idempotency_key) !== input.idempotency_key) {
+          await client.query('ROLLBACK');
+          return null;
+        }
+      }
+
+      if (isLangGraphGovernance) {
+        const supported = Array.isArray(existing.supported_decision_types)
+          ? existing.supported_decision_types.map(String)
+          : [];
+        const decisionType = input.decision === 'revise' ? 'structured_response' : input.decision;
+        if (supported.length > 0 && !supported.includes(decisionType) && !supported.includes(input.decision)) {
+          await client.query('ROLLBACK');
+          throw new Error(`Decision type ${input.decision} is not supported by this request`);
+        }
+        if (String(existing.request_lifecycle) === 'stale' || String(existing.request_lifecycle) === 'resolved') {
+          await client.query('ROLLBACK');
+          throw new Error('Request is stale or resolved');
+        }
+
+        const value = input.payload ?? {};
+        const validation = validateStructuredDecisionValue(
+          Object.keys(value).length ? value : undefined,
+          (existing.safe_input_schema as Record<string, unknown>) ?? undefined,
+        );
+        if (!validation.ok) {
+          await client.query('ROLLBACK');
+          throw new Error(validation.reason);
+        }
+
+        const decisionId = randomUUID();
+        const result = await client.query(
+          `
+            UPDATE interrupts
+            SET status = CASE
+                  WHEN $4 = 'approve' THEN 'approved'
+                  WHEN $4 = 'reject' THEN 'rejected'
+                  ELSE status
+                END,
+                decision = $4,
+                decision_comment = $5,
+                decision_payload = $6::jsonb,
+                decision_value_summary = $7::jsonb,
+                decision_audit = $8::jsonb,
+                decision_state = 'recorded',
+                decision_id = $9,
+                decision_actor = $10,
+                decision_type = $11,
+                delivery_state = 'pending',
+                runtime_outcome = COALESCE(NULLIF(runtime_outcome, 'unknown'), 'awaiting_interaction'),
+                idempotency_key = $12,
+                decided_at = COALESCE(decided_at, NOW()),
+                updated_at = NOW()
+            WHERE mission_id = $1
+              AND branch_id = $2
+              AND interrupt_id = $3
+              AND decision_state = 'none'
+              AND actionability = 'actionable'
+            RETURNING *
+          `,
+          [
+            missionId,
+            branchId,
+            interruptId,
+            input.decision,
+            input.comment ?? null,
+            JSON.stringify(validation.value ?? {}),
+            JSON.stringify(validation.summary),
+            JSON.stringify({
+              channel: 'api',
+              actor: 'local-operator',
+              decision_type: decisionType,
+              summary: validation.summary,
+            }),
+            decisionId,
+            'local-operator',
+            decisionType,
+            input.idempotency_key,
+          ],
+        );
+        const row = result.rows[0] as Record<string, unknown> | undefined;
+        if (!row) {
+          await client.query('ROLLBACK');
+          return null;
+        }
+        await ensureDeliveryAttempt(client, {
+          missionId,
+          branchId,
+          interruptId,
+          decisionId,
+        });
+        await this.ensureBranch(client, missionId, branchId);
+        await client.query('COMMIT');
+        // Do not auto-resume or imply runtime outcome for LangGraph governance path.
+        return this.mapInterruptRow(row);
+      }
+
       const result = await client.query(
         `
           UPDATE interrupts
@@ -1439,7 +1741,7 @@ class MissionStore {
       }
       await client.query('COMMIT');
 
-      // Auto-resume if approved
+      // Legacy auto-resume if approved
       if (interrupt && input.decision === 'approve') {
         const resumeToken = (interrupt.payload as Record<string, unknown>)?.attributes as Record<string, unknown> | undefined;
         const token = (resumeToken?.[AgentAttributes.RESUME_TOKEN] ?? resumeToken?.['agent.resume.token']) as string | undefined;
@@ -1449,8 +1751,6 @@ class MissionStore {
       }
 
       if (interrupt) {
-        // Notify sandbox runner (if any jobs are waiting)
-        // Use dynamic import to avoid circular dependency
         const { sandboxRunner } = await import('./runtime/SandboxJobRunner.js');
         await sandboxRunner.onDecisionMade(missionId, branchId, interrupt);
       }

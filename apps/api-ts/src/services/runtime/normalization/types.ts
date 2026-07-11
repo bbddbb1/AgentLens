@@ -34,10 +34,36 @@ export interface NormalizedRelationship {
   source: SourceReference;
 }
 
+export type NormalizationDiagnosticCode =
+  | 'unknown_telemetry'
+  | 'unresolved_relationship'
+  | 'conflicting_outcome'
+  | 'conflicting_native_identity';
+
 export interface NormalizationDiagnostics {
-  code: 'unknown_telemetry' | 'unresolved_relationship' | 'conflicting_outcome';
+  code: NormalizationDiagnosticCode;
   message: string;
   source?: SourceReference;
+  /** Second source when two explicit native-identity values conflict. */
+  conflicting_source?: SourceReference;
+  /** Native identity field that conflicted, when applicable. */
+  field?: keyof NativeRuntimeIdentity;
+  /**
+   * Machine-checkable ambiguity for governance gating.
+   * True when conflicting explicit native-identity values were observed.
+   */
+  ambiguous_native_identity?: boolean;
+}
+
+/** True when diagnostics include an unresolved native-identity conflict. */
+export function hasAmbiguousNativeIdentity(
+  diagnostics: ReadonlyArray<Pick<NormalizationDiagnostics, 'ambiguous_native_identity' | 'code'>>,
+): boolean {
+  return diagnostics.some(
+    (diagnostic) =>
+      diagnostic.ambiguous_native_identity === true
+      || diagnostic.code === 'conflicting_native_identity',
+  );
 }
 
 export interface NormalizedActivity {

@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
     "agentlens-sdk-core",
+    "httpx>=0.28.0",
     "langgraph>=0.0.26",
     "langchain-core>=0.1.0",
 ]

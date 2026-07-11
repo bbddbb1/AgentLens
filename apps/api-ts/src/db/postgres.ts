@@ -236,6 +236,88 @@ export async function initializeDatabase(): Promise<void> {
     ON interrupts (mission_id, status, created_at)
   `);
 
+  // Additive LangGraph governance aggregate fields (legacy rows default non-actionable).
+  for (const statement of [
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS request_lifecycle VARCHAR(50) NOT NULL DEFAULT 'pending'`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS actionability VARCHAR(50) NOT NULL DEFAULT 'observed_only'`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS request_type VARCHAR(100)`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS supported_decision_types JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS safe_prompt TEXT`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS safe_input_schema JSONB`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS decision_state VARCHAR(50) NOT NULL DEFAULT 'none'`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS decision_id UUID`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS decision_actor VARCHAR(255)`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS decision_type VARCHAR(50)`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS decision_value_summary JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS decision_audit JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS delivery_state VARCHAR(50) NOT NULL DEFAULT 'not_requested'`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS delivery_id UUID`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS runtime_outcome VARCHAR(50) NOT NULL DEFAULT 'unknown'`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS framework VARCHAR(50)`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS native_identity JSONB`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS source_refs JSONB`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS identity_ambiguous BOOLEAN NOT NULL DEFAULT FALSE`,
+  ]) {
+    await pool.query(statement).catch(() => {});
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS langgraph_bridge_bindings (
+      id UUID PRIMARY KEY,
+      mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+      branch_id VARCHAR(255) NOT NULL DEFAULT 'main',
+      framework VARCHAR(50) NOT NULL DEFAULT 'langgraph',
+      interrupt_id VARCHAR(255) NULL,
+      interaction_request_id VARCHAR(255) NULL,
+      control_ref_hash VARCHAR(128) NOT NULL,
+      generation BIGINT NOT NULL DEFAULT 1,
+      supersedes_binding_id UUID NULL,
+      lifecycle_state VARCHAR(50) NOT NULL DEFAULT 'active',
+      registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      lease_expires_at TIMESTAMPTZ NOT NULL,
+      last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      revoked_at TIMESTAMPTZ NULL,
+      consumed_at TIMESTAMPTZ NULL,
+      native_identity JSONB NOT NULL DEFAULT '{}'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_langgraph_bridge_bindings_scope
+    ON langgraph_bridge_bindings (mission_id, branch_id, lifecycle_state, lease_expires_at)
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS interrupt_delivery_attempts (
+      id UUID PRIMARY KEY,
+      mission_id UUID NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+      branch_id VARCHAR(255) NOT NULL DEFAULT 'main',
+      interrupt_id VARCHAR(255) NOT NULL,
+      decision_id UUID NOT NULL,
+      external_state VARCHAR(50) NOT NULL DEFAULT 'pending',
+      safe_error_class VARCHAR(100) NULL,
+      receipt_correlation VARCHAR(255) NULL,
+      claimed_at TIMESTAMPTZ NULL,
+      claiming_binding_id UUID NULL,
+      claim_deadline TIMESTAMPTZ NULL,
+      receipt_state VARCHAR(50) NULL,
+      accepted_at TIMESTAMPTZ NULL,
+      failed_at TIMESTAMPTZ NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (decision_id),
+      UNIQUE (mission_id, branch_id, interrupt_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_interrupt_delivery_attempts_scope
+    ON interrupt_delivery_attempts (mission_id, branch_id, interrupt_id, external_state)
+  `);
+
   await pool.query(`
     ALTER TABLE semantic_summaries ADD COLUMN IF NOT EXISTS branch_id VARCHAR(255) NOT NULL DEFAULT 'main';
   `).catch(() => {});

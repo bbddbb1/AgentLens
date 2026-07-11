@@ -401,7 +401,7 @@ extrasRouter.get('/api/v1/missions/:missionId/interrupts', async (req, res) => {
     const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
     const interrupts = await missionStore.listInterrupts(req.params.missionId, status, branchId);
     if (!interrupts) return res.status(404).json({ detail: 'Mission not found' });
-    return res.json({ interrupts });
+    return res.json({ interrupts: interrupts.map((item) => missionStore.serializeInterrupt(item)) });
   } catch (error) {
     return respondRouteError(res, error, 'Failed to load interrupts');
   }
@@ -418,9 +418,22 @@ extrasRouter.post('/api/v1/missions/:missionId/interrupts/:interruptId/decision'
     const input = { ...parsed.data, branch_id: branchId };
     const interrupt = await missionStore.decideInterrupt(req.params.missionId, req.params.interruptId, input);
     if (!interrupt) return res.status(404).json({ detail: 'Interrupt not found or already finalized' });
-    await publishMissionEvent(req.params.missionId, 'interrupt.decided', { interrupt });
-    return res.json(interrupt);
+    const publicInterrupt = missionStore.serializeInterrupt(interrupt);
+    await publishMissionEvent(req.params.missionId, 'interrupt.decided', { interrupt: publicInterrupt });
+    return res.json(publicInterrupt);
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to submit interrupt decision';
+    if (message.toLowerCase().includes('idempotency key conflict')) {
+      return res.status(409).json({ detail: message });
+    }
+    if (
+      message.toLowerCase().includes('not supported')
+      || message.toLowerCase().includes('stale')
+      || message.toLowerCase().includes('structured decision')
+      || message.toLowerCase().includes('schema')
+    ) {
+      return res.status(400).json({ detail: message });
+    }
     return respondRouteError(res, error, 'Failed to submit interrupt decision');
   }
 });

@@ -236,9 +236,24 @@ export function RightSidebar({
     onSelectNode: (nodeId: string) => setSelectedNodeId(nodeId),
   };
 
-  // Interrupt lists
+  // Interrupt lists — actionable pending only when governance allows controls.
   const pendingInterrupts = useMemo(() => {
-    return Object.values(currentState?.interrupts ?? {}).filter(i => i.status === 'pending');
+    return Object.values(currentState?.interrupts ?? {}).filter((i) => {
+      if (i.decision_state === 'recorded') return false;
+      if (i.status !== 'pending' && i.request_lifecycle && i.request_lifecycle !== 'pending') return false;
+      if (i.governance_available === false && i.framework === 'langgraph') return false;
+      if (i.actionability && i.actionability !== 'actionable' && i.supported_decision_types?.length) {
+        return false;
+      }
+      return i.status === 'pending' || i.actionability === 'actionable';
+    });
+  }, [currentState]);
+
+  const observedOnlyInterrupts = useMemo(() => {
+    return Object.values(currentState?.interrupts ?? {}).filter((i) =>
+      i.status === 'pending'
+      && (i.actionability === 'observed_only' || i.actionability === 'unavailable' || i.actionability === 'identity_conflict'),
+    );
   }, [currentState]);
 
   const recentDecisions = useMemo(() => {
@@ -392,7 +407,24 @@ export function RightSidebar({
 
                 {pendingInterrupts.length > 0 ? (
                   <div className="space-y-3 animate-in fade-in duration-200">
-                    {pendingInterrupts.map((interrupt) => (
+                    {pendingInterrupts.map((interrupt) => {
+                      const isLangGraphGovernance = interrupt.framework === 'langgraph'
+                        || Boolean(interrupt.supported_decision_types?.length)
+                        || interrupt.actionability !== undefined;
+                      // LangGraph governance: only declared supported types; empty means no buttons.
+                      // Legacy non-LangGraph: keep generic approve/reject/revise/resume fallback.
+                      const supported = isLangGraphGovernance
+                        ? (interrupt.supported_decision_types ?? [])
+                        : (['approve', 'reject', 'revise', 'resume'] as const);
+                      const showControls = interrupt.governance_available !== false
+                        && interrupt.decision_state !== 'recorded'
+                        && (interrupt.actionability === 'actionable' || (!isLangGraphGovernance && !interrupt.actionability))
+                        && supported.length > 0;
+                      const deliveryLabel = interrupt.delivery_state ?? 'not_requested';
+                      const runtimeLabel = interrupt.runtime_outcome ?? 'unknown';
+                      const deliveryIsError = deliveryLabel === 'failed';
+                      const runtimeIsError = runtimeLabel === 'failed';
+                      return (
                       <div
                         key={interrupt.interrupt_id}
                         className="rounded-xl border border-[rgba(251,191,36,0.18)] bg-[rgba(251,191,36,0.04)] p-3 space-y-3"
@@ -403,12 +435,32 @@ export function RightSidebar({
                             <span className="text-[9px] text-[#c9b98c]">{new Date(interrupt.updated_at).toLocaleTimeString()}</span>
                           </div>
                           <p className="text-xs text-[#f7e8bf] leading-relaxed font-medium">
-                            {interrupt.reason}
+                            {interrupt.safe_prompt || interrupt.reason}
                           </p>
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            <span className="text-[9px] px-1.5 py-0.5 rounded border border-[rgba(255,255,255,0.08)] text-[#9498b0]">
+                              decision: {interrupt.decision_state ?? 'none'}
+                            </span>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded border ${
+                              deliveryIsError
+                                ? 'border-[#f59e0b]/40 text-[#fbbf24]'
+                                : 'border-[rgba(255,255,255,0.08)] text-[#9498b0]'
+                            }`}>
+                              delivery: {deliveryLabel}
+                            </span>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded border ${
+                              runtimeIsError
+                                ? 'border-[#f43f5e]/40 text-[#fda4af]'
+                                : 'border-[rgba(255,255,255,0.08)] text-[#9498b0]'
+                            }`}>
+                              runtime: {runtimeLabel}
+                            </span>
+                          </div>
                         </div>
 
-                        {/* Four-way Governance Actions */}
+                        {showControls ? (
                         <div className="grid grid-cols-2 gap-2">
+                          {(supported as readonly string[]).includes('approve') && (
                           <button
                             type="button"
                             onClick={() => void handleDecision(interrupt.interrupt_id, 'approve')}
@@ -418,6 +470,8 @@ export function RightSidebar({
                             <Check size={12} />
                             Approve
                           </button>
+                          )}
+                          {(supported as readonly string[]).includes('reject') && (
                           <button
                             type="button"
                             onClick={() => void handleDecision(interrupt.interrupt_id, 'reject')}
@@ -427,6 +481,8 @@ export function RightSidebar({
                             <X size={12} />
                             Reject
                           </button>
+                          )}
+                          {((supported as readonly string[]).includes('structured_response') || (supported as readonly string[]).includes('revise')) && (
                           <button
                             type="button"
                             onClick={() => void handleDecision(interrupt.interrupt_id, 'revise')}
@@ -434,8 +490,10 @@ export function RightSidebar({
                             className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#78350f] hover:bg-[#92400e] px-2.5 py-1.5 text-xs font-semibold text-[#fef3c7] disabled:opacity-50 transition-colors"
                           >
                             <AlertTriangle size={12} className="text-[#fbbf24]" />
-                            Revise
+                            Respond
                           </button>
+                          )}
+                          {(supported as readonly string[]).includes('resume') && !isLangGraphGovernance && (
                           <button
                             type="button"
                             onClick={() => void handleDecision(interrupt.interrupt_id, 'resume')}
@@ -445,15 +503,33 @@ export function RightSidebar({
                             <Play size={12} className="text-[#c084fc]" />
                             Resume
                           </button>
+                          )}
                         </div>
+                        ) : (
+                          <p className="text-[10px] text-[#9498b0]">
+                            {interrupt.governance_available === false
+                              ? 'Governance controls unavailable for this deployment.'
+                              : interrupt.actionability === 'identity_conflict'
+                                ? 'Identity conflict — controls blocked.'
+                                : supported.length === 0 && isLangGraphGovernance
+                                  ? 'No supported decisions declared for this request.'
+                                  : 'Observation only — waiting for a live bridge binding.'}
+                          </p>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center py-8 text-center bg-[rgba(255,255,255,0.01)] rounded-xl border border-dashed border-[rgba(255,255,255,0.04)]">
                     <CheckCircle2 size={24} className="text-[#34d399]/40 mb-2" />
                     <p className="text-xs text-[#9498b0] font-medium">No pending interrupts</p>
                     <p className="text-[10px] text-[#5d6180] mt-0.5">Runtime operations are executing normally.</p>
+                    {observedOnlyInterrupts.length > 0 && (
+                      <p className="text-[10px] text-[#5d6180] mt-2">
+                        {observedOnlyInterrupts.length} observed interrupt(s) are not actionable.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
