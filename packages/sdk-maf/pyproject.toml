@@ -1,0 +1,17 @@
+[project]
+name = "agentlens-sdk-maf"
+version = "0.1.0"
+description = "Microsoft Agent Framework reference integration for AgentLens"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "agent-framework-core==1.10.0",
+    "opentelemetry-sdk>=1.28.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentlens_maf"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
