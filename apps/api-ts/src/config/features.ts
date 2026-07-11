@@ -18,8 +18,21 @@ export function isLangGraphGovernanceEnabled(
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
 }
 
+export function isMafGovernanceEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const raw = (env.MAF_GOVERNANCE_ENABLED ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
 export function isLangGraphGovernanceControlAvailable(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return isLangGraphGovernanceEnabled(env) && Boolean(getConfiguredServiceToken(env));
+}
+
+export function isMafGovernanceControlAvailable(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isMafGovernanceEnabled(env) && Boolean(getConfiguredServiceToken(env));
 }

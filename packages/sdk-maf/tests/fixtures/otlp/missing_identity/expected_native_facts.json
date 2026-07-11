@@ -1,0 +1,10 @@
+{
+  "facts": [
+    "missing_workflow_or_request_identity",
+    "non_actionable"
+  ],
+  "fixture": "missing_identity",
+  "framework": "ms_agent_framework",
+  "maf_core_version": "1.10.0",
+  "primary_oracle": "native_facts"
+}

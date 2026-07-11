@@ -7,6 +7,7 @@ import { missionsRouter } from './routes/missions.js';
 import { extrasRouter } from './routes/extras.js';
 import { branchesRouter } from './routes/branches.js';
 import { langGraphBridgeRouter } from './routes/langgraphBridge.js';
+import { mafBridgeRouter } from './routes/mafBridge.js';
 import { realtimeManager } from './realtime/missions.js';
 import { sandboxRunner } from './services/runtime/SandboxJobRunner.js';
 
@@ -24,6 +25,7 @@ app.use(missionsRouter);
 app.use(extrasRouter);
 app.use(branchesRouter);
 app.use(langGraphBridgeRouter);
+app.use(mafBridgeRouter);
 
 app.get('/api/health', async (_req, res) => {
   try {

@@ -1,4 +1,6 @@
 from agentlens_maf.capability_matrix import CAPABILITY_MATRIX
+import json
+from pathlib import Path
 
 
 def test_capability_matrix_assesses_every_reference_area() -> None:
@@ -14,3 +16,12 @@ def test_capability_matrix_assesses_every_reference_area() -> None:
         "covered", "partial", "not_observable", "not_applicable"
     }
     assert "control reference" not in " ".join(row.expected_fact for row in CAPABILITY_MATRIX).lower()
+
+
+def test_every_capability_row_is_backed_by_a_checked_in_fixture() -> None:
+    root = Path(__file__).parent / "fixtures" / "otlp"
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+
+    for row in CAPABILITY_MATRIX:
+        assert row.fixture in manifest["fixtures"]
+        assert (root / row.fixture / "expected_native_facts.json").is_file()

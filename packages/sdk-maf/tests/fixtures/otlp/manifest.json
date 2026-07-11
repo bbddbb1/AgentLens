@@ -1,0 +1,17 @@
+{
+  "fixture_generator": "packages/sdk-maf/tests/generate_fixtures.py",
+  "fixtures": [
+    "success",
+    "agent_tool",
+    "request",
+    "continuation",
+    "alternative",
+    "explicit_failure",
+    "unknown_telemetry",
+    "missing_identity",
+    "conflicting_identity",
+    "unrelated_later_activity"
+  ],
+  "maf_core_version": "1.10.0",
+  "primary_oracle": "native_facts"
+}

@@ -43,9 +43,11 @@ export async function registerBridgeBinding(
     nativeIdentity: GovernanceIdentitySide;
     interruptId?: string;
     interactionRequestId?: string;
+    framework?: 'langgraph' | 'ms_agent_framework';
   },
 ): Promise<BridgeBindingRow> {
   const now = new Date();
+  const framework = input.framework ?? 'langgraph';
   const leaseExpires = new Date(now.getTime() + Math.max(5, input.leaseSeconds) * 1000);
   const controlRefHash = hashControlRef(input.controlRef);
   const interactionRequestId =
@@ -57,28 +59,29 @@ export async function registerBridgeBinding(
   // Supersede prior active bindings for the same scope.
   await client.query(
     `
-      UPDATE langgraph_bridge_bindings
+      UPDATE framework_bridge_bindings
       SET lifecycle_state = 'revoked',
           revoked_at = NOW(),
           updated_at = NOW()
       WHERE mission_id = $1
         AND branch_id = $2
+        AND framework = $5
         AND lifecycle_state = 'active'
         AND (
           ($3::text IS NOT NULL AND interaction_request_id = $3)
           OR ($4::text IS NOT NULL AND interrupt_id = $4)
         )
     `,
-    [input.missionId, input.branchId, interactionRequestId ?? null, input.interruptId ?? null],
+    [input.missionId, input.branchId, interactionRequestId ?? null, input.interruptId ?? null, framework],
   );
 
   const generationResult = await client.query(
     `
       SELECT COALESCE(MAX(generation), 0) + 1 AS next_generation
-      FROM langgraph_bridge_bindings
-      WHERE mission_id = $1 AND branch_id = $2
+      FROM framework_bridge_bindings
+      WHERE mission_id = $1 AND branch_id = $2 AND framework = $3
     `,
-    [input.missionId, input.branchId],
+    [input.missionId, input.branchId, framework],
   );
   const generation = Number(generationResult.rows[0]?.next_generation ?? 1);
   const id = randomUUID();
@@ -86,18 +89,18 @@ export async function registerBridgeBinding(
     ...input.nativeIdentity,
     mission_id: input.missionId,
     branch_id: input.branchId,
-    framework: 'langgraph',
+    framework,
     interaction_request_id: interactionRequestId,
   };
 
   const result = await client.query(
     `
-      INSERT INTO langgraph_bridge_bindings (
+      INSERT INTO framework_bridge_bindings (
         id, mission_id, branch_id, framework, interrupt_id, interaction_request_id,
         control_ref_hash, generation, lifecycle_state, registered_at, lease_expires_at,
         last_heartbeat_at, native_identity
       ) VALUES (
-        $1, $2, $3, 'langgraph', $4, $5, $6, $7, 'active', $8, $9, $8, $10::jsonb
+        $1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10, $9, $11::jsonb
       )
       RETURNING *
     `,
@@ -105,6 +108,7 @@ export async function registerBridgeBinding(
       id,
       input.missionId,
       input.branchId,
+      framework,
       input.interruptId ?? null,
       interactionRequestId ?? null,
       controlRefHash,
@@ -120,40 +124,42 @@ export async function registerBridgeBinding(
 
 export async function renewBridgeBinding(
   client: PoolClient,
-  input: { missionId: string; branchId: string; controlRef: string; leaseSeconds: number },
+  input: { missionId: string; branchId: string; controlRef: string; leaseSeconds: number; framework?: 'langgraph' | 'ms_agent_framework' },
 ): Promise<BridgeBindingRow | null> {
   const hash = hashControlRef(input.controlRef);
   const now = new Date();
   const leaseExpires = new Date(now.getTime() + Math.max(5, input.leaseSeconds) * 1000);
   const result = await client.query(
     `
-      UPDATE langgraph_bridge_bindings
+      UPDATE framework_bridge_bindings
       SET lease_expires_at = $4,
           last_heartbeat_at = $5,
           updated_at = NOW()
       WHERE mission_id = $1
         AND branch_id = $2
+        AND framework = $6
         AND control_ref_hash = $3
         AND lifecycle_state = 'active'
         AND lease_expires_at > NOW()
       RETURNING *
     `,
-    [input.missionId, input.branchId, hash, leaseExpires.toISOString(), now.toISOString()],
+    [input.missionId, input.branchId, hash, leaseExpires.toISOString(), now.toISOString(), input.framework ?? 'langgraph'],
   );
   return result.rows[0] ? mapBindingRow(result.rows[0] as Record<string, unknown>) : null;
 }
 
-export async function expireStaleBindings(client: PoolClient, missionId: string, branchId: string): Promise<number> {
+export async function expireStaleBindings(client: PoolClient, missionId: string, branchId: string, framework = 'langgraph'): Promise<number> {
   const result = await client.query(
     `
-      UPDATE langgraph_bridge_bindings
+      UPDATE framework_bridge_bindings
       SET lifecycle_state = 'expired', updated_at = NOW()
       WHERE mission_id = $1
         AND branch_id = $2
+        AND framework = $3
         AND lifecycle_state = 'active'
         AND lease_expires_at <= NOW()
     `,
-    [missionId, branchId],
+    [missionId, branchId, framework],
   );
   return result.rowCount ?? 0;
 }
@@ -165,19 +171,22 @@ export async function findLiveBindingForInterrupt(
     branchId: string;
     observed: GovernanceIdentitySide;
     requireThreadId?: boolean;
+    framework?: 'langgraph' | 'ms_agent_framework';
   },
 ): Promise<{ binding?: BridgeBindingRow; matchStatus: string; diagnostic?: string }> {
-  await expireStaleBindings(client, input.missionId, input.branchId);
+  const framework = input.framework ?? 'langgraph';
+  await expireStaleBindings(client, input.missionId, input.branchId, framework);
   const result = await client.query(
     `
-      SELECT * FROM langgraph_bridge_bindings
+      SELECT * FROM framework_bridge_bindings
       WHERE mission_id = $1
         AND branch_id = $2
+        AND framework = $3
         AND lifecycle_state = 'active'
         AND lease_expires_at > NOW()
       ORDER BY generation DESC
     `,
-    [input.missionId, input.branchId],
+    [input.missionId, input.branchId, framework],
   );
 
   for (const row of result.rows) {
@@ -223,22 +232,24 @@ export function mapBindingRow(row: Record<string, unknown>): BridgeBindingRow {
 
 export async function authenticateBinding(
   client: PoolClient,
-  input: { missionId: string; branchId: string; controlRef: string },
+  input: { missionId: string; branchId: string; controlRef: string; framework?: 'langgraph' | 'ms_agent_framework' },
 ): Promise<BridgeBindingRow | null> {
-  await expireStaleBindings(client, input.missionId, input.branchId);
+  const framework = input.framework ?? 'langgraph';
+  await expireStaleBindings(client, input.missionId, input.branchId, framework);
   const hash = hashControlRef(input.controlRef);
   const result = await client.query(
     `
-      SELECT * FROM langgraph_bridge_bindings
+      SELECT * FROM framework_bridge_bindings
       WHERE mission_id = $1
         AND branch_id = $2
+        AND framework = $4
         AND control_ref_hash = $3
         AND lifecycle_state = 'active'
         AND lease_expires_at > NOW()
       ORDER BY generation DESC
       LIMIT 1
     `,
-    [input.missionId, input.branchId, hash],
+    [input.missionId, input.branchId, hash, framework],
   );
   return result.rows[0] ? mapBindingRow(result.rows[0] as Record<string, unknown>) : null;
 }

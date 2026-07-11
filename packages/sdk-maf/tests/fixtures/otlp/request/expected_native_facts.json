@@ -1,0 +1,12 @@
+{
+  "facts": [
+    "request_info",
+    "request_id",
+    "request_type",
+    "response_type"
+  ],
+  "fixture": "request",
+  "framework": "ms_agent_framework",
+  "maf_core_version": "1.10.0",
+  "primary_oracle": "native_facts"
+}

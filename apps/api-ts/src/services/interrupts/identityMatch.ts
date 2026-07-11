@@ -9,19 +9,22 @@ export type IdentityMatchResult =
   | { status: 'conflict'; field: string; left: string; right: string; diagnostic: string }
   | { status: 'partial'; missingOptional: string[] };
 
-type RequiredIdentityField =
+export type GovernanceIdentityField =
   | 'mission_id'
   | 'branch_id'
   | 'framework'
   | 'interaction_request_id'
-  | 'thread_id';
-
-const BASE_REQUIRED_FIELDS: RequiredIdentityField[] = [
-  'mission_id',
-  'branch_id',
-  'framework',
-  'interaction_request_id',
-];
+  | 'thread_id'
+  | 'run_id'
+  | 'parent_run_id'
+  | 'checkpoint_id'
+  | 'checkpoint_ns'
+  | 'activity_correlation_id'
+  | 'workflow_id'
+  | 'executor_id'
+  | 'request_id'
+  | 'request_type'
+  | 'response_type';
 
 export interface GovernanceIdentitySide {
   mission_id?: string;
@@ -38,10 +41,34 @@ export interface GovernanceIdentitySide {
   activity_correlation_id?: string;
   /** Observational only — never used for matching. */
   native_execution_key?: string;
+  workflow_id?: string;
+  executor_id?: string;
+  request_id?: string;
+  request_type?: string;
+  response_type?: string;
 }
 
+export interface GovernanceIdentityPolicy {
+  expectedFramework: 'langgraph' | 'ms_agent_framework';
+  required: GovernanceIdentityField[];
+  consistency: GovernanceIdentityField[];
+}
+
+export const LANGGRAPH_IDENTITY_POLICY: GovernanceIdentityPolicy = {
+  expectedFramework: 'langgraph',
+  required: ['mission_id', 'branch_id', 'framework', 'interaction_request_id', 'thread_id'],
+  consistency: ['run_id', 'parent_run_id', 'checkpoint_id', 'checkpoint_ns', 'activity_correlation_id'],
+};
+
+export const MAF_IDENTITY_POLICY: GovernanceIdentityPolicy = {
+  expectedFramework: 'ms_agent_framework',
+  required: ['mission_id', 'branch_id', 'framework', 'workflow_id', 'request_id'],
+  consistency: ['executor_id', 'request_type', 'response_type', 'activity_correlation_id'],
+};
+
 export interface MatchOptions {
-  /** When true, thread_id is a required matching field for the reference graph. */
+  policy?: GovernanceIdentityPolicy;
+  /** Legacy LangGraph-only compatibility option. */
   requireThreadId?: boolean;
 }
 
@@ -57,6 +84,11 @@ function normalize(side: GovernanceIdentitySide): Record<string, string | undefi
     checkpoint_id: side.checkpoint_id,
     checkpoint_ns: side.checkpoint_ns,
     activity_correlation_id: side.activity_correlation_id,
+    workflow_id: side.workflow_id,
+    executor_id: side.executor_id,
+    request_id: side.request_id,
+    request_type: side.request_type,
+    response_type: side.response_type,
   };
 }
 
@@ -71,11 +103,10 @@ export function matchGovernanceIdentity(
 ): IdentityMatchResult {
   const left = normalize(observed);
   const right = normalize(binding);
-  const required: RequiredIdentityField[] = [...BASE_REQUIRED_FIELDS];
-  if (options.requireThreadId !== false) {
-    // Reference scenario requires thread_id by default; callers may opt out.
-    required.push('thread_id');
-  }
+  const policy = options.policy ?? (options.requireThreadId === false
+    ? { ...LANGGRAPH_IDENTITY_POLICY, required: LANGGRAPH_IDENTITY_POLICY.required.filter((field) => field !== 'thread_id') }
+    : LANGGRAPH_IDENTITY_POLICY);
+  const required = policy.required;
 
   for (const field of required) {
     const a = left[field];
@@ -94,17 +125,11 @@ export function matchGovernanceIdentity(
     }
   }
 
-  if ((left.framework ?? right.framework) !== 'langgraph') {
+  if ((left.framework ?? right.framework) !== policy.expectedFramework) {
     return { status: 'missing_required', field: 'framework' };
   }
 
-  const consistencyFields = [
-    'run_id',
-    'parent_run_id',
-    'checkpoint_id',
-    'checkpoint_ns',
-    'activity_correlation_id',
-  ] as const;
+  const consistencyFields = policy.consistency;
   const missingOptional: string[] = [];
   const consistency: Record<string, string> = {};
 

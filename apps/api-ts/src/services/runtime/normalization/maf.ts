@@ -1,6 +1,10 @@
 import type { NativeRuntimeIdentity } from './types.js';
 
 const PREFIX = 'agentlens.maf.';
+const ENRICHMENT_EVENTS = new Set([
+  'agentlens.maf.request_info',
+  'agentlens.maf.response_accepted',
+]);
 
 function stringAttr(attrs: Record<string, any>, key: string): string | undefined {
   const value = attrs[key];
@@ -12,6 +16,18 @@ export function hasMafMarkers(attrs: Record<string, any>): boolean {
   return Object.keys(attrs).some((key) => key.startsWith(PREFIX))
     || attrs['workflow.id'] !== undefined
     || attrs['executor.id'] !== undefined;
+}
+
+export function isMafEnrichmentEvent(name: unknown): boolean {
+  return typeof name === 'string' && ENRICHMENT_EVENTS.has(name);
+}
+
+export function isUnknownMafEvent(name: unknown): boolean {
+  return typeof name === 'string' && name.startsWith(PREFIX) && !isMafEnrichmentEvent(name);
+}
+
+export function isMafRequestEvent(name: unknown): boolean {
+  return name === 'agentlens.maf.request_info';
 }
 
 export function mafNativeRuntimeIdentity(attrs: Record<string, any>): NativeRuntimeIdentity | undefined {

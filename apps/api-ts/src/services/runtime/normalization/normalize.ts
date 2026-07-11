@@ -9,7 +9,7 @@ import {
   isLangGraphRetrieval,
   nativeRuntimeIdentity,
 } from './langgraph.js';
-import { hasMafMarkers, mafNativeRuntimeIdentity } from './maf.js';
+import { hasMafMarkers, isMafEnrichmentEvent, isMafRequestEvent, isUnknownMafEvent, mafNativeRuntimeIdentity } from './maf.js';
 import {
   genAiTokenUsage,
   lifecycleFromEventAttrs,
@@ -116,8 +116,7 @@ export function normalizeSpansToFacts(spans: any[]): NormalizedRuntimeFacts {
           source: sourceReference(span, Object.keys(event.attributes ?? {}), 'langgraph', event.name),
         });
       }
-      if (typeof event?.name === 'string' && event.name.startsWith('agentlens.maf.')
-        && !['agentlens.maf.request_info', 'agentlens.maf.response_accepted'].includes(event.name)) {
+      if (isUnknownMafEvent(event?.name)) {
         diagnostics.push({
           code: 'unknown_telemetry',
           message: `Unsupported MAF event ${event.name} on ${span?.span_id ?? 'span'}`,
@@ -129,7 +128,7 @@ export function normalizeSpansToFacts(spans: any[]): NormalizedRuntimeFacts {
   const candidates = ordered.flatMap((span) => [
     candidateForSpan(span, diagnostics),
     ...(span.events ?? [])
-      .filter((event: any) => ['agent.tool.call', 'gen_ai.call', 'gen_ai.error', 'agent.interrupt.requested', 'agent.interrupt.resumed', 'agentlens.maf.request_info', 'agentlens.maf.response_accepted'].includes(event.name))
+      .filter((event: any) => ['agent.tool.call', 'gen_ai.call', 'gen_ai.error', 'agent.interrupt.requested', 'agent.interrupt.resumed'].includes(event.name) || isMafEnrichmentEvent(event.name))
       .map((event: any) => candidateForSpan(span, diagnostics, event)),
   ]);
   const groups = new Map<string, Candidate[]>();
@@ -266,12 +265,12 @@ function candidateForSpan(span: any, diagnostics: NormalizationDiagnostics[], ev
     isLangGraphRetrieval(attrs) ? 'retrieval'
       : event?.name === 'agent.tool.call' ? 'tool'
       : event?.name === 'gen_ai.call' || event?.name === 'gen_ai.error' ? 'llm'
-        : event?.name === 'agent.interrupt.requested' || event?.name === 'agent.interrupt.resumed' || event?.name === 'agentlens.maf.request_info' ? 'interrupt'
+        : event?.name === 'agent.interrupt.requested' || event?.name === 'agent.interrupt.resumed' || isMafRequestEvent(event?.name) ? 'interrupt'
           : activityKindFromCompat(attrs, operationName);
   if (kind === 'unknown' && Object.keys(attrs).some((key) => key.startsWith('agentlens.langgraph.'))) {
     diagnostics.push({ code: 'unknown_telemetry', message: `Unsupported LangGraph telemetry on ${span?.span_id ?? 'span'}`, source });
   }
-  if (kind === 'unknown' && Object.keys(attrs).some((key) => key.startsWith('agentlens.maf.'))) {
+  if (kind === 'unknown' && hasMafMarkers(attrs)) {
     diagnostics.push({ code: 'unknown_telemetry', message: `Unsupported MAF telemetry on ${span?.span_id ?? 'span'}`, source });
   }
   const activityKey =

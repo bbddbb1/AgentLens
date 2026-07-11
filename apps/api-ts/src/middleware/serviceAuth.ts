@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import {
   getConfiguredServiceToken,
   isLangGraphGovernanceEnabled,
+  isMafGovernanceEnabled,
 } from '../config/features.js';
 
 export { getConfiguredServiceToken };
@@ -19,14 +20,24 @@ export function extractBearerToken(req: Request): string | undefined {
  * preventing the rest of AgentLens (observability) from operating.
  */
 export function requireGovernanceServiceAuth(req: Request, res: Response, next: NextFunction): void {
-  if (!isLangGraphGovernanceEnabled()) {
-    res.status(403).json({ detail: 'LangGraph governance is disabled' });
+  requireFrameworkGovernanceServiceAuth('langgraph', req, res, next);
+}
+
+export function requireFrameworkGovernanceServiceAuth(
+  framework: 'langgraph' | 'ms_agent_framework',
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  const enabled = framework === 'langgraph' ? isLangGraphGovernanceEnabled() : isMafGovernanceEnabled();
+  if (!enabled) {
+    res.status(403).json({ detail: `${framework} governance is disabled` });
     return;
   }
   const expected = getConfiguredServiceToken();
   if (!expected) {
     res.status(503).json({
-      detail: 'LangGraph governance requires AGENTLENS_SERVICE_TOKEN (or AGENTLENS_API_KEY) when enabled',
+      detail: `${framework} governance requires AGENTLENS_SERVICE_TOKEN (or AGENTLENS_API_KEY) when enabled`,
     });
     return;
   }

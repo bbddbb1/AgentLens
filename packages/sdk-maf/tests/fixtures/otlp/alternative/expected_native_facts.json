@@ -1,0 +1,10 @@
+{
+  "facts": [
+    "request_response_correlation",
+    "alternative"
+  ],
+  "fixture": "alternative",
+  "framework": "ms_agent_framework",
+  "maf_core_version": "1.10.0",
+  "primary_oracle": "native_facts"
+}

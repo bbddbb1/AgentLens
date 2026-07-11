@@ -290,6 +290,23 @@ export async function initializeDatabase(): Promise<void> {
     ON langgraph_bridge_bindings (mission_id, branch_id, lifecycle_state, lease_expires_at)
   `);
 
+  // Framework-scoped successor. Keep the legacy table readable during the
+  // additive migration, then copy all rows exactly once by binding id.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS framework_bridge_bindings (
+      LIKE langgraph_bridge_bindings INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING STORAGE
+    )
+  `);
+  await pool.query(`
+    INSERT INTO framework_bridge_bindings
+    SELECT * FROM langgraph_bridge_bindings
+    ON CONFLICT (id) DO NOTHING
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_framework_bridge_bindings_scope
+    ON framework_bridge_bindings (framework, mission_id, branch_id, lifecycle_state, lease_expires_at)
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS interrupt_delivery_attempts (
       id UUID PRIMARY KEY,

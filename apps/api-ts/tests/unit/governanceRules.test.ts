@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { matchGovernanceIdentity } from '../../src/services/interrupts/identityMatch.js';
+import { MAF_IDENTITY_POLICY, matchGovernanceIdentity } from '../../src/services/interrupts/identityMatch.js';
 import { validateStructuredDecisionValue } from '../../src/services/interrupts/structuredDecisionBounds.js';
 import { canAdvanceDelivery, canAdvanceRuntimeOutcome } from '../../src/services/interrupts/deliveryLifecycle.js';
 import { isBindingLive } from '../../src/services/interrupts/bridgeBindings.js';
 import { extractBearerToken, getConfiguredServiceToken } from '../../src/middleware/serviceAuth.js';
+import { isMafGovernanceControlAvailable, isMafGovernanceEnabled } from '../../src/config/features.js';
 import type { Request } from 'express';
 
 describe('governance identity matching', () => {
@@ -50,6 +51,17 @@ describe('governance identity matching', () => {
       { requireThreadId: true },
     );
     expect(result.status).toBe('match');
+  });
+
+  it('matches MAF workflow/request identity while treating executor identity as consistency-only', () => {
+    const maf = {
+      mission_id: 'm1', branch_id: 'main', framework: 'ms_agent_framework',
+      workflow_id: 'workflow-1', request_id: 'request-1',
+    };
+    const result = matchGovernanceIdentity(maf, { ...maf, executor_id: 'executor-1' }, {
+      policy: MAF_IDENTITY_POLICY,
+    });
+    expect(result).toMatchObject({ status: 'partial', missingOptional: ['executor_id'] });
   });
 });
 
@@ -114,6 +126,13 @@ describe('binding liveness helper', () => {
 });
 
 describe('service auth', () => {
+  it('keeps MAF governance independently disabled and fails closed without a token', () => {
+    expect(isMafGovernanceEnabled({ MAF_GOVERNANCE_ENABLED: 'true' } as NodeJS.ProcessEnv)).toBe(true);
+    expect(isMafGovernanceControlAvailable({ MAF_GOVERNANCE_ENABLED: 'true' } as NodeJS.ProcessEnv)).toBe(false);
+    expect(isMafGovernanceControlAvailable({
+      MAF_GOVERNANCE_ENABLED: 'true', AGENTLENS_SERVICE_TOKEN: 'token',
+    } as NodeJS.ProcessEnv)).toBe(true);
+  });
   it('reads configured service token', () => {
     expect(getConfiguredServiceToken({})).toBeUndefined();
     expect(getConfiguredServiceToken({ AGENTLENS_SERVICE_TOKEN: 'secret' })).toBe('secret');

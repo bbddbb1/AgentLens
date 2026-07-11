@@ -5,7 +5,7 @@
  */
 
 import type { PoolClient } from 'pg';
-import { isLangGraphGovernanceControlAvailable } from '../../config/features.js';
+import { isLangGraphGovernanceControlAvailable, isMafGovernanceControlAvailable } from '../../config/features.js';
 import {
   expireStaleBindings,
   isBindingLive,
@@ -14,6 +14,9 @@ import {
 } from './bridgeBindings.js';
 import {
   matchGovernanceIdentity,
+  LANGGRAPH_IDENTITY_POLICY,
+  MAF_IDENTITY_POLICY,
+  type GovernanceIdentityPolicy,
   type GovernanceIdentitySide,
 } from './identityMatch.js';
 
@@ -61,6 +64,8 @@ export function evaluateActionability(input: {
   binding?: BridgeBindingRow | null;
   identityAmbiguous?: boolean;
   requireThreadId?: boolean;
+  framework?: 'langgraph' | 'ms_agent_framework';
+  identityPolicy?: GovernanceIdentityPolicy;
   now?: Date;
 }): ActionabilityEvaluation {
   if (!input.governanceControlAvailable) {
@@ -79,11 +84,13 @@ export function evaluateActionability(input: {
     };
   }
 
-  if (String(input.interrupt.framework ?? '') !== 'langgraph') {
+  const framework = input.framework ?? 'langgraph';
+  const policy = input.identityPolicy ?? (framework === 'langgraph' ? LANGGRAPH_IDENTITY_POLICY : MAF_IDENTITY_POLICY);
+  if (String(input.interrupt.framework ?? '') !== framework) {
     return {
       actionability: 'unsupported',
       governanceAvailable: true,
-      reason: 'non_langgraph_framework',
+      reason: `unexpected_framework:${String(input.interrupt.framework ?? '')}`,
     };
   }
 
@@ -109,11 +116,12 @@ export function evaluateActionability(input: {
     ...asIdentity(input.interrupt.native_identity),
     mission_id: input.interrupt.mission_id,
     branch_id: input.interrupt.branch_id,
-    framework: 'langgraph',
+    framework,
     interaction_request_id:
       asIdentity(input.interrupt.native_identity).interaction_request_id
       ?? asIdentity(input.interrupt.native_identity).interrupt_request_id
       ?? input.interrupt.interrupt_id,
+    request_id: asIdentity(input.interrupt.native_identity).request_id ?? input.interrupt.interrupt_id,
     interrupt_request_id: input.interrupt.interrupt_id,
   };
 
@@ -130,9 +138,7 @@ export function evaluateActionability(input: {
     interrupt_request_id: binding.interrupt_id,
   };
 
-  const match = matchGovernanceIdentity(observed, bindingIdentity, {
-    requireThreadId: input.requireThreadId,
-  });
+  const match = matchGovernanceIdentity(observed, bindingIdentity, { policy });
 
   if (match.status === 'missing_required') {
     return {
@@ -176,9 +182,13 @@ export async function reconcileInterruptActionability(
     interruptId: string;
     identityAmbiguous?: boolean;
     requireThreadId?: boolean;
+    framework?: 'langgraph' | 'ms_agent_framework';
+    identityPolicy?: GovernanceIdentityPolicy;
   },
 ): Promise<ActionabilityEvaluation> {
-  await expireStaleBindings(client, input.missionId, input.branchId);
+  const framework = input.framework ?? 'langgraph';
+  const policy = input.identityPolicy ?? (framework === 'langgraph' ? LANGGRAPH_IDENTITY_POLICY : MAF_IDENTITY_POLICY);
+  await expireStaleBindings(client, input.missionId, input.branchId, framework);
 
   const interruptResult = await client.query(
     `
@@ -194,23 +204,27 @@ export async function reconcileInterruptActionability(
 
   const bindingsResult = await client.query(
     `
-      SELECT * FROM langgraph_bridge_bindings
+      SELECT * FROM framework_bridge_bindings
       WHERE mission_id = $1
         AND branch_id = $2
+        AND framework = $3
         AND lifecycle_state = 'active'
         AND lease_expires_at > NOW()
       ORDER BY generation DESC
     `,
-    [input.missionId, input.branchId],
+    [input.missionId, input.branchId, framework],
   );
 
-  const controlAvailable = isLangGraphGovernanceControlAvailable();
+  const controlAvailable = framework === 'langgraph'
+    ? isLangGraphGovernanceControlAvailable()
+    : isMafGovernanceControlAvailable();
   let evaluation: ActionabilityEvaluation = evaluateActionability({
     governanceControlAvailable: controlAvailable,
     interrupt: interruptRow ?? null,
     binding: null,
     identityAmbiguous: input.identityAmbiguous ?? Boolean(interruptRow?.identity_ambiguous),
-    requireThreadId: input.requireThreadId,
+    framework,
+    identityPolicy: policy,
   });
 
   if (interruptRow && controlAvailable && !evaluation.diagnostic?.includes('ambiguous')) {
@@ -221,7 +235,8 @@ export async function reconcileInterruptActionability(
         interrupt: interruptRow,
         binding,
         identityAmbiguous: input.identityAmbiguous ?? Boolean(interruptRow.identity_ambiguous),
-        requireThreadId: input.requireThreadId,
+        framework,
+        identityPolicy: policy,
       });
       evaluation = candidate;
       if (candidate.actionability === 'actionable' || candidate.actionability === 'identity_conflict') {
@@ -262,24 +277,28 @@ export async function reconcileMissionBranchActionability(
   client: PoolClient,
   missionId: string,
   branchId: string,
+  framework: 'langgraph' | 'ms_agent_framework' = 'langgraph',
+  identityPolicy?: GovernanceIdentityPolicy,
 ): Promise<void> {
-  await expireStaleBindings(client, missionId, branchId);
+  await expireStaleBindings(client, missionId, branchId, framework);
   const interrupts = await client.query(
     `
       SELECT interrupt_id
       FROM interrupts
       WHERE mission_id = $1
         AND branch_id = $2
-        AND framework = 'langgraph'
+        AND framework = $3
         AND decision_state = 'none'
     `,
-    [missionId, branchId],
+    [missionId, branchId, framework],
   );
   for (const row of interrupts.rows) {
     await reconcileInterruptActionability(client, {
       missionId,
       branchId,
       interruptId: String(row.interrupt_id),
+      framework,
+      identityPolicy,
     });
   }
 }
@@ -294,6 +313,8 @@ export async function assertCurrentlyActionable(
     branchId: string;
     interruptId: string;
     requireThreadId?: boolean;
+    framework?: 'langgraph' | 'ms_agent_framework';
+    identityPolicy?: GovernanceIdentityPolicy;
   },
 ): Promise<ActionabilityEvaluation> {
   const evaluation = await reconcileInterruptActionability(client, input);

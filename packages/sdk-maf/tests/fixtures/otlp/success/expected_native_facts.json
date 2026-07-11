@@ -1,0 +1,13 @@
+{
+  "facts": [
+    "workflow",
+    "executor",
+    "agent",
+    "tool",
+    "completed"
+  ],
+  "fixture": "success",
+  "framework": "ms_agent_framework",
+  "maf_core_version": "1.10.0",
+  "primary_oracle": "native_facts"
+}

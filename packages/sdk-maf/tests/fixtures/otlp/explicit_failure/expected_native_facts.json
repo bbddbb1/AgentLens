@@ -1,0 +1,10 @@
+{
+  "facts": [
+    "executor",
+    "failed"
+  ],
+  "fixture": "explicit_failure",
+  "framework": "ms_agent_framework",
+  "maf_core_version": "1.10.0",
+  "primary_oracle": "native_facts"
+}

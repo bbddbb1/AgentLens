@@ -1,0 +1,10 @@
+{
+  "facts": [
+    "conflicting_native_identity",
+    "non_actionable"
+  ],
+  "fixture": "conflicting_identity",
+  "framework": "ms_agent_framework",
+  "maf_core_version": "1.10.0",
+  "primary_oracle": "native_facts"
+}
