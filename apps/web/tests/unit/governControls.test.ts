@@ -3,12 +3,13 @@ import type { RuntimeInterruptState } from '@agentlens/protocol';
 
 /** Mirrors Govern-tab control filtering rules in RightSidebar after remediation. */
 function supportedControls(interrupt: RuntimeInterruptState): string[] {
-  const isLangGraphGovernance = interrupt.framework === 'langgraph'
+  const isFrameworkGovernance = interrupt.framework === 'langgraph'
+    || interrupt.framework === 'ms_agent_framework'
     || Boolean(interrupt.supported_decision_types?.length)
     || interrupt.actionability !== undefined;
   if (interrupt.governance_available === false) return [];
   if (interrupt.decision_state === 'recorded') return [];
-  if (isLangGraphGovernance) {
+  if (isFrameworkGovernance) {
     if (interrupt.actionability !== 'actionable') return [];
     return interrupt.supported_decision_types ?? [];
   }
@@ -30,6 +31,14 @@ describe('Govern UI control filtering (remediation)', () => {
       governance_available: true, actionability: 'actionable', framework: 'langgraph',
       supported_decision_types: ['approve'],
     })).toEqual(['approve']);
+  });
+
+  it('uses the same declared-control behavior for MAF', () => {
+    expect(supportedControls({
+      interrupt_id: 'maf-1', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
+      governance_available: true, actionability: 'actionable', framework: 'ms_agent_framework',
+      supported_decision_types: ['approve', 'reject'],
+    })).toEqual(['approve', 'reject']);
   });
 
   it('shows no buttons when LangGraph supported list is empty', () => {
@@ -55,5 +64,22 @@ describe('Govern UI control filtering (remediation)', () => {
     const runtimeFailed = 'failed';
     // Same token, different axis — UI styles them separately.
     expect(deliveryFailed).toBe(runtimeFailed);
+  });
+
+  it('keeps MAF bridge delivery failures separate from runtime outcome', () => {
+    const interrupt: RuntimeInterruptState = {
+      interrupt_id: 'maf-2', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
+      framework: 'ms_agent_framework', decision_state: 'recorded', delivery_state: 'failed', runtime_outcome: 'unknown',
+    };
+    expect(interrupt.delivery_state).toBe('failed');
+    expect(interrupt.runtime_outcome).toBe('unknown');
+  });
+
+  it('does not expose controls for a flag-off MAF interaction', () => {
+    expect(supportedControls({
+      interrupt_id: 'maf-off', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
+      framework: 'ms_agent_framework', governance_available: false, actionability: 'unavailable',
+      supported_decision_types: ['approve'],
+    })).toEqual([]);
   });
 });

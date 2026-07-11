@@ -241,7 +241,7 @@ export function RightSidebar({
     return Object.values(currentState?.interrupts ?? {}).filter((i) => {
       if (i.decision_state === 'recorded') return false;
       if (i.status !== 'pending' && i.request_lifecycle && i.request_lifecycle !== 'pending') return false;
-      if (i.governance_available === false && i.framework === 'langgraph') return false;
+      if (i.governance_available === false && (i.framework === 'langgraph' || i.framework === 'ms_agent_framework')) return false;
       if (i.actionability && i.actionability !== 'actionable' && i.supported_decision_types?.length) {
         return false;
       }
@@ -408,17 +408,18 @@ export function RightSidebar({
                 {pendingInterrupts.length > 0 ? (
                   <div className="space-y-3 animate-in fade-in duration-200">
                     {pendingInterrupts.map((interrupt) => {
-                      const isLangGraphGovernance = interrupt.framework === 'langgraph'
+                      const isFrameworkGovernance = interrupt.framework === 'langgraph'
+                        || interrupt.framework === 'ms_agent_framework'
                         || Boolean(interrupt.supported_decision_types?.length)
                         || interrupt.actionability !== undefined;
                       // LangGraph governance: only declared supported types; empty means no buttons.
                       // Legacy non-LangGraph: keep generic approve/reject/revise/resume fallback.
-                      const supported = isLangGraphGovernance
+                      const supported = isFrameworkGovernance
                         ? (interrupt.supported_decision_types ?? [])
                         : (['approve', 'reject', 'revise', 'resume'] as const);
                       const showControls = interrupt.governance_available !== false
                         && interrupt.decision_state !== 'recorded'
-                        && (interrupt.actionability === 'actionable' || (!isLangGraphGovernance && !interrupt.actionability))
+                        && (interrupt.actionability === 'actionable' || (!isFrameworkGovernance && !interrupt.actionability))
                         && supported.length > 0;
                       const deliveryLabel = interrupt.delivery_state ?? 'not_requested';
                       const runtimeLabel = interrupt.runtime_outcome ?? 'unknown';
@@ -493,7 +494,7 @@ export function RightSidebar({
                             Respond
                           </button>
                           )}
-                          {(supported as readonly string[]).includes('resume') && !isLangGraphGovernance && (
+                          {(supported as readonly string[]).includes('resume') && !isFrameworkGovernance && (
                           <button
                             type="button"
                             onClick={() => void handleDecision(interrupt.interrupt_id, 'resume')}
@@ -511,7 +512,7 @@ export function RightSidebar({
                               ? 'Governance controls unavailable for this deployment.'
                               : interrupt.actionability === 'identity_conflict'
                                 ? 'Identity conflict — controls blocked.'
-                                : supported.length === 0 && isLangGraphGovernance
+                                : supported.length === 0 && isFrameworkGovernance
                                   ? 'No supported decisions declared for this request.'
                                   : 'Observation only — waiting for a live bridge binding.'}
                           </p>

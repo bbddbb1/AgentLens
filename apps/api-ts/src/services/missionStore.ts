@@ -430,6 +430,23 @@ class MissionStore {
     const ambiguousInterruptIds = interruptIdsWithAmbiguousNativeIdentity(spans);
     for (const span of spans) {
       for (const event of span.events ?? []) {
+        if (event.name === 'agentlens.maf.response_accepted' || event.name === 'agentlens.maf.delivery_accepted') {
+          const requestId = attributeValue(event.attributes, 'agentlens.maf.request_id');
+          const deliveryId = attributeValue(event.attributes, 'agentlens.maf.delivery_id');
+          const outcome = attributeValue(event.attributes, 'agentlens.maf.terminal_outcome');
+          // A recorded acceptance alone is delivery evidence, not a completed runtime outcome.
+          if (requestId && outcome) {
+            await applyRuntimeOutcome(client, {
+              missionId,
+              branchId,
+              interruptId: requestId,
+              outcome: outcome === 'alternative' ? 'rejected_or_terminated' : 'continued_with_input',
+              deliveryId: deliveryId || undefined,
+              correlated: true,
+            });
+          }
+          continue;
+        }
         if (event.name === 'agent.interrupt.resumed' || event.name === AgentEvents.INTERRUPT_RESUMED) {
           const interruptId =
             attributeValue(event.attributes, AgentAttributes.INTERRUPT_ID) ??

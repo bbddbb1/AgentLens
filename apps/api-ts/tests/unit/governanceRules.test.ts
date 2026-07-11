@@ -110,6 +110,11 @@ describe('delivery and outcome non-regression', () => {
     expect(canAdvanceRuntimeOutcome('failed', 'resumed')).toBe(false);
     expect(canAdvanceRuntimeOutcome('unknown', 'failed')).toBe(true);
   });
+
+  it('keeps accepted delivery distinct from an uncorrelated runtime outcome', () => {
+    expect(canAdvanceRuntimeOutcome('unknown', 'continued_with_input')).toBe(true);
+    expect(canAdvanceRuntimeOutcome('continued_with_input', 'unknown')).toBe(false);
+  });
 });
 
 describe('binding liveness helper', () => {

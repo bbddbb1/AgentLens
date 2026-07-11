@@ -55,11 +55,11 @@
 
 ## 7. Explicitly Correlated MAF Outcome and Govern UI Compatibility
 
-- [ ] 7.1 Extend MAF normalization/ingestion to recognize only explicitly request-and-delivery-correlated native response acceptance, successful continuation, alternative/rejected result, and executor/workflow failure as evidence-backed observations, without adding a separate AgentLens outcome authority.
-- [ ] 7.2 Reuse shared monotonic delivery/outcome reconciliation so accepted-without-result remains unknown, runtime failure after acceptance preserves accepted delivery, and pre-acceptance bridge failure does not fabricate runtime failure.
+- [x] 7.1 Extend MAF normalization/ingestion to recognize only explicitly request-and-delivery-correlated native response acceptance, successful continuation, alternative/rejected result, and executor/workflow failure as evidence-backed observations, without adding a separate AgentLens outcome authority.
+- [x] 7.2 Reuse shared monotonic delivery/outcome reconciliation so accepted-without-result remains unknown, runtime failure after acceptance preserves accepted delivery, and pre-acceptance bridge failure does not fabricate runtime failure.
 - [ ] 7.3 Add API/projection tests for successful response continuation, structured continuation, alternative path, accepted-without-outcome, runtime failure after acceptance, delivery failure before acceptance, duplicate/out-of-order evidence, and unrelated later workflow activity.
-- [ ] 7.4 Verify the existing Govern client/store/components render MAF through the current interaction shape, show only declared controls, reuse structured-input validation, separate all state axes, and disable action after decision/resolution.
-- [ ] 7.5 Add web tests proving the same components support LangGraph and MAF, bridge errors remain distinct from runtime errors, flag-off MAF requests are non-actionable, and no framework selector/dashboard is introduced.
+- [x] 7.4 Verify the existing Govern client/store/components render MAF through the current interaction shape, show only declared controls, reuse structured-input validation, separate all state axes, and disable action after decision/resolution.
+- [x] 7.5 Add web tests proving the same components support LangGraph and MAF, bridge errors remain distinct from runtime errors, flag-off MAF requests are non-actionable, and no framework selector/dashboard is introduced.
 
 ## 8. Real End-to-End System Conformance
 

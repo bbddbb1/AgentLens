@@ -118,5 +118,7 @@ class MafGovernanceBridge:
             self._applied_delivery_ids.add(claim.delivery_id)
             return "unknown"
         self._applied_delivery_ids.add(claim.delivery_id)
-        emit_enrichment("agentlens.maf.delivery_accepted", terminal_attributes(self.pending_request_id, response))
+        attributes = terminal_attributes(self.pending_request_id, response)
+        attributes["agentlens.maf.delivery_id"] = claim.delivery_id
+        emit_enrichment("agentlens.maf.delivery_accepted", attributes)
         return "accepted"
