@@ -1,0 +1,13 @@
+{
+  "maf_core_version": "1.10.0",
+  "components": {
+    "maf_workflow": "real",
+    "otel_otlp": "real",
+    "agentlens_express_http": "real",
+    "service_authentication": "real",
+    "private_bridge_http": "real",
+    "postgresql": "real",
+    "model_client": "deterministic_test_double"
+  },
+  "primary_oracle": "native_facts"
+}

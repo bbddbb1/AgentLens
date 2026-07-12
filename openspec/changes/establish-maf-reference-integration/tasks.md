@@ -63,7 +63,7 @@
 
 ## 8. Real End-to-End System Conformance
 
-- [ ] 8.1 Add a repeatable harness manifest that records MAF version and explicitly labels the real MAF runtime, OTel/OTLP path, Express HTTP, service authentication, private bridge HTTP, PostgreSQL database, and deterministic model double.
+- [x] 8.1 Add a repeatable harness manifest that records MAF version and explicitly labels the real MAF runtime, OTel/OTLP path, Express HTTP, service authentication, private bridge HTTP, PostgreSQL database, and deterministic model double.
 - [ ] 8.2 Run the full real path from MAF workflow request through OTLP ingestion, interaction observation, binding registration, decision API, one-time claim, native response, correlated telemetry/result, persisted state, and public replay/interaction response.
 - [ ] 8.3 Add end-to-end positive/structured continuation and truthful alternative path coverage, including successful Agent/Tool and executor lifecycle assertions using native facts as the primary oracle.
 - [ ] 8.4 Add end-to-end explicit failure, accepted-delivery-without-outcome, runtime-failure-after-acceptance, and pre-acceptance-delivery-failure cases.
