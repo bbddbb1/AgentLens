@@ -36,21 +36,21 @@
 
 ## 5. Explicit MAF Interaction Observation
 
-- [ ] 5.1 Ingest only the explicit MAF request enrichment into the existing interrupt/interaction record with framework, workflow/executor activity, native request ID/type, response type, safe prompt/schema, and source references.
-- [ ] 5.2 Preserve MAF-native `workflow_id`, `executor_id`, and `request_id` terminology in private/native metadata without synthesizing LangGraph thread/run/interrupt/checkpoint fields.
-- [ ] 5.3 Derive the reference MAF identity policy from real 1.10.0 fixtures: require mission, branch, framework, workflow ID, and request ID; treat source executor ID as consistency-only unless fixtures prove native routing requires it; retain request/response type and trace/activity correlation as consistency fields.
-- [ ] 5.4 Reconcile request observation and live MAF binding in either arrival order; allow missing optional identity, block explicit conflicts, and keep binding-only, idle-only, checkpoint-only, unsupported response, missing required identity, expired binding, flag-off, and auth-unavailable cases non-actionable.
-- [ ] 5.5 Reuse the existing decision API, structured-input validation/bounds, actor/audit provenance, idempotency, one-decision rule, and delivery creation for actionable MAF requests without MAF-specific decision persistence.
+- [x] 5.1 Ingest only the explicit MAF request enrichment into the existing interrupt/interaction record with framework, workflow/executor activity, native request ID/type, response type, safe prompt/schema, and source references.
+- [x] 5.2 Preserve MAF-native `workflow_id`, `executor_id`, and `request_id` terminology in private/native metadata without synthesizing LangGraph thread/run/interrupt/checkpoint fields.
+- [x] 5.3 Derive the reference MAF identity policy from real 1.10.0 fixtures: require mission, branch, framework, workflow ID, and request ID; treat source executor ID as consistency-only unless fixtures prove native routing requires it; retain request/response type and trace/activity correlation as consistency fields.
+- [x] 5.4 Reconcile request observation and live MAF binding in either arrival order; allow missing optional identity, block explicit conflicts, and keep binding-only, idle-only, checkpoint-only, unsupported response, missing required identity, expired binding, flag-off, and auth-unavailable cases non-actionable.
+- [x] 5.5 Reuse the existing decision API, structured-input validation/bounds, actor/audit provenance, idempotency, one-decision rule, and delivery creation for actionable MAF requests without MAF-specific decision persistence.
 - [ ] 5.6 Add API/store tests for explicit request actionability, safe request serialization, unsupported response types, missing/conflicting MAF identity, mission/branch isolation, duplicate decisions, and absence-based non-inference.
 
 ## 6. Thin MAF Governance Bridge
 
-- [ ] 6.1 Implement `MafGovernanceBridge` with a private opaque control reference and local ownership of the live `Workflow`, pending native request event, expected response type, and continuation context.
-- [ ] 6.2 Add the MAF bridge HTTP client for authenticated register, renew, claim, and receipt against MAF-specific private routes while sending no live workflow state or checkpoint payload to Core.
-- [ ] 6.3 Translate only reference-supported AgentLens decision types/values into the exact MAF response type and call native `Workflow.run(responses={request_id: value}, stream=True)` or the verified 1.10.0 equivalent.
-- [ ] 6.4 Mark delivery accepted only after explicit native response acceptance evidence, report pre-acceptance validation/application errors as delivery failures, and report no-longer-pending requests as stale.
-- [ ] 6.5 Rely on Core's durable one-time claim as the cross-restart guarantee against reissuing a delivery; keep bridge delivery-ID tracking as an in-process duplicate-handling safeguard only, add no durable bridge journal, preserve idempotent receipts, and use `unknown` without automatic reissue when native application becomes uncertain.
-- [ ] 6.6 Emit bounded explicit request/delivery correlation on native continuation, alternative completion, and failure telemetry without emitting the control reference, workflow object, queue, checkpoint state, secrets, or raw sensitive response.
+- [x] 6.1 Implement `MafGovernanceBridge` with a private opaque control reference and local ownership of the live `Workflow`, pending native request event, expected response type, and continuation context.
+- [x] 6.2 Add the MAF bridge HTTP client for authenticated register, renew, claim, and receipt against MAF-specific private routes while sending no live workflow state or checkpoint payload to Core.
+- [x] 6.3 Translate only reference-supported AgentLens decision types/values into the exact MAF response type and call native `Workflow.run(responses={request_id: value}, stream=True)` or the verified 1.10.0 equivalent.
+- [x] 6.4 Mark delivery accepted only after explicit native response acceptance evidence, report pre-acceptance validation/application errors as delivery failures, and report no-longer-pending requests as stale.
+- [x] 6.5 Rely on Core's durable one-time claim as the cross-restart guarantee against reissuing a delivery; keep bridge delivery-ID tracking as an in-process duplicate-handling safeguard only, add no durable bridge journal, preserve idempotent receipts, and use `unknown` without automatic reissue when native application becomes uncertain.
+- [x] 6.6 Emit bounded explicit request/delivery correlation on native continuation, alternative completion, and failure telemetry without emitting the control reference, workflow object, queue, checkpoint state, secrets, or raw sensitive response.
 - [ ] 6.7 Add Python bridge tests for live binding, lease renewal/expiry, supported response mapping, stale request, invalid response type, in-process duplicate handling, uncertainty, accepted/failure receipts, and bridge restart after a durable Core claim proving the delivery is not reissued or applied again without a bridge journal.
 
 ## 7. Explicitly Correlated MAF Outcome and Govern UI Compatibility
