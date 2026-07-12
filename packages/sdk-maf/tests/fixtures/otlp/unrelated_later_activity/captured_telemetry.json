@@ -82,6 +82,115 @@
       "start_time_unix_nano": 0,
       "status_code": "UNSET",
       "trace_id": "trace-2"
+    },
+    {
+      "attributes": {
+        "workflow.definition": "<redacted-workflow-definition>",
+        "workflow.id": "<workflow-id>",
+        "workflow_builder.name": "agentlens-maf-reference-workflow"
+      },
+      "end_time_unix_nano": 1,
+      "events": [
+        {
+          "attributes": {},
+          "name": "build.started",
+          "timestamp": 0
+        },
+        {
+          "attributes": {},
+          "name": "build.validation_completed",
+          "timestamp": 0
+        },
+        {
+          "attributes": {},
+          "name": "build.completed",
+          "timestamp": 0
+        }
+      ],
+      "operation_name": "workflow.build",
+      "parent_span_id": null,
+      "span_id": "span-4",
+      "start_time_unix_nano": 0,
+      "status_code": "UNSET",
+      "trace_id": "trace-3"
+    },
+    {
+      "attributes": {
+        "gen_ai.agent.id": "agentlens-reference-agent",
+        "gen_ai.agent.name": "AgentLens Reference Agent",
+        "gen_ai.operation.name": "invoke_agent",
+        "gen_ai.provider.name": "microsoft.agent_framework",
+        "gen_ai.request.choice.count": 1,
+        "gen_ai.response.id": "reference-model-response",
+        "gen_ai.tool.definitions": "[{\"type\": \"function\", \"name\": \"classify_reference_input\", \"description\": \"Classifies the reference input deterministically.\", \"parameters\": {\"properties\": {\"value\": {\"title\": \"Value\", \"type\": \"string\"}}, \"required\": [\"value\"], \"title\": \"classify_reference_input_input\", \"type\": \"object\"}}]"
+      },
+      "end_time_unix_nano": 1,
+      "events": [],
+      "operation_name": "invoke_agent AgentLens Reference Agent",
+      "parent_span_id": "span-6",
+      "span_id": "span-5",
+      "start_time_unix_nano": 0,
+      "status_code": "UNSET",
+      "trace_id": "trace-4"
+    },
+    {
+      "attributes": {
+        "agent_framework.function.invocation.duration": 0.00022869999520480633,
+        "gen_ai.operation.name": "execute_tool",
+        "gen_ai.tool.call.id": "unknown",
+        "gen_ai.tool.description": "Classifies the reference input deterministically.",
+        "gen_ai.tool.name": "classify_reference_input",
+        "gen_ai.tool.type": "function"
+      },
+      "end_time_unix_nano": 1,
+      "events": [],
+      "operation_name": "execute_tool classify_reference_input",
+      "parent_span_id": "span-6",
+      "span_id": "span-7",
+      "start_time_unix_nano": 0,
+      "status_code": "UNSET",
+      "trace_id": "trace-4"
+    },
+    {
+      "attributes": {
+        "executor.id": "agentlens-reference-executor",
+        "executor.type": "ReferenceExecutionExecutor",
+        "message.payload_type": "str",
+        "message.type": "MessageType.STANDARD"
+      },
+      "end_time_unix_nano": 1,
+      "events": [],
+      "operation_name": "executor.process agentlens-reference-executor",
+      "parent_span_id": "span-8",
+      "span_id": "span-6",
+      "start_time_unix_nano": 0,
+      "status_code": "UNSET",
+      "trace_id": "trace-4"
+    },
+    {
+      "attributes": {
+        "workflow.id": "<workflow-id>",
+        "workflow.name": "agentlens-maf-reference-workflow"
+      },
+      "end_time_unix_nano": 1,
+      "events": [
+        {
+          "attributes": {},
+          "name": "workflow.started",
+          "timestamp": 0
+        },
+        {
+          "attributes": {},
+          "name": "workflow.completed",
+          "timestamp": 0
+        }
+      ],
+      "operation_name": "workflow.run",
+      "parent_span_id": null,
+      "span_id": "span-8",
+      "start_time_unix_nano": 0,
+      "status_code": "UNSET",
+      "trace_id": "trace-4"
     }
   ]
 }

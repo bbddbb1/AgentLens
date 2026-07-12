@@ -52,7 +52,7 @@
     },
     {
       "attributes": {
-        "agent_framework.function.invocation.duration": 0.0002166999038308859,
+        "agent_framework.function.invocation.duration": 0.00018150010146200657,
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.call.id": "unknown",
         "gen_ai.tool.description": "Classifies the reference input deterministically.",

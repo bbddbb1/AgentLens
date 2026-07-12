@@ -6,7 +6,6 @@
       "message.payload_type",
       "message.type",
       "workflow.definition",
-      "workflow.id",
       "workflow.name",
       "workflow_builder.name"
     ],
@@ -32,6 +31,9 @@
     ]
   },
   "fixture": "missing_identity",
+  "fixture_modification": [
+    "removed workflow identity from a real request capture"
+  ],
   "framework": "ms_agent_framework",
   "maf_core_version": "1.10.0",
   "primary_oracle": "captured_real_maf_telemetry"

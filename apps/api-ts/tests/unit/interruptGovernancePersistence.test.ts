@@ -20,7 +20,7 @@ describe('LangGraph governance interrupt persistence serializers', () => {
       updated_at: '2026-01-01T00:00:00.000Z',
     }, { governanceEnabled: false });
 
-    expect(record.actionability).toBe('observed_only');
+    expect(record.actionability).toBe('unavailable');
     expect(record.decision_state).toBe('none');
     expect(record.delivery_state).toBe('not_requested');
     expect(record.runtime_outcome).toBe('unknown');

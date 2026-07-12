@@ -44,6 +44,7 @@ export interface InterruptGovernanceRow {
   native_identity?: GovernanceIdentitySide | Record<string, unknown> | null;
   actionability?: string | null;
   decision_state?: string | null;
+  delivery_id?: string | null;
   identity_ambiguous?: boolean | null;
   authorized_binding_id?: string | null;
   source_refs?: unknown;
@@ -52,6 +53,23 @@ export interface InterruptGovernanceRow {
 function asIdentity(value: unknown): GovernanceIdentitySide {
   if (!value || typeof value !== 'object') return {};
   return value as GovernanceIdentitySide;
+}
+
+function bindingTargetsInterrupt(binding: BridgeBindingRow, interrupt: InterruptGovernanceRow): boolean {
+  const observed = asIdentity(interrupt.native_identity);
+  const observedRequestId = String(
+    observed.interaction_request_id ?? observed.interrupt_request_id ?? observed.request_id ?? interrupt.interrupt_id,
+  );
+  const bindingRequestId = binding.interaction_request_id
+    ?? binding.interrupt_id
+    ?? binding.native_identity.interaction_request_id
+    ?? binding.native_identity.interrupt_request_id
+    ?? binding.native_identity.request_id;
+  return !bindingRequestId || String(bindingRequestId) === observedRequestId;
+}
+
+function hasRecordedDeliveryAuthority(interrupt: InterruptGovernanceRow): boolean {
+  return interrupt.decision_state === 'recorded' || Boolean(interrupt.delivery_id);
 }
 
 /**
@@ -194,7 +212,7 @@ export async function reconcileInterruptActionability(
   const interruptResult = await client.query(
     `
       SELECT interrupt_id, mission_id, branch_id, framework, native_identity,
-             actionability, decision_state, identity_ambiguous, authorized_binding_id
+             actionability, decision_state, delivery_id, identity_ambiguous, authorized_binding_id
       FROM interrupts
       WHERE mission_id = $1 AND branch_id = $2 AND interrupt_id = $3
       LIMIT 1
@@ -229,13 +247,25 @@ export async function reconcileInterruptActionability(
   });
 
   const bindings = bindingsResult.rows.map((row) => mapBindingRow(row as Record<string, unknown>));
+  let authorizedBinding: BridgeBindingRow | undefined;
+  if (interruptRow?.authorized_binding_id) {
+    const authorizedResult = await client.query(
+      `SELECT * FROM framework_bridge_bindings WHERE id = $1 LIMIT 1`,
+      [interruptRow.authorized_binding_id],
+    );
+    if (authorizedResult.rows[0]) {
+      authorizedBinding = mapBindingRow(authorizedResult.rows[0] as Record<string, unknown>);
+    }
+  }
   if (interruptRow && controlAvailable && !evaluation.diagnostic?.includes('ambiguous')) {
-    // Keep claim authority with the exact live binding selected for observed
-    // native identity. A later matching control ref may not take it over.
-    const selected = interruptRow.authorized_binding_id
-      ? bindings.find((binding) => binding.id === interruptRow.authorized_binding_id)
-      : undefined;
-    const candidates = selected && isBindingLive(selected) ? [selected] : bindings;
+    // A decision/delivery freezes the exact selected binding. It may expire,
+    // but a later matching registration must never take over that claim.
+    const candidates = hasRecordedDeliveryAuthority(interruptRow)
+      ? (authorizedBinding ? [authorizedBinding] : [])
+      : authorizedBinding && isBindingLive(authorizedBinding)
+        ? [authorizedBinding]
+        : bindings.filter((binding) => bindingTargetsInterrupt(binding, interruptRow));
+    let conflict: ActionabilityEvaluation | undefined;
     for (const binding of candidates) {
       const candidate = evaluateActionability({
         governanceControlAvailable: controlAvailable,
@@ -245,11 +275,16 @@ export async function reconcileInterruptActionability(
         framework,
         identityPolicy: policy,
       });
-      evaluation = candidate;
-      if (candidate.actionability === 'actionable' || candidate.actionability === 'identity_conflict') {
+      if (candidate.actionability === 'actionable') {
+        evaluation = candidate;
         break;
       }
+      // A conflict only blocks this request when the binding explicitly names
+      // this request; unrelated live requests are ignored above.
+      if (candidate.actionability === 'identity_conflict' && !conflict) conflict = candidate;
+      if (candidate.actionability === 'observed_only') evaluation = candidate;
     }
+    if (evaluation.actionability !== 'actionable' && conflict) evaluation = conflict;
   }
 
   if (interruptRow) {
@@ -257,7 +292,10 @@ export async function reconcileInterruptActionability(
       `
         UPDATE interrupts
         SET actionability = $4,
-            authorized_binding_id = $6::uuid,
+            authorized_binding_id = CASE
+              WHEN $7::boolean THEN authorized_binding_id
+              ELSE $6::uuid
+            END,
             identity_ambiguous = CASE
               WHEN $5::boolean THEN TRUE
               ELSE identity_ambiguous
@@ -272,6 +310,7 @@ export async function reconcileInterruptActionability(
         evaluation.actionability,
         evaluation.actionability === 'identity_conflict',
         evaluation.actionability === 'actionable' ? evaluation.binding?.id ?? null : null,
+        hasRecordedDeliveryAuthority(interruptRow),
       ],
     );
   }

@@ -1,21 +1,15 @@
 {
   "captured_facts": {
     "attribute_keys": [
-      "agent_framework.function.invocation.duration",
+      "edge_group.delivered",
+      "edge_group.delivery_status",
+      "edge_group.id",
+      "edge_group.type",
       "executor.id",
       "executor.type",
-      "gen_ai.agent.id",
-      "gen_ai.agent.name",
-      "gen_ai.operation.name",
-      "gen_ai.provider.name",
-      "gen_ai.request.choice.count",
-      "gen_ai.response.id",
-      "gen_ai.tool.call.id",
-      "gen_ai.tool.definitions",
-      "gen_ai.tool.description",
-      "gen_ai.tool.name",
-      "gen_ai.tool.type",
       "message.payload_type",
+      "message.source_id",
+      "message.target_id",
       "message.type",
       "workflow.definition",
       "workflow.id",
@@ -26,27 +20,27 @@
       "agentlens.maf.request_id",
       "agentlens.maf.request_type",
       "agentlens.maf.response_type",
-      "agentlens.maf.safe_data_state"
+      "agentlens.maf.safe_data_state",
+      "agentlens.maf.terminal_outcome"
     ],
     "event_names": [
       "agentlens.maf.request_info",
+      "agentlens.maf.response_accepted",
       "build.completed",
       "build.started",
       "build.validation_completed",
       "workflow.completed",
       "workflow.started"
     ],
-    "span_count": 8,
+    "span_count": 6,
     "span_names": [
-      "execute_tool classify_reference_input",
-      "executor.process agentlens-reference-executor",
+      "edge_group.process InternalEdgeGroup",
       "executor.process agentlens-reference-review-executor",
-      "invoke_agent AgentLens Reference Agent",
       "workflow.build",
       "workflow.run"
     ]
   },
-  "fixture": "unrelated_later_activity",
+  "fixture": "post_acceptance_failure",
   "fixture_modification": [],
   "framework": "ms_agent_framework",
   "maf_core_version": "1.10.0",

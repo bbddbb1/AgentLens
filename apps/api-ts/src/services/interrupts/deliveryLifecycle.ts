@@ -277,6 +277,39 @@ export async function postDeliveryReceipt(
   return input.receipt;
 }
 
+/** A receipt may be posted only by the binding that owns the delivery claim. */
+export async function isDeliveryReceiptAuthorized(
+  client: PoolClient,
+  input: {
+    missionId: string;
+    branchId: string;
+    interruptId: string;
+    deliveryId: string;
+    bindingId: string;
+  },
+): Promise<boolean> {
+  const result = await client.query(
+    `
+      SELECT delivery.claiming_binding_id, interrupt.authorized_binding_id
+      FROM interrupt_delivery_attempts AS delivery
+      JOIN interrupts AS interrupt
+        ON interrupt.mission_id = delivery.mission_id
+       AND interrupt.branch_id = delivery.branch_id
+       AND interrupt.interrupt_id = delivery.interrupt_id
+      WHERE delivery.id = $1
+        AND delivery.mission_id = $2
+        AND delivery.branch_id = $3
+        AND delivery.interrupt_id = $4
+      LIMIT 1
+    `,
+    [input.deliveryId, input.missionId, input.branchId, input.interruptId],
+  );
+  const row = result.rows[0] as Record<string, unknown> | undefined;
+  if (!row) return false;
+  const authority = row.claiming_binding_id ?? row.authorized_binding_id;
+  return authority !== null && authority !== undefined && String(authority) === input.bindingId;
+}
+
 export async function markTimedOutClaimsUnknown(client: PoolClient): Promise<number> {
   const result = await client.query(
     `

@@ -32,6 +32,7 @@
     ]
   },
   "fixture": "request",
+  "fixture_modification": [],
   "framework": "ms_agent_framework",
   "maf_core_version": "1.10.0",
   "primary_oracle": "captured_real_maf_telemetry"

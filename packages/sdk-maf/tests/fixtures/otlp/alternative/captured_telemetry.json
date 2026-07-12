@@ -87,7 +87,7 @@
       "attributes": {
         "edge_group.delivered": true,
         "edge_group.delivery_status": "delivered",
-        "edge_group.id": "InternalEdgeGroup/55510127-ad1e-4b16-84ac-ada6fe73c250",
+        "edge_group.id": "InternalEdgeGroup/20191f95-64cf-4a1d-95dd-2ec8504f0694",
         "edge_group.type": "InternalEdgeGroup",
         "message.source_id": "internal:agentlens-reference-review-executor",
         "message.target_id": "agentlens-reference-review-executor"

@@ -10,14 +10,8 @@
       "workflow.name",
       "workflow_builder.name"
     ],
-    "event_attribute_keys": [
-      "agentlens.maf.request_id",
-      "agentlens.maf.request_type",
-      "agentlens.maf.response_type",
-      "agentlens.maf.safe_data_state"
-    ],
+    "event_attribute_keys": [],
     "event_names": [
-      "agentlens.maf.request_info",
       "build.completed",
       "build.started",
       "build.validation_completed",
@@ -32,6 +26,9 @@
     ]
   },
   "fixture": "unknown_telemetry",
+  "fixture_modification": [
+    "removed request_info enrichment from a real request capture to represent unclassified telemetry"
+  ],
   "framework": "ms_agent_framework",
   "maf_core_version": "1.10.0",
   "primary_oracle": "captured_real_maf_telemetry"

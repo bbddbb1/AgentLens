@@ -125,6 +125,38 @@ def _assert_public_views(views: dict[str, object]) -> None:
             raise AssertionError(f"public API view leaked {private_marker}")
 
 
+async def _run_two_requests(
+    http: httpx.Client,
+    api_url: str,
+    mission_id: str,
+    provider: TracerProvider,
+) -> dict[str, object]:
+    observed: list[tuple[MafGovernanceBridge, object]] = []
+    for request_id in ("agentlens-reference-review-request-a", "agentlens-reference-review-request-b"):
+        workflow = create_reference_review_workflow(request_id)
+        pending = await workflow.run(f"system-harness-{request_id}")
+        request = pending.get_request_info_events()[0]
+        bridge = MafGovernanceBridge(api_url, mission_id, "main", workflow, request.request_id)
+        bridge.client().register(MafNativeIdentity(workflow.id, request.request_id, request.source_executor_id))
+        observed.append((bridge, request))
+    provider.force_flush()
+    public = http.get(f"/api/v1/missions/{mission_id}/interrupts?branch_id=main").raise_for_status().json()
+    interrupts = public.get("interrupts")
+    if not isinstance(interrupts, list) or {item.get("interrupt_id") for item in interrupts} != {
+        request.request_id for _, request in observed
+    }:
+        raise AssertionError(f"two live requests were not persisted independently: {public!r}")
+    if any(item.get("actionability") != "actionable" for item in interrupts):
+        raise AssertionError(f"unrelated bindings caused an actionability conflict: {public!r}")
+    _assert_public_views({"interactions": public})
+    return {
+        "scenario": "two_requests",
+        "mission_id": mission_id,
+        "actionability": [item.get("actionability") for item in interrupts],
+        "maf_version": assert_maf_core_version(),
+    }
+
+
 async def run(scenario: str) -> dict[str, object]:
     api_url = os.environ.get("AGENTLENS_API_URL", "http://localhost:8002").rstrip("/")
     token = os.environ["AGENTLENS_SERVICE_TOKEN"]
@@ -146,12 +178,14 @@ async def run(scenario: str) -> dict[str, object]:
             )
         )
         trace.set_tracer_provider(provider)
+        if scenario == "two_requests":
+            return await _run_two_requests(http, api_url, mission_id, provider)
         workflow = create_reference_review_workflow()
         pending = await workflow.run("system-harness")
         request = pending.get_request_info_events()[0]
         bridge = MafGovernanceBridge(api_url, mission_id, "main", workflow, request.request_id)
         identity = MafNativeIdentity(workflow.id, request.request_id, request.source_executor_id)
-        bridge.client().register(identity)
+        bridge.client().register(identity, lease_seconds=5 if scenario == "binding_expiry_no_transfer" else 60)
         decision_body: dict[str, object] = {"decision": "approve", "idempotency_key": str(uuid.uuid4())}
         if scenario == "post_acceptance_failure":
             decision_body = {
@@ -163,6 +197,27 @@ async def run(scenario: str) -> dict[str, object]:
             f"/api/v1/missions/{mission_id}/interrupts/{request.request_id}/decision?branch_id=main",
             json=decision_body,
         ).raise_for_status().json()
+        if scenario == "binding_expiry_no_transfer":
+            successor = MafGovernanceBridge(api_url, mission_id, "main", workflow, request.request_id)
+            successor.client().register(identity)
+            await asyncio.sleep(6)
+            rejected = http.post(
+                f"/api/v1/missions/{mission_id}/branches/main/maf/bridge/claim",
+                json={"control_ref": successor.control_ref, "interrupt_id": request.request_id},
+            )
+            if rejected.status_code != 409:
+                raise AssertionError(f"expired authorized binding transferred claim authority: {rejected.status_code} {rejected.text}")
+            public = http.get(f"/api/v1/missions/{mission_id}/interrupts?branch_id=main").raise_for_status().json()
+            interrupt = _public_interrupt(public)
+            if interrupt.get("delivery_state") != "pending" or interrupt.get("runtime_outcome") != "awaiting_interaction":
+                raise AssertionError(f"expired binding changed the durable delivery: {interrupt!r}")
+            return {
+                "scenario": scenario,
+                "mission_id": mission_id,
+                "claim_status": rejected.status_code,
+                "delivery_state": interrupt["delivery_state"],
+                "maf_version": assert_maf_core_version(),
+            }
         if scenario == "nonmatching_binding":
             nonmatching = MafGovernanceBridge(api_url, mission_id, "main", workflow, request.request_id)
             # This second authenticated binding has the same framework,
@@ -192,6 +247,31 @@ async def run(scenario: str) -> dict[str, object]:
         claim_data = bridge.client().claim(request.request_id)
         if not claim_data.claimed or not claim_data.delivery_id:
             raise AssertionError(f"expected one durable claim, got {claim_data!r}")
+        if scenario == "unauthorized_receipt":
+            other = MafGovernanceBridge(api_url, mission_id, "main", workflow, request.request_id)
+            other.client().register(identity)
+            for receipt_state in ("accepted", "failed", "stale", "unknown"):
+                rejected = http.post(
+                    f"/api/v1/missions/{mission_id}/branches/main/maf/bridge/receipt",
+                    json={
+                        "control_ref": other.control_ref,
+                        "interrupt_id": request.request_id,
+                        "delivery_id": claim_data.delivery_id,
+                        "receipt": receipt_state,
+                    },
+                )
+                if rejected.status_code != 409:
+                    raise AssertionError(f"non-authorized receipt {receipt_state} changed delivery: {rejected.status_code} {rejected.text}")
+            public = http.get(f"/api/v1/missions/{mission_id}/interrupts?branch_id=main").raise_for_status().json()
+            interrupt = _public_interrupt(public)
+            if interrupt.get("delivery_state") != "pending":
+                raise AssertionError(f"non-authorized receipt mutated state: {interrupt!r}")
+            return {
+                "scenario": scenario,
+                "mission_id": mission_id,
+                "delivery_state": interrupt["delivery_state"],
+                "maf_version": assert_maf_core_version(),
+            }
         receipt = "accepted"
         if scenario in {"positive", "post_acceptance_failure"}:
             receipt = await bridge.apply_claim(claim_data)
@@ -241,7 +321,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run one real MAF-to-AgentLens conformance scenario.")
     parser.add_argument(
         "--scenario",
-        choices=("positive", "accepted_without_terminal", "missing_delivery", "wrong_delivery", "post_acceptance_failure", "nonmatching_binding"),
+        choices=(
+            "positive", "accepted_without_terminal", "missing_delivery", "wrong_delivery",
+            "post_acceptance_failure", "nonmatching_binding", "binding_expiry_no_transfer",
+            "unauthorized_receipt", "two_requests",
+        ),
         default="positive",
     )
     print(json.dumps(asyncio.run(run(parser.parse_args().scenario)), sort_keys=True))

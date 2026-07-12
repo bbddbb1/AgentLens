@@ -11,7 +11,8 @@
     "unknown_telemetry",
     "missing_identity",
     "conflicting_identity",
-    "unrelated_later_activity"
+    "unrelated_later_activity",
+    "post_acceptance_failure"
   ],
   "maf_core_version": "1.10.0",
   "primary_oracle": "captured_real_maf_telemetry",

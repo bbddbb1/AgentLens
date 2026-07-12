@@ -25,6 +25,21 @@ describe('private MAF ingestion boundary', () => {
     expect(fact?.nativeIdentity).toMatchObject({ workflow_id: 'workflow-1', executor_id: 'executor-1' });
   });
 
+  it('rejects a request event whose native workflow identity conflicts with its trace', () => {
+    const workflowIds = mafTraceWorkflowIds([{ trace_id: 'trace-1', attributes: { 'workflow.id': 'workflow-1' } }]);
+    expect(mafInteractionFact(
+      { trace_id: 'trace-1', attributes: {} },
+      {
+        name: 'agentlens.maf.request_info',
+        attributes: {
+          'agentlens.maf.workflow_id': 'other-workflow',
+          'agentlens.maf.request_id': 'request-1',
+        },
+      },
+      workflowIds,
+    )).toBeUndefined();
+  });
+
   it('requires request and delivery correlation for a terminal MAF fact', () => {
     expect(mafOutcomeFact({ name: 'agentlens.maf.delivery_accepted', attributes: {
       'agentlens.maf.request_id': 'r', 'agentlens.maf.terminal_outcome': 'continued',

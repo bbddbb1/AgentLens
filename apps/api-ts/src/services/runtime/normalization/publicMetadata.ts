@@ -25,6 +25,16 @@ export function publicTelemetryName(
 
 /** Preserve existing non-MAF metadata while keeping MAF native identity private. */
 export function publicRuntimeIdentity(identity: NativeRuntimeIdentity | undefined): Record<string, unknown> {
-  if (!identity || identity.framework === 'ms_agent_framework') return {};
+  if (!identity) return {};
+  if (identity.framework === 'ms_agent_framework') {
+    return {
+      native_runtime_identity: {
+        framework: identity.framework,
+        ...(identity.workflow_id ? { workflow_id: identity.workflow_id } : {}),
+        ...(identity.executor_id ? { executor_id: identity.executor_id } : {}),
+        ...(identity.request_id ? { request_id: identity.request_id } : {}),
+      },
+    };
+  }
   return { native_runtime_identity: identity };
 }

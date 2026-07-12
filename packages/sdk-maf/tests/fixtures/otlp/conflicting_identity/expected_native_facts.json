@@ -14,7 +14,8 @@
       "agentlens.maf.request_id",
       "agentlens.maf.request_type",
       "agentlens.maf.response_type",
-      "agentlens.maf.safe_data_state"
+      "agentlens.maf.safe_data_state",
+      "agentlens.maf.workflow_id"
     ],
     "event_names": [
       "agentlens.maf.request_info",
@@ -32,6 +33,9 @@
     ]
   },
   "fixture": "conflicting_identity",
+  "fixture_modification": [
+    "added an explicit conflicting workflow identity to a real request enrichment"
+  ],
   "framework": "ms_agent_framework",
   "maf_core_version": "1.10.0",
   "primary_oracle": "captured_real_maf_telemetry"

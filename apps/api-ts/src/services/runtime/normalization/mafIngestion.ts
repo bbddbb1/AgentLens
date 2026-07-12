@@ -38,6 +38,14 @@ export function mafInteractionFact(
 ): MafInteractionFact | undefined {
   if (!isMafRequestEvent(event?.name)) return undefined;
   const traceWorkflowId = span?.trace_id ? workflowIds.get(String(span.trace_id)) : undefined;
+  const explicitWorkflowId = value(event?.attributes, 'agentlens.maf.workflow_id')
+    ?? value(event?.attributes, 'workflow.id')
+    ?? value(span?.attributes, 'agentlens.maf.workflow_id')
+    ?? value(span?.attributes, 'workflow.id');
+  // A request event must agree with its real workflow span. This protects the
+  // boundary from a mixed or rewritten native event without teaching Core any
+  // MAF event semantics beyond this private translation.
+  if (traceWorkflowId && explicitWorkflowId && traceWorkflowId !== explicitWorkflowId) return undefined;
   const attrs = {
     ...(span?.attributes ?? {}),
     ...(traceWorkflowId ? { 'workflow.id': traceWorkflowId } : {}),
@@ -57,7 +65,10 @@ export function mafInteractionFact(
     requestType: identity.request_type ?? 'request_info',
     supportedDecisionTypes: ['approve', 'reject', 'structured_response'],
     publicAttributes: {
+      'agentlens.interaction.framework': 'ms_agent_framework',
       'agentlens.interaction.request_id': requestId,
+      'agentlens.interaction.workflow_id': identity.workflow_id,
+      ...(identity.executor_id ? { 'agentlens.interaction.executor_id': identity.executor_id } : {}),
       ...(identity.request_type ? { 'agentlens.interaction.request_type': identity.request_type } : {}),
       ...(identity.response_type ? { 'agentlens.interaction.response_type': identity.response_type } : {}),
     },

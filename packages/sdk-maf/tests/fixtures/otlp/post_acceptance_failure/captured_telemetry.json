@@ -45,8 +45,7 @@
             "agentlens.maf.request_id": "agentlens-reference-review-request",
             "agentlens.maf.request_type": "ReferenceReviewRequest",
             "agentlens.maf.response_type": "ReferenceReviewResponse",
-            "agentlens.maf.safe_data_state": "bounded",
-            "agentlens.maf.workflow_id": "<conflicting-workflow-id>"
+            "agentlens.maf.safe_data_state": "bounded"
           },
           "name": "agentlens.maf.request_info",
           "timestamp": 0
@@ -83,6 +82,75 @@
       "start_time_unix_nano": 0,
       "status_code": "UNSET",
       "trace_id": "trace-2"
+    },
+    {
+      "attributes": {
+        "edge_group.delivered": true,
+        "edge_group.delivery_status": "delivered",
+        "edge_group.id": "InternalEdgeGroup/d99aad6a-5e45-4d41-b37a-2145c1abc046",
+        "edge_group.type": "InternalEdgeGroup",
+        "message.source_id": "internal:agentlens-reference-review-executor",
+        "message.target_id": "agentlens-reference-review-executor"
+      },
+      "end_time_unix_nano": 1,
+      "events": [],
+      "operation_name": "edge_group.process InternalEdgeGroup",
+      "parent_span_id": "span-5",
+      "span_id": "span-4",
+      "start_time_unix_nano": 0,
+      "status_code": "UNSET",
+      "trace_id": "trace-3"
+    },
+    {
+      "attributes": {
+        "executor.id": "agentlens-reference-review-executor",
+        "executor.type": "ReferenceReviewExecutor",
+        "message.payload_type": "WorkflowMessage",
+        "message.type": "MessageType.RESPONSE"
+      },
+      "end_time_unix_nano": 1,
+      "events": [
+        {
+          "attributes": {
+            "agentlens.maf.request_id": "agentlens-reference-review-request",
+            "agentlens.maf.response_type": "ReferenceReviewResponse",
+            "agentlens.maf.terminal_outcome": "failed"
+          },
+          "name": "agentlens.maf.response_accepted",
+          "timestamp": 0
+        }
+      ],
+      "operation_name": "executor.process agentlens-reference-review-executor",
+      "parent_span_id": "span-5",
+      "span_id": "span-6",
+      "start_time_unix_nano": 0,
+      "status_code": "UNSET",
+      "trace_id": "trace-3"
+    },
+    {
+      "attributes": {
+        "workflow.id": "<workflow-id>",
+        "workflow.name": "agentlens-maf-reference-review-workflow"
+      },
+      "end_time_unix_nano": 1,
+      "events": [
+        {
+          "attributes": {},
+          "name": "workflow.started",
+          "timestamp": 0
+        },
+        {
+          "attributes": {},
+          "name": "workflow.completed",
+          "timestamp": 0
+        }
+      ],
+      "operation_name": "workflow.run",
+      "parent_span_id": null,
+      "span_id": "span-5",
+      "start_time_unix_nano": 0,
+      "status_code": "UNSET",
+      "trace_id": "trace-3"
     }
   ]
 }

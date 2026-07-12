@@ -109,20 +109,20 @@ class ReferenceReviewResponse:
 
 
 class ReferenceReviewExecutor(Executor):
-    def __init__(self) -> None:
+    def __init__(self, request_id: str = "agentlens-reference-review-request") -> None:
         super().__init__(id="agentlens-reference-review-executor")
+        self.request_id = request_id
 
     @handler
     async def request_review(self, value: str, ctx: WorkflowContext[None, str]) -> None:
         request = ReferenceReviewRequest(subject=value)
-        request_id = "agentlens-reference-review-request"
         await ctx.request_info(
             request,
             ReferenceReviewResponse,
-            request_id=request_id,
+            request_id=self.request_id,
         )
         from .enrichment import emit_enrichment, request_attributes
-        emit_enrichment("agentlens.maf.request_info", request_attributes(request_id, request))
+        emit_enrichment("agentlens.maf.request_info", request_attributes(self.request_id, request))
 
     @response_handler
     async def handle_review_response(
@@ -142,7 +142,7 @@ class ReferenceReviewExecutor(Executor):
                 emit_enrichment(
                     "agentlens.maf.response_accepted",
                     terminal_attributes(
-                        "agentlens-reference-review-request",
+                        self.request_id,
                         response,
                         terminal_outcome="failed",
                     ),
@@ -151,14 +151,14 @@ class ReferenceReviewExecutor(Executor):
                 return
         emit_enrichment(
             "agentlens.maf.response_accepted",
-            terminal_attributes("agentlens-reference-review-request", response),
+            terminal_attributes(self.request_id, response),
         )
         await ctx.yield_output(f"{outcome}:{original_request.subject}:{response.note}")
 
 
-def create_reference_review_workflow():
+def create_reference_review_workflow(request_id: str = "agentlens-reference-review-request"):
     """Build the native request/response workflow with truthful alternative handling."""
-    executor = ReferenceReviewExecutor()
+    executor = ReferenceReviewExecutor(request_id)
     return WorkflowBuilder(
         start_executor=executor,
         name="agentlens-maf-reference-review-workflow",

@@ -7,7 +7,7 @@ def test_capability_matrix_assesses_every_reference_area() -> None:
     required = {
         "workflow", "executor", "agent", "tool_function", "lifecycle", "failure",
         "relationship", "request", "response_correlation", "native_identity", "model_token",
-        "source_traceability", "private_bridge_binding", "governance_binding_readiness",
+        "source_traceability", "private_bridge_binding", "governance_binding_readiness", "post_acceptance_failure",
     }
     rows = {row.key: row for row in CAPABILITY_MATRIX}
 
@@ -41,6 +41,7 @@ def test_capability_matrix_asserts_real_captured_facts() -> None:
     agent_tool = facts("agent_tool")
     request = facts("request")
     continuation = facts("continuation")
+    post_acceptance_failure = facts("post_acceptance_failure")
     failure = facts("explicit_failure")
 
     assert "workflow.build" in success["span_names"]
@@ -53,4 +54,12 @@ def test_capability_matrix_asserts_real_captured_facts() -> None:
     assert "agentlens.maf.request_info" in request["event_names"]
     assert {"agentlens.maf.request_id", "agentlens.maf.request_type", "agentlens.maf.response_type"} <= set(request["event_attribute_keys"])
     assert "agentlens.maf.response_accepted" in continuation["event_names"]
+    assert "agentlens.maf.response_accepted" in post_acceptance_failure["event_names"]
     assert "control_ref" not in json.dumps({row.fixture: facts(row.fixture) for row in CAPABILITY_MATRIX}).lower()
+
+
+def test_negative_fixture_conditions_are_explicitly_documented() -> None:
+    root = Path(__file__).parent / "fixtures" / "otlp"
+    for fixture in ("unknown_telemetry", "missing_identity", "conflicting_identity"):
+        facts = json.loads((root / fixture / "expected_native_facts.json").read_text(encoding="utf-8"))
+        assert facts["fixture_modification"]

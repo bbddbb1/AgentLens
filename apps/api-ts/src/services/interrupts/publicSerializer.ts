@@ -107,7 +107,9 @@ export function mapInterruptRowToRecord(
     decided_at: row.decided_at ? new Date(String(row.decided_at)).toISOString() : undefined,
     resumed_at: row.resumed_at ? new Date(String(row.resumed_at)).toISOString() : undefined,
     request_lifecycle: requestLifecycle as InterruptRecord['request_lifecycle'],
-    actionability: actionability as InterruptRecord['actionability'],
+    // Public controls must fail closed when this interaction's framework is
+    // disabled, even if a historical row still stores actionable.
+    actionability: (governanceEnabled ? actionability : 'unavailable') as InterruptRecord['actionability'],
     request_type: row.request_type ? String(row.request_type) : undefined,
     supported_decision_types: asStringArray(row.supported_decision_types) as InterruptRecord['supported_decision_types'],
     safe_prompt: row.safe_prompt ? String(row.safe_prompt) : undefined,

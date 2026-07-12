@@ -39,18 +39,7 @@
         "message.type": "MessageType.STANDARD"
       },
       "end_time_unix_nano": 1,
-      "events": [
-        {
-          "attributes": {
-            "agentlens.maf.request_id": "agentlens-reference-review-request",
-            "agentlens.maf.request_type": "ReferenceReviewRequest",
-            "agentlens.maf.response_type": "ReferenceReviewResponse",
-            "agentlens.maf.safe_data_state": "bounded"
-          },
-          "name": "agentlens.maf.request_info",
-          "timestamp": 0
-        }
-      ],
+      "events": [],
       "operation_name": "executor.process agentlens-reference-review-executor",
       "parent_span_id": "span-3",
       "span_id": "span-2",

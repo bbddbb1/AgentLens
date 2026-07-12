@@ -8,6 +8,7 @@ AgentLens API/PostgreSQL stack.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ FIXTURE_NAMES = (
     "missing_identity",
     "conflicting_identity",
     "unrelated_later_activity",
+    "post_acceptance_failure",
 )
 
 
@@ -91,9 +93,35 @@ async def _run_fixture_workflow(name: str) -> None:
         await workflow.run(responses={request.request_id: ReferenceReviewResponse(approved=True)})
     elif name == "alternative":
         await workflow.run(responses={request.request_id: ReferenceReviewResponse(approved=False)})
-    # The remaining negative-policy fixtures retain a real request capture;
-    # their absent/conflicting/unrelated condition is applied by focused tests,
-    # never represented as invented MAF telemetry.
+    elif name == "post_acceptance_failure":
+        await workflow.run(
+            responses={request.request_id: ReferenceReviewResponse(approved=True, post_acceptance_failure=True)}
+        )
+    elif name == "unrelated_later_activity":
+        # A second real MAF workflow run has no request/delivery correlation to
+        # the pending review request.
+        await create_reference_workflow().run("unrelated-later-activity")
+
+
+def _apply_documented_fixture_condition(name: str, spans: list[dict[str, object]]) -> tuple[list[dict[str, object]], list[str]]:
+    fixture = copy.deepcopy(spans)
+    if name == "unknown_telemetry":
+        for span in fixture:
+            span["events"] = [event for event in span["events"] if event["name"] != "agentlens.maf.request_info"]
+        return fixture, ["removed request_info enrichment from a real request capture to represent unclassified telemetry"]
+    if name == "missing_identity":
+        for span in fixture:
+            attributes = span["attributes"]
+            attributes.pop("workflow.id", None)
+            attributes.pop("agentlens.maf.workflow_id", None)
+        return fixture, ["removed workflow identity from a real request capture"]
+    if name == "conflicting_identity":
+        for span in fixture:
+            for event in span["events"]:
+                if event["name"] == "agentlens.maf.request_info":
+                    event["attributes"]["agentlens.maf.workflow_id"] = "<conflicting-workflow-id>"
+        return fixture, ["added an explicit conflicting workflow identity to a real request enrichment"]
+    return fixture, []
 
 
 def _capture_real_fixtures() -> dict[str, list[dict[str, object]]]:
@@ -136,7 +164,7 @@ def generate_all(root: Path) -> list[str]:
     for name in FIXTURE_NAMES:
         fixture_dir = root / name
         fixture_dir.mkdir(exist_ok=True)
-        spans = captured[name]
+        spans, modification = _apply_documented_fixture_condition(name, captured[name])
         (fixture_dir / "captured_telemetry.json").write_text(
             json.dumps({"spans": spans}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
@@ -147,6 +175,7 @@ def generate_all(root: Path) -> list[str]:
                     "framework": "ms_agent_framework",
                     "maf_core_version": MAF_CORE_VERSION,
                     "primary_oracle": "captured_real_maf_telemetry",
+                    "fixture_modification": modification,
                     "captured_facts": _captured_facts(spans),
                 },
                 indent=2,

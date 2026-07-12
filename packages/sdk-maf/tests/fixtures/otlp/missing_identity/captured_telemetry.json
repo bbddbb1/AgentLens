@@ -3,7 +3,6 @@
     {
       "attributes": {
         "workflow.definition": "<redacted-workflow-definition>",
-        "workflow.id": "<workflow-id>",
         "workflow_builder.name": "agentlens-maf-reference-review-workflow"
       },
       "end_time_unix_nano": 1,
@@ -60,7 +59,6 @@
     },
     {
       "attributes": {
-        "workflow.id": "<workflow-id>",
         "workflow.name": "agentlens-maf-reference-review-workflow"
       },
       "end_time_unix_nano": 1,

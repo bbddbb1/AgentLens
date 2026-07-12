@@ -128,7 +128,7 @@ describe('projectTraceSnapshot', () => {
     expect(transitionEdge!.target).toBe('span2');
   });
 
-  it('keeps MAF-normalized identity out of the public snapshot projection', () => {
+  it('projects bounded MAF identity into the public snapshot', () => {
     const snapshot = projectTraceSnapshot('m-maf', 'main', [{
       span_id: 'maf-executor',
       trace_id: 'maf-trace',
@@ -143,7 +143,12 @@ describe('projectTraceSnapshot', () => {
       },
     }]);
 
-    expect(snapshot.nodes[0]?.metadata?.native_runtime_identity).toBeUndefined();
+    expect(snapshot.nodes[0]?.metadata?.native_runtime_identity).toEqual({
+      framework: 'ms_agent_framework',
+      workflow_id: 'workflow-1',
+      executor_id: 'agentlens-reference-executor',
+      request_id: 'request-1',
+    });
   });
 
   it('filters out future spans when maxTimeNs is provided', () => {
@@ -679,7 +684,7 @@ describe('provenance assembly from verbatim attributes', () => {
 });
 
 describe('MAF public projection safety', () => {
-  it('omits native workflow definition, state, and identity from replay and graph output', () => {
+  it('omits MAF workflow definition, state, and control data while retaining bounded identity', () => {
     const spans = [{
       span_id: 'maf-span',
       trace_id: 'maf-trace',
@@ -707,8 +712,10 @@ describe('MAF public projection safety', () => {
     const replay = projectReplay('mission', 'main', spans);
     const graph = projectTraceSnapshot('mission', 'main', spans);
     const publicBlob = JSON.stringify({ replay, graph });
-    for (const privateValue of ['private-workflow-id', 'private-executor-id', 'private-state', 'private-control', 'workflow.definition']) {
+    for (const privateValue of ['private-state', 'private-control', 'workflow.definition']) {
       expect(publicBlob).not.toContain(privateValue);
     }
+    expect(publicBlob).toContain('private-workflow-id');
+    expect(publicBlob).toContain('private-executor-id');
   });
 });

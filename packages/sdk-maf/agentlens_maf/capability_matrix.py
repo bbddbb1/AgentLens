@@ -26,6 +26,7 @@ CAPABILITY_MATRIX: tuple[CapabilityRow, ...] = (
     CapabilityRow("relationship", "partial", "MAF workflow routing", "configured executor route", "No timing-derived edges.", "unrelated_later_activity"),
     CapabilityRow("request", "covered", "MAF request_info event", "request id/type/source executor", "One typed request.", "request"),
     CapabilityRow("response_correlation", "covered", "MAF responses API", "request id and response type", "Only native responses.", "continuation"),
+    CapabilityRow("post_acceptance_failure", "partial", "MAF response handler", "accepted response with failed terminal enrichment", "Reference catches the failure and emits enrichment; it is not a native executor failure.", "post_acceptance_failure"),
     CapabilityRow("native_identity", "covered", "MAF workflow and event metadata", "workflow/executor/request ids", "No LangGraph aliases.", "request"),
     CapabilityRow("model_token", "partial", "MAF Agent response", "deterministic model id", "No provider token use.", "agent_tool"),
     CapabilityRow("source_traceability", "covered", "native event/span source", "source category", "Fixtures add concrete references.", "request"),

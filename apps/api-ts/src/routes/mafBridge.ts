@@ -6,7 +6,7 @@ import { requireFrameworkGovernanceServiceAuth } from '../middleware/serviceAuth
 import { authenticateBinding, registerBridgeBinding, renewBridgeBinding } from '../services/interrupts/bridgeBindings.js';
 import { MAF_IDENTITY_POLICY } from '../services/interrupts/identityMatch.js';
 import { assertCurrentlyActionable, reconcileMissionBranchActionability } from '../services/interrupts/reconcileActionability.js';
-import { claimDelivery, postDeliveryReceipt } from '../services/interrupts/deliveryLifecycle.js';
+import { claimDelivery, isDeliveryReceiptAuthorized, postDeliveryReceipt } from '../services/interrupts/deliveryLifecycle.js';
 import { missionStore } from '../services/missionStore.js';
 
 export const mafBridgeRouter = Router();
@@ -102,6 +102,14 @@ mafBridgeRouter.post('/api/v1/missions/:missionId/branches/:branchId/maf/bridge/
     try {
       const binding = await authenticateBinding(client, { missionId: req.params.missionId, branchId: req.params.branchId, controlRef: parsed.data.control_ref, framework: 'ms_agent_framework' });
       if (!binding) return res.status(401).json({ detail: 'Unauthorized MAF binding' });
+      const authorized = await isDeliveryReceiptAuthorized(client, {
+        missionId: req.params.missionId,
+        branchId: req.params.branchId,
+        interruptId: parsed.data.interrupt_id,
+        deliveryId: parsed.data.delivery_id,
+        bindingId: binding.id,
+      });
+      if (!authorized) return res.status(409).json({ detail: 'MAF binding is not authorized to receipt this delivery' });
       const state = await postDeliveryReceipt(client, { missionId: req.params.missionId, branchId: req.params.branchId, interruptId: parsed.data.interrupt_id, deliveryId: parsed.data.delivery_id, receipt: parsed.data.receipt, safeErrorClass: parsed.data.safe_error_class });
       return res.json({ delivery_id: parsed.data.delivery_id, delivery_state: state });
     } finally { client.release(); }
