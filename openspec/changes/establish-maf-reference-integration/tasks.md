@@ -32,7 +32,7 @@
 - [x] 4.4 Parameterize actionability reconciliation only by the route-supplied constant framework availability and identity policy instead of hard-coded LangGraph/thread rules, retaining binding-only, observation-only, optional-identity, and explicit-conflict safety behavior.
 - [x] 4.5 Separate common service-token verification from independently disabled-by-default `LANGGRAPH_GOVERNANCE_ENABLED` and `MAF_GOVERNANCE_ENABLED` checks; fail MAF endpoints/actionability closed when enabled without configured authentication while leaving observability operational.
 - [x] 4.6 Add or refactor thin explicit LangGraph and MAF private bridge route modules to call the same binding, actionability, claim, receipt, idempotency, and outcome services using their direct constant policies, without adding a policy/route/adapter registry, strategy, factory, or discovery layer.
-- [ ] 4.7 Add migration and service tests proving existing LangGraph bindings still register/renew/claim/receipt correctly; missing/invalid MAF authentication and control reference without service auth fail closed; and correctly authenticated wrong-framework, wrong-mission, and wrong-branch requests always fail.
+- [x] 4.7 Add migration and service tests proving existing LangGraph bindings still register/renew/claim/receipt correctly; missing/invalid MAF authentication and control reference without service auth fail closed; and correctly authenticated wrong-framework, wrong-mission, and wrong-branch requests always fail.
 
 ## 5. Explicit MAF Interaction Observation
 
@@ -41,7 +41,7 @@
 - [x] 5.3 Derive the reference MAF identity policy from real 1.10.0 fixtures: require mission, branch, framework, workflow ID, and request ID; treat source executor ID as consistency-only unless fixtures prove native routing requires it; retain request/response type and trace/activity correlation as consistency fields.
 - [x] 5.4 Reconcile request observation and live MAF binding in either arrival order; allow missing optional identity, block explicit conflicts, and keep binding-only, idle-only, checkpoint-only, unsupported response, missing required identity, expired binding, flag-off, and auth-unavailable cases non-actionable.
 - [x] 5.5 Reuse the existing decision API, structured-input validation/bounds, actor/audit provenance, idempotency, one-decision rule, and delivery creation for actionable MAF requests without MAF-specific decision persistence.
-- [ ] 5.6 Add API/store tests for explicit request actionability, safe request serialization, unsupported response types, missing/conflicting MAF identity, mission/branch isolation, duplicate decisions, and absence-based non-inference.
+- [x] 5.6 Add API/store tests for explicit request actionability, safe request serialization, unsupported response types, missing/conflicting MAF identity, mission/branch isolation, duplicate decisions, and absence-based non-inference.
 
 ## 6. Thin MAF Governance Bridge
 
@@ -51,13 +51,13 @@
 - [x] 6.4 Mark delivery accepted only after explicit native response acceptance evidence, report pre-acceptance validation/application errors as delivery failures, and report no-longer-pending requests as stale.
 - [x] 6.5 Rely on Core's durable one-time claim as the cross-restart guarantee against reissuing a delivery; keep bridge delivery-ID tracking as an in-process duplicate-handling safeguard only, add no durable bridge journal, preserve idempotent receipts, and use `unknown` without automatic reissue when native application becomes uncertain.
 - [x] 6.6 Emit bounded explicit request/delivery correlation on native continuation, alternative completion, and failure telemetry without emitting the control reference, workflow object, queue, checkpoint state, secrets, or raw sensitive response.
-- [ ] 6.7 Add Python bridge tests for live binding, lease renewal/expiry, supported response mapping, stale request, invalid response type, in-process duplicate handling, uncertainty, accepted/failure receipts, and bridge restart after a durable Core claim proving the delivery is not reissued or applied again without a bridge journal.
+- [x] 6.7 Add Python bridge tests for live binding, lease renewal/expiry, supported response mapping, stale request, invalid response type, in-process duplicate handling, uncertainty, accepted/failure receipts, and bridge restart after a durable Core claim proving the delivery is not reissued or applied again without a bridge journal.
 
 ## 7. Explicitly Correlated MAF Outcome and Govern UI Compatibility
 
 - [x] 7.1 Extend MAF normalization/ingestion to recognize only explicitly request-and-delivery-correlated native response acceptance, successful continuation, alternative/rejected result, and executor/workflow failure as evidence-backed observations, without adding a separate AgentLens outcome authority.
 - [x] 7.2 Reuse shared monotonic delivery/outcome reconciliation so accepted-without-result remains unknown, runtime failure after acceptance preserves accepted delivery, and pre-acceptance bridge failure does not fabricate runtime failure.
-- [ ] 7.3 Add API/projection tests for successful response continuation, structured continuation, alternative path, accepted-without-outcome, runtime failure after acceptance, delivery failure before acceptance, duplicate/out-of-order evidence, and unrelated later workflow activity.
+- [x] 7.3 Add API/projection tests for successful response continuation, structured continuation, alternative path, accepted-without-outcome, runtime failure after acceptance, delivery failure before acceptance, duplicate/out-of-order evidence, and unrelated later workflow activity.
 - [x] 7.4 Verify the existing Govern client/store/components render MAF through the current interaction shape, show only declared controls, reuse structured-input validation, separate all state axes, and disable action after decision/resolution.
 - [x] 7.5 Add web tests proving the same components support LangGraph and MAF, bridge errors remain distinct from runtime errors, flag-off MAF requests are non-actionable, and no framework selector/dashboard is introduced.
 
@@ -65,10 +65,10 @@
 
 - [x] 8.1 Add a repeatable harness manifest that records MAF version and explicitly labels the real MAF runtime, OTel/OTLP path, Express HTTP, service authentication, private bridge HTTP, PostgreSQL database, and deterministic model double.
 - [x] 8.2 Run the full real path from MAF workflow request through OTLP ingestion, interaction observation, binding registration, decision API, one-time claim, native response, correlated telemetry/result, persisted state, and public replay/interaction response.
-- [ ] 8.3 Add end-to-end positive/structured continuation and truthful alternative path coverage, including successful Agent/Tool and executor lifecycle assertions using native facts as the primary oracle.
-- [ ] 8.4 Add end-to-end explicit failure, accepted-delivery-without-outcome, runtime-failure-after-acceptance, and pre-acceptance-delivery-failure cases.
-- [ ] 8.5 Add end-to-end duplicate decision/polling, bridge restart after durable claim, optional source-executor identity, missing/conflicting required identity, expired binding, independent feature flags, MAF-enabled-without-auth, missing/invalid auth, valid control reference without service auth, authenticated wrong framework/mission/branch, unrelated later activity, and cross-framework control rejection cases.
-- [ ] 8.6 Add public-output scans over interaction APIs, realtime payloads, replay, graph, explanation, audit output, and UI fixtures proving no raw/recoverable control reference, workflow/executor state, queue, checkpoint payload, secret, or response credential leaks.
+- [x] 8.3 Add end-to-end positive/structured continuation and truthful alternative path coverage, including successful Agent/Tool and executor lifecycle assertions using native facts as the primary oracle.
+- [x] 8.4 Add end-to-end explicit failure, accepted-delivery-without-outcome, runtime-failure-after-acceptance, and pre-acceptance-delivery-failure cases.
+- [x] 8.5 Add end-to-end duplicate decision/polling, bridge restart after durable claim, optional source-executor identity, missing/conflicting required identity, expired binding, independent feature flags, MAF-enabled-without-auth, missing/invalid auth, valid control reference without service auth, authenticated wrong framework/mission/branch, unrelated later activity, and cross-framework control rejection cases.
+- [x] 8.6 Add public-output scans over interaction APIs, realtime payloads, replay, graph, explanation, audit output, and UI fixtures proving no raw/recoverable control reference, workflow/executor state, queue, checkpoint payload, secret, or response credential leaks.
 
 ## 9. Boundary Assessment, Documentation, and Validation
 

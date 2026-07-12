@@ -32,6 +32,7 @@ import { MissionGraph } from '@/components/graph/MissionGraph';
 import { RightSidebar } from '@/components/layout/RightSidebar';
 import { MissionTimeline } from '@/components/timeline/MissionTimeline';
 import { RuntimeSummaryPanel } from '@/components/runtime/RuntimeSummaryPanel';
+import { CurrentEventAuthorityCard } from '@/components/runtime/CurrentEventAuthorityCard';
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { useLayoutStore } from '@/stores/layoutStore';
@@ -366,7 +367,7 @@ const statusConfig: Record<string, { icon: React.ReactNode; color: string; label
   paused: { icon: <PauseCircle size={12} />, color: '#fbbf24', label: 'Paused' },
 };
 
-function CurrentEventAuthorityCard({
+/*function CurrentEventAuthorityCard({
   currentSnapshot,
   runtimeSummary,
   runtimeExplanation = null,
@@ -431,7 +432,7 @@ function CurrentEventAuthorityCard({
       )}
     </div>
   );
-}
+}*/
 
 export default function MissionWorkspacePage() {
   const { setSnapshots, applySnapshot, snapshots, visibleEdgeCount, totalEdgeCount, zoomBand, setSelectedNodeId, selectedNodeId } = useGraphStore();

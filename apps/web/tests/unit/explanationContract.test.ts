@@ -12,7 +12,7 @@ import { MissionTimeline } from '../../src/components/timeline/MissionTimeline.j
 import { RuntimeSummaryPanel } from '../../src/components/runtime/RuntimeSummaryPanel.js';
 import { RopsInspector } from '../../src/components/rops/RopsInspector.js';
 import { BranchExplorer } from '../../src/components/replay/BranchExplorer.js';
-import { CurrentEventAuthorityCard } from '../../src/app/missions/[id]/page.js';
+import { CurrentEventAuthorityCard } from '../../src/components/runtime/CurrentEventAuthorityCard.js';
 import { useRuntimeExplanation } from '../../src/hooks/useRuntimeExplanation.js';
 import { useRuntimeSummary } from '../../src/hooks/useRuntimeSummary.js';
 import { useGraphStore } from '../../src/stores/graphStore.js';
