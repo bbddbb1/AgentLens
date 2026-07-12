@@ -297,6 +297,12 @@ export async function initializeDatabase(): Promise<void> {
       LIKE langgraph_bridge_bindings INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING STORAGE
     )
   `);
+  // PostgreSQL's LIKE does not retain the source primary key. Add it before
+  // the idempotent copy so existing LangGraph rows can migrate safely.
+  await pool.query(`
+    ALTER TABLE framework_bridge_bindings
+    ADD CONSTRAINT framework_bridge_bindings_pkey PRIMARY KEY (id)
+  `).catch(() => {});
   await pool.query(`
     INSERT INTO framework_bridge_bindings
     SELECT * FROM langgraph_bridge_bindings

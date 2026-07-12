@@ -21,7 +21,10 @@ const renewSchema = z.object({ control_ref: z.string().min(16), lease_seconds: z
 const claimSchema = z.object({ control_ref: z.string().min(16), interrupt_id: z.string().min(1), claim_seconds: z.number().int().positive().max(600).optional().default(60) });
 const receiptSchema = z.object({ control_ref: z.string().min(16), interrupt_id: z.string().min(1), delivery_id: z.string().uuid(), receipt: z.enum(['accepted', 'failed', 'stale', 'unknown']), safe_error_class: z.string().optional() });
 
-mafBridgeRouter.use((req, res, next) => requireFrameworkGovernanceServiceAuth('ms_agent_framework', req, res, next));
+mafBridgeRouter.use(
+  '/api/v1/missions/:missionId/branches/:branchId/maf/bridge',
+  (req, res, next) => requireFrameworkGovernanceServiceAuth('ms_agent_framework', req, res, next),
+);
 
 function unavailable(res: import('express').Response): boolean {
   if (isMafGovernanceControlAvailable()) return false;

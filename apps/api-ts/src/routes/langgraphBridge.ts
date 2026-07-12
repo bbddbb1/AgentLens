@@ -50,7 +50,10 @@ const receiptSchema = z.object({
   receipt_correlation: z.string().optional(),
 });
 
-langGraphBridgeRouter.use(requireGovernanceServiceAuth);
+langGraphBridgeRouter.use(
+  '/api/v1/missions/:missionId/branches/:branchId/langgraph/bridge',
+  requireGovernanceServiceAuth,
+);
 
 function governanceControlUnavailable(res: import('express').Response): boolean {
   if (isLangGraphGovernanceControlAvailable()) return false;

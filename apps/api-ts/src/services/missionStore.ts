@@ -43,8 +43,8 @@ function deterministicStringify(obj: any): string {
 import type { Mission, MissionAggregate, MissionAgent, SemanticSummaryResult } from '../types/mission.js';
 import { pool } from '../db/postgres.js';
 import type { PoolClient } from 'pg';
-import { isLangGraphGovernanceControlAvailable, isLangGraphGovernanceEnabled, isMafGovernanceControlAvailable } from '../config/features.js';
-import { MAF_IDENTITY_POLICY } from './interrupts/identityMatch.js';
+import { isLangGraphGovernanceControlAvailable, isLangGraphGovernanceEnabled, isMafGovernanceControlAvailable, isMafGovernanceEnabled } from '../config/features.js';
+import { LANGGRAPH_IDENTITY_POLICY, MAF_IDENTITY_POLICY } from './interrupts/identityMatch.js';
 import { mapInterruptRowToRecord, serializeInterruptPublic } from './interrupts/publicSerializer.js';
 import { validateStructuredDecisionValue } from './interrupts/structuredDecisionBounds.js';
 import { applyRuntimeOutcome, ensureDeliveryAttempt } from './interrupts/deliveryLifecycle.js';
@@ -535,6 +535,10 @@ class MissionStore {
           } catch {
             supportedDecisionTypes = supportedRaw.split(',').map((part) => part.trim()).filter(Boolean);
           }
+        }
+        if (isMaf && supportedDecisionTypes.length === 0) {
+          // The reference MAF request type maps only to these declared controls.
+          supportedDecisionTypes = ['approve', 'reject', 'structured_response'];
         }
         const requestLifecycle = 'pending';
         const initialActionability = isLangGraph
@@ -1610,13 +1614,18 @@ class MissionStore {
       }
 
       const existingMapped = this.mapInterruptRow(existing);
-      const isLangGraphFramework = String(existing.framework ?? '') === 'langgraph';
+      const framework = String(existing.framework ?? '');
+      const isLangGraphFramework = framework === 'langgraph';
+      const isMafFramework = framework === 'ms_agent_framework';
+      const isGovernanceFramework = isLangGraphFramework || isMafFramework;
       let liveActionability = String(existing.actionability ?? 'observed_only');
-      if (isLangGraphFramework) {
+      if (isGovernanceFramework) {
         const live = await assertCurrentlyActionable(client, {
           missionId,
           branchId,
           interruptId,
+          framework: isMafFramework ? 'ms_agent_framework' : 'langgraph',
+          identityPolicy: isMafFramework ? MAF_IDENTITY_POLICY : LANGGRAPH_IDENTITY_POLICY,
         });
         liveActionability = live.actionability;
         if (live.actionability === 'identity_conflict' || live.diagnostic === 'conflicting_native_identity') {
@@ -1624,12 +1633,12 @@ class MissionStore {
           throw new Error('Native identity is ambiguous or conflicting; decision rejected');
         }
       }
-      const isLangGraphGovernance =
-        isLangGraphGovernanceControlAvailable()
-        && isLangGraphFramework
+      const isGovernance =
+        (isLangGraphFramework ? isLangGraphGovernanceControlAvailable() : isMafGovernanceControlAvailable())
+        && isGovernanceFramework
         && liveActionability === 'actionable';
 
-      if (isLangGraphFramework && isLangGraphGovernanceEnabled() && !isLangGraphGovernance) {
+      if (isGovernanceFramework && (isLangGraphFramework ? isLangGraphGovernanceEnabled() : isMafGovernanceEnabled()) && !isGovernance) {
         // Governance path exists but is not currently actionable (expired binding, etc.)
         if (existing.decision_state !== 'recorded' && !existing.idempotency_key) {
           await client.query('ROLLBACK');
@@ -1656,7 +1665,7 @@ class MissionStore {
         }
       }
 
-      if (isLangGraphGovernance) {
+      if (isGovernance) {
         const supported = Array.isArray(existing.supported_decision_types)
           ? existing.supported_decision_types.map(String)
           : [];
@@ -1743,7 +1752,7 @@ class MissionStore {
         });
         await this.ensureBranch(client, missionId, branchId);
         await client.query('COMMIT');
-        // Do not auto-resume or imply runtime outcome for LangGraph governance path.
+        // Do not auto-resume or imply runtime outcome for a governance bridge path.
         return this.mapInterruptRow(row);
       }
 

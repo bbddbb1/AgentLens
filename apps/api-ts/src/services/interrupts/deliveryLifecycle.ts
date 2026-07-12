@@ -372,9 +372,9 @@ export async function applyRuntimeOutcome(
   await client.query(
     `
       UPDATE interrupts
-      SET runtime_outcome = $4,
+      SET runtime_outcome = $4::varchar,
           request_lifecycle = CASE
-            WHEN $4 IN ('resumed', 'continued_with_input', 'rejected_or_terminated', 'failed') THEN 'resolved'
+            WHEN $4::varchar IN ('resumed', 'continued_with_input', 'rejected_or_terminated', 'failed') THEN 'resolved'
             ELSE request_lifecycle
           END,
           updated_at = NOW()
