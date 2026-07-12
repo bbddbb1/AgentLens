@@ -15,6 +15,7 @@ import { normalizeSpansToFacts } from './normalization/index.js';
 import { originFrameworkFromAttrs } from './normalization/agentLensCompat.js';
 import { assembleModelProvenance } from './normalization/otelGenAi.js';
 import { hasLangGraphMarkers, langGraphActivityCorrelationId, langGraphRunId } from './normalization/langgraph.js';
+import { publicRuntimeIdentity, publicTelemetryAttributes, publicTelemetryName } from './normalization/publicMetadata.js';
 
 export type MaturityTier = 'L1' | 'L2' | 'L3';
 
@@ -414,7 +415,7 @@ export function projectTraceSnapshot(
   for (const span of visibleSpans) {
     const tier = classifySpan(span);
     const attrs = span.attributes ?? {};
-    const operationName = span.operation_name ?? span.name ?? 'span';
+    const operationName = publicTelemetryName(attrs, span.operation_name ?? span.name ?? 'span');
 
     // G7 & G8: Handoff & Review Edge projection from span.events (PR-3)
     if (Array.isArray(span.events)) {
@@ -449,7 +450,7 @@ export function projectTraceSnapshot(
               evidence_span_id: span.span_id,
               source_span_id: span.span_id,
               source_event_id: eventName,
-              metadata: { ...eventAttrs },
+              metadata: publicTelemetryAttributes(eventAttrs),
             });
           }
         }
@@ -479,7 +480,7 @@ export function projectTraceSnapshot(
           evidenceSpanId: span.span_id,
           evidence_span_id: span.span_id,
           source_span_id: span.span_id,
-          metadata: { ...attrs },
+          metadata: publicTelemetryAttributes(attrs),
         });
         continue; // Edge spans are not nodes
       }
@@ -569,10 +570,8 @@ export function projectTraceSnapshot(
         duration_ms: span.end_time_unix_nano ? (Number(span.end_time_unix_nano) - Number(span.start_time_unix_nano)) / 1e6 : undefined,
         error_count: span.status_code === 'ERROR' ? 1 : 0,
         metadata: {
-          ...attrs,
-          ...(normalizedActivity?.native_runtime_identity
-            ? { native_runtime_identity: normalizedActivity.native_runtime_identity }
-            : {}),
+          ...publicTelemetryAttributes(attrs),
+          ...publicRuntimeIdentity(normalizedActivity?.native_runtime_identity),
         },
         maturityTier: tier,
         maturity_tier: tier,
@@ -664,7 +663,7 @@ export function projectReplay(
     snap.sequence_num = idx;
     const currentSpan = sortedSpans.find((s) => Number(s.start_time_unix_nano) === ts);
     if (currentSpan) {
-      snap.event_description = `Span started: ${currentSpan.operation_name ?? currentSpan.name ?? 'span'}`;
+      snap.event_description = `Span started: ${publicTelemetryName(currentSpan.attributes, currentSpan.operation_name ?? currentSpan.name ?? 'span')}`;
       snap.source_event_id = currentSpan.span_id;
       snap.source_event_sequence_num = idx;
     }
@@ -694,13 +693,11 @@ export function projectReplay(
     const tier = classifySpan(span);
     const startIso = new Date(Number(span.start_time_unix_nano) / 1e6).toISOString();
     const attrs = span.attributes ?? {};
-    const operationName = span.operation_name ?? span.name ?? 'span';
+    const operationName = publicTelemetryName(attrs, span.operation_name ?? span.name ?? 'span');
     const agentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
     const eventBranchId = span.branch_id ?? branchId;
     const normalizedActivity = normalizedActivityBySpanId.get(span.span_id);
-    const nativeRuntimeMetadata = normalizedActivity?.native_runtime_identity
-      ? { native_runtime_identity: normalizedActivity.native_runtime_identity }
-      : {};
+    const nativeRuntimeMetadata = publicRuntimeIdentity(normalizedActivity?.native_runtime_identity);
 
     events.push({
       id: span.span_id,
@@ -715,7 +712,7 @@ export function projectReplay(
       trace_id: span.trace_id,
       parent_span_id: span.parent_span_id ?? undefined,
       payload: {
-        ...attrs,
+        ...publicTelemetryAttributes(attrs),
         operation_name: operationName,
         duration_ms: span.end_time_unix_nano ? (Number(span.end_time_unix_nano) - Number(span.start_time_unix_nano)) / 1e6 : undefined,
       },
@@ -744,10 +741,10 @@ export function projectReplay(
           : startIso;
 
         const eventAttrs = otelEvent.attributes ?? {};
-        const normalizedType = otelEvent.name;
+        const normalizedType = publicTelemetryName(attrs, otelEvent.name, eventAttrs);
         const mergedPayload = {
-          ...attrs,
-          ...eventAttrs,
+          ...publicTelemetryAttributes(attrs),
+          ...publicTelemetryAttributes(eventAttrs),
           operation_name: operationName,
           duration_ms: span.end_time_unix_nano
             ? (Number(span.end_time_unix_nano) - Number(span.start_time_unix_nano)) / 1e6
@@ -761,9 +758,7 @@ export function projectReplay(
           eventAttrs,
           currentEventIndex,
         );
-        const eventNativeRuntimeMetadata = eventActivity?.native_runtime_identity
-          ? { native_runtime_identity: eventActivity.native_runtime_identity }
-          : {};
+        const eventNativeRuntimeMetadata = publicRuntimeIdentity(eventActivity?.native_runtime_identity);
         events.push({
           id: `${span.span_id}-event-${eventIdx++}`,
           mission_id: missionId,
@@ -789,7 +784,7 @@ export function projectReplay(
           error: assembleErrorProvenance(mergedAttrs, span),
           policy: parseAttrJson(mergedAttrs['agentlens.policy'] ?? mergedAttrs['policy'] ?? mergedAttrs['policy_decision']) ?? undefined,
           source_span_id: span.span_id,
-          source_event_id: otelEvent.name,
+          source_event_id: normalizedType,
         } as any);
       }
     }
@@ -809,7 +804,7 @@ export function projectReplay(
         trace_id: span.trace_id,
         parent_span_id: span.parent_span_id ?? undefined,
         payload: {
-          ...attrs,
+          ...publicTelemetryAttributes(attrs),
           operation_name: operationName,
           status_code: span.status_code,
         },

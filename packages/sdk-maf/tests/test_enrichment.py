@@ -18,3 +18,10 @@ def test_terminal_enrichment_keeps_response_values_out_of_telemetry() -> None:
 
     assert attrs["agentlens.maf.terminal_outcome"] == "alternative"
     assert "secret" not in attrs.values()
+
+
+def test_terminal_enrichment_carries_only_the_delivery_correlation() -> None:
+    attrs = terminal_attributes("request-1", ReferenceReviewResponse(approved=True, note="secret", delivery_id="delivery-1"))
+
+    assert attrs["agentlens.maf.delivery_id"] == "delivery-1"
+    assert "secret" not in attrs.values()

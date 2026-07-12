@@ -1,13 +1,46 @@
 {
-  "facts": [
-    "workflow",
-    "executor",
-    "agent",
-    "tool",
-    "completed"
-  ],
+  "captured_facts": {
+    "attribute_keys": [
+      "agent_framework.function.invocation.duration",
+      "executor.id",
+      "executor.type",
+      "gen_ai.agent.id",
+      "gen_ai.agent.name",
+      "gen_ai.operation.name",
+      "gen_ai.provider.name",
+      "gen_ai.request.choice.count",
+      "gen_ai.response.id",
+      "gen_ai.tool.call.id",
+      "gen_ai.tool.definitions",
+      "gen_ai.tool.description",
+      "gen_ai.tool.name",
+      "gen_ai.tool.type",
+      "message.payload_type",
+      "message.type",
+      "workflow.definition",
+      "workflow.id",
+      "workflow.name",
+      "workflow_builder.name"
+    ],
+    "event_attribute_keys": [],
+    "event_names": [
+      "build.completed",
+      "build.started",
+      "build.validation_completed",
+      "workflow.completed",
+      "workflow.started"
+    ],
+    "span_count": 5,
+    "span_names": [
+      "execute_tool classify_reference_input",
+      "executor.process agentlens-reference-executor",
+      "invoke_agent AgentLens Reference Agent",
+      "workflow.build",
+      "workflow.run"
+    ]
+  },
   "fixture": "agent_tool",
   "framework": "ms_agent_framework",
   "maf_core_version": "1.10.0",
-  "primary_oracle": "native_facts"
+  "primary_oracle": "captured_real_maf_telemetry"
 }

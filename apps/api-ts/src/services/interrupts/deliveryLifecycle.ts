@@ -250,12 +250,12 @@ export async function postDeliveryReceipt(
   await client.query(
     `
       UPDATE interrupt_delivery_attempts
-      SET external_state = $2,
-          receipt_state = $2,
+      SET external_state = $2::varchar,
+          receipt_state = $2::varchar,
           safe_error_class = COALESCE($3, safe_error_class),
           receipt_correlation = COALESCE($4, receipt_correlation),
-          accepted_at = CASE WHEN $2 = 'accepted' THEN COALESCE(accepted_at, NOW()) ELSE accepted_at END,
-          failed_at = CASE WHEN $2 = 'failed' THEN COALESCE(failed_at, NOW()) ELSE failed_at END,
+          accepted_at = CASE WHEN $2::varchar = 'accepted' THEN COALESCE(accepted_at, NOW()) ELSE accepted_at END,
+          failed_at = CASE WHEN $2::varchar = 'failed' THEN COALESCE(failed_at, NOW()) ELSE failed_at END,
           updated_at = NOW()
       WHERE id = $1
     `,
@@ -265,9 +265,9 @@ export async function postDeliveryReceipt(
     `
       UPDATE interrupts
       SET delivery_state = CASE
-            WHEN delivery_state = 'accepted' AND $4 IN ('pending', 'failed', 'unknown', 'stale') THEN delivery_state
-            WHEN delivery_state = 'unknown' AND $4 = 'pending' THEN delivery_state
-            ELSE $4
+            WHEN delivery_state = 'accepted' AND $4::varchar IN ('pending', 'failed', 'unknown', 'stale') THEN delivery_state
+            WHEN delivery_state = 'unknown' AND $4::varchar = 'pending' THEN delivery_state
+            ELSE $4::varchar
           END,
           updated_at = NOW()
       WHERE mission_id = $1 AND branch_id = $2 AND interrupt_id = $3
@@ -321,6 +321,8 @@ export async function applyRuntimeOutcome(
     outcome: RuntimeOutcomeState;
     deliveryId?: string;
     correlated?: boolean;
+    /** Framework adapters can require a durable Core delivery match. */
+    requireDeliveryCorrelation?: boolean;
   },
 ): Promise<RuntimeOutcomeState> {
   if (input.correlated === false) {
@@ -330,6 +332,14 @@ export async function applyRuntimeOutcome(
         SELECT runtime_outcome FROM interrupts
         WHERE mission_id = $1 AND branch_id = $2 AND interrupt_id = $3
       `,
+      [input.missionId, input.branchId, input.interruptId],
+    );
+    return String(current.rows[0]?.runtime_outcome ?? 'unknown') as RuntimeOutcomeState;
+  }
+
+  if (input.requireDeliveryCorrelation && !input.deliveryId) {
+    const current = await client.query(
+      `SELECT runtime_outcome FROM interrupts WHERE mission_id = $1 AND branch_id = $2 AND interrupt_id = $3`,
       [input.missionId, input.branchId, input.interruptId],
     );
     return String(current.rows[0]?.runtime_outcome ?? 'unknown') as RuntimeOutcomeState;

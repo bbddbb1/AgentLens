@@ -43,11 +43,11 @@ function deterministicStringify(obj: any): string {
 import type { Mission, MissionAggregate, MissionAgent, SemanticSummaryResult } from '../types/mission.js';
 import { pool } from '../db/postgres.js';
 import type { PoolClient } from 'pg';
-import { isLangGraphGovernanceControlAvailable, isLangGraphGovernanceEnabled, isMafGovernanceControlAvailable, isMafGovernanceEnabled } from '../config/features.js';
-import { LANGGRAPH_IDENTITY_POLICY, MAF_IDENTITY_POLICY } from './interrupts/identityMatch.js';
+import { frameworkGovernanceFor } from './interrupts/frameworkGovernance.js';
 import { mapInterruptRowToRecord, serializeInterruptPublic } from './interrupts/publicSerializer.js';
 import { validateStructuredDecisionValue } from './interrupts/structuredDecisionBounds.js';
 import { applyRuntimeOutcome, ensureDeliveryAttempt } from './interrupts/deliveryLifecycle.js';
+import { mafInteractionFact, mafOutcomeFact, mafTraceWorkflowIds } from './runtime/normalization/mafIngestion.js';
 import {
   assertCurrentlyActionable,
   reconcileInterruptActionability,
@@ -426,25 +426,33 @@ class MissionStore {
 
   private async recordInterruptsFromSpans(client: PoolClient, missionId: string, spans: OtlpSpan[], branchId: string = ROOT_BRANCH_ID): Promise<boolean> {
     let interruptRequested = false;
+    // A framework may emit native identity and request evidence in separate
+    // OTLP batches. Re-evaluate the trace's persisted observation facts after
+    // each ingest, so normalization never depends on exporter batch shape.
+    const traceIds = [...new Set(spans.map((span) => span.trace_id).filter(Boolean))];
+    const traceRows = traceIds.length === 0
+      ? []
+      : (await client.query(
+          `SELECT * FROM spans WHERE mission_id = $1 AND branch_id = $2 AND trace_id = ANY($3)`,
+          [missionId, branchId, traceIds],
+        )).rows;
+    const traceSpans = traceRows.map((row) => this.mapSpanRow(row as Record<string, unknown>));
     // Propagate normalization identity conflicts into interrupt governance state.
-    const ambiguousInterruptIds = interruptIdsWithAmbiguousNativeIdentity(spans);
-    for (const span of spans) {
+    const ambiguousInterruptIds = interruptIdsWithAmbiguousNativeIdentity(traceSpans);
+    const mafWorkflowIds = mafTraceWorkflowIds(traceSpans);
+    for (const span of traceSpans) {
       for (const event of span.events ?? []) {
-        if (event.name === 'agentlens.maf.response_accepted' || event.name === 'agentlens.maf.delivery_accepted') {
-          const requestId = attributeValue(event.attributes, 'agentlens.maf.request_id');
-          const deliveryId = attributeValue(event.attributes, 'agentlens.maf.delivery_id');
-          const outcome = attributeValue(event.attributes, 'agentlens.maf.terminal_outcome');
-          // A recorded acceptance alone is delivery evidence, not a completed runtime outcome.
-          if (requestId && outcome) {
+        const mafOutcome = mafOutcomeFact(event);
+        if (mafOutcome) {
             await applyRuntimeOutcome(client, {
               missionId,
               branchId,
-              interruptId: requestId,
-              outcome: outcome === 'alternative' ? 'rejected_or_terminated' : 'continued_with_input',
-              deliveryId: deliveryId || undefined,
+              interruptId: mafOutcome.interruptId,
+              outcome: mafOutcome.outcome,
+              deliveryId: mafOutcome.deliveryId,
               correlated: true,
+              requireDeliveryCorrelation: true,
             });
-          }
           continue;
         }
         if (event.name === 'agent.interrupt.resumed' || event.name === AgentEvents.INTERRUPT_RESUMED) {
@@ -484,18 +492,19 @@ class MissionStore {
           });
           continue;
         }
-        if (event.name !== AgentEvents.INTERRUPT_REQUESTED && event.name !== 'agentlens.maf.request_info') continue;
+        const normalizedInteraction = mafInteractionFact(span, event, mafWorkflowIds);
+        if (event.name !== AgentEvents.INTERRUPT_REQUESTED && !normalizedInteraction) continue;
         interruptRequested = true;
         const attrs = { ...(span.attributes ?? {}), ...(event.attributes ?? {}) } as Record<string, unknown>;
-        const isMaf = event.name === 'agentlens.maf.request_info' || Object.keys(attrs).some((key) => key.startsWith('agentlens.maf.'));
         const interruptId =
           attributeValue(event.attributes, AgentAttributes.INTERRUPT_ID) ??
           attributeValue(span.attributes, AgentAttributes.INTERRUPT_ID) ??
           attributeValue(event.attributes, 'agentlens.langgraph.interrupt_request_id') ??
-          attributeValue(event.attributes, 'agentlens.maf.request_id') ??
+          normalizedInteraction?.interruptId ??
           `${span.span_id}:interrupt`;
         const resumeToken = attributeValue(event.attributes, AgentAttributes.RESUME_TOKEN);
         const isLangGraph = Object.keys(attrs).some((key) => key.startsWith('agentlens.langgraph.'));
+        const framework = isLangGraph ? 'langgraph' : normalizedInteraction?.framework;
         const nativeIdentity = isLangGraph
           ? {
               framework: 'langgraph',
@@ -510,22 +519,12 @@ class MissionStore {
               mission_id: missionId,
               branch_id: branchId,
             }
-          : isMaf
-            ? {
-                framework: 'ms_agent_framework',
-                workflow_id: attributeValue(attrs, 'agentlens.maf.workflow_id') ?? attributeValue(attrs, 'workflow.id'),
-                executor_id: attributeValue(attrs, 'agentlens.maf.executor_id') ?? attributeValue(attrs, 'executor.id'),
-                request_id: attributeValue(attrs, 'agentlens.maf.request_id') ?? interruptId,
-                request_type: attributeValue(attrs, 'agentlens.maf.request_type'),
-                response_type: attributeValue(attrs, 'agentlens.maf.response_type'),
-                activity_correlation_id: attributeValue(attrs, 'agentlens.maf.activity_correlation_id'),
-                mission_id: missionId,
-                branch_id: branchId,
-              }
+          : normalizedInteraction
+            ? { ...normalizedInteraction.nativeIdentity, mission_id: missionId, branch_id: branchId }
             : null;
         const safePrompt = attributeValue(attrs, 'agentlens.langgraph.interrupt_prompt')
           ?? attributeValue(attrs, AgentAttributes.INTERRUPT_REASON);
-        const requestType = attributeValue(attrs, 'agentlens.maf.request_type') ?? attributeValue(attrs, 'agentlens.langgraph.interrupt_request_type') ?? 'interrupt';
+        const requestType = normalizedInteraction?.requestType ?? attributeValue(attrs, 'agentlens.langgraph.interrupt_request_type') ?? 'interrupt';
         const supportedRaw = attributeValue(attrs, 'agentlens.langgraph.supported_decisions');
         let supportedDecisionTypes: string[] = [];
         if (supportedRaw) {
@@ -536,17 +535,13 @@ class MissionStore {
             supportedDecisionTypes = supportedRaw.split(',').map((part) => part.trim()).filter(Boolean);
           }
         }
-        if (isMaf && supportedDecisionTypes.length === 0) {
-          // The reference MAF request type maps only to these declared controls.
-          supportedDecisionTypes = ['approve', 'reject', 'structured_response'];
-        }
+        if (normalizedInteraction) supportedDecisionTypes = normalizedInteraction.supportedDecisionTypes;
         const requestLifecycle = 'pending';
-        const initialActionability = isLangGraph
-          ? (isLangGraphGovernanceControlAvailable() ? 'observed_only' : 'unavailable')
-          : isMaf ? (isMafGovernanceControlAvailable() ? 'observed_only' : 'unavailable') : 'observed_only';
+        const governance = frameworkGovernanceFor(framework);
+        const initialActionability = governance ? (governance.controlAvailable ? 'observed_only' : 'unavailable') : 'observed_only';
 
         // Scrub resume tokens from stored public-ish payload attributes.
-        const scrubbedAttrs = { ...(event.attributes ?? {}) } as Record<string, unknown>;
+        const scrubbedAttrs = normalizedInteraction ? normalizedInteraction.publicAttributes : { ...(event.attributes ?? {}) } as Record<string, unknown>;
         delete scrubbedAttrs[AgentAttributes.RESUME_TOKEN];
         delete scrubbedAttrs['gen_ai.agent.resume.token'];
 
@@ -610,7 +605,7 @@ class MissionStore {
             resumeToken ? hashToken(resumeToken) : null,
             JSON.stringify({ event: event.name, attributes: scrubbedAttrs }),
             attributeValue(event.attributes, AgentAttributes.TIMEOUT_AT) ?? null,
-            isLangGraph ? 'langgraph' : isMaf ? 'ms_agent_framework' : null,
+            framework ?? null,
             nativeIdentity ? JSON.stringify(nativeIdentity) : null,
             JSON.stringify([{ trace_id: span.trace_id, span_id: span.span_id, event_name: event.name }]),
             requestType,
@@ -622,14 +617,14 @@ class MissionStore {
           ],
         );
 
-        if (isLangGraph || isMaf) {
+        if (governance) {
           await reconcileInterruptActionability(client, {
             missionId,
             branchId,
             interruptId,
             identityAmbiguous: ambiguity.identityAmbiguous,
-            framework: isMaf ? 'ms_agent_framework' : 'langgraph',
-            identityPolicy: isMaf ? MAF_IDENTITY_POLICY : undefined,
+            framework: governance.framework,
+            identityPolicy: governance.identityPolicy,
           });
         }
       }
@@ -1565,13 +1560,28 @@ class MissionStore {
       whereClause += ` AND branch_id = $${params.length}`;
     }
 
-    // Re-evaluate live binding liveness before public reads for LangGraph rows.
-    if (branchId && isLangGraphGovernanceControlAvailable()) {
+    // Re-evaluate only the governance frameworks actually observed in this
+    // branch; feature availability remains independent per framework.
+    if (branchId) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         const { reconcileMissionBranchActionability } = await import('./interrupts/reconcileActionability.js');
-        await reconcileMissionBranchActionability(client, missionId, branchId);
+        const observed = await client.query(
+          `SELECT DISTINCT framework FROM interrupts WHERE mission_id = $1 AND branch_id = $2`,
+          [missionId, branchId],
+        );
+        for (const row of observed.rows) {
+          const governance = frameworkGovernanceFor(row.framework);
+          if (!governance?.controlAvailable) continue;
+          await reconcileMissionBranchActionability(
+            client,
+            missionId,
+            branchId,
+            governance.framework,
+            governance.identityPolicy,
+          );
+        }
         await client.query('COMMIT');
       } catch {
         await client.query('ROLLBACK').catch(() => {});
@@ -1615,17 +1625,15 @@ class MissionStore {
 
       const existingMapped = this.mapInterruptRow(existing);
       const framework = String(existing.framework ?? '');
-      const isLangGraphFramework = framework === 'langgraph';
-      const isMafFramework = framework === 'ms_agent_framework';
-      const isGovernanceFramework = isLangGraphFramework || isMafFramework;
+      const governance = frameworkGovernanceFor(framework);
       let liveActionability = String(existing.actionability ?? 'observed_only');
-      if (isGovernanceFramework) {
+      if (governance) {
         const live = await assertCurrentlyActionable(client, {
           missionId,
           branchId,
           interruptId,
-          framework: isMafFramework ? 'ms_agent_framework' : 'langgraph',
-          identityPolicy: isMafFramework ? MAF_IDENTITY_POLICY : LANGGRAPH_IDENTITY_POLICY,
+          framework: governance.framework,
+          identityPolicy: governance.identityPolicy,
         });
         liveActionability = live.actionability;
         if (live.actionability === 'identity_conflict' || live.diagnostic === 'conflicting_native_identity') {
@@ -1634,11 +1642,10 @@ class MissionStore {
         }
       }
       const isGovernance =
-        (isLangGraphFramework ? isLangGraphGovernanceControlAvailable() : isMafGovernanceControlAvailable())
-        && isGovernanceFramework
+        Boolean(governance?.controlAvailable)
         && liveActionability === 'actionable';
 
-      if (isGovernanceFramework && (isLangGraphFramework ? isLangGraphGovernanceEnabled() : isMafGovernanceEnabled()) && !isGovernance) {
+      if (governance?.enabled && !isGovernance) {
         // Governance path exists but is not currently actionable (expired binding, etc.)
         if (existing.decision_state !== 'recorded' && !existing.idempotency_key) {
           await client.query('ROLLBACK');

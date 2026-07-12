@@ -240,6 +240,7 @@ export async function initializeDatabase(): Promise<void> {
   for (const statement of [
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS request_lifecycle VARCHAR(50) NOT NULL DEFAULT 'pending'`,
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS actionability VARCHAR(50) NOT NULL DEFAULT 'observed_only'`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS authorized_binding_id UUID NULL`,
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS request_type VARCHAR(100)`,
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS supported_decision_types JSONB NOT NULL DEFAULT '[]'::jsonb`,
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS safe_prompt TEXT`,

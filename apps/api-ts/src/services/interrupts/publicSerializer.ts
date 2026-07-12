@@ -1,5 +1,5 @@
 import type { InterruptRecord } from '@agentlens/protocol';
-import { isLangGraphGovernanceControlAvailable } from '../../config/features.js';
+import { isLangGraphGovernanceControlAvailable, isMafGovernanceControlAvailable } from '../../config/features.js';
 
 const SENSITIVE_PAYLOAD_KEYS = new Set([
   'resume_token',
@@ -10,17 +10,36 @@ const SENSITIVE_PAYLOAD_KEYS = new Set([
   'claimed_at',
   'claiming_binding_id',
   'claim_deadline',
+  'authorized_binding_id',
   'receipt_state',
   'control_ref_hash',
+  'workflow.definition',
+  'workflow_definition',
+  'workflow_state',
+  'workflow_object',
+  'executor_state',
+  'checkpoint',
+  'queue',
+]);
+
+const PUBLIC_ATTRIBUTE_ALLOWLIST = new Set([
+  'agentlens.maf.request_id',
+  'agentlens.maf.request_type',
+  'agentlens.maf.response_type',
+  'agentlens.maf.safe_data_state',
+  'agentlens.maf.terminal_outcome',
+  'agentlens.maf.delivery_id',
 ]);
 
 function scrubRecord(value: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!value || typeof value !== 'object') return {};
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
+    const lowered = key.toLowerCase();
     if (SENSITIVE_PAYLOAD_KEYS.has(key)) continue;
-    if (key.toLowerCase().includes('token') || key.toLowerCase().includes('secret')) continue;
-    if (key.toLowerCase().includes('control_ref')) continue;
+    if (lowered.includes('token') || lowered.includes('secret')) continue;
+    if (lowered.includes('control_ref') || lowered.includes('workflow.definition') || lowered.includes('workflow_state') || lowered.includes('checkpoint') || lowered.includes('queue')) continue;
+    if (key.startsWith('agentlens.maf.') && !PUBLIC_ATTRIBUTE_ALLOWLIST.has(key)) continue;
     out[key] = entry;
   }
   // Nested span attribute bags often carry resume tokens.
@@ -43,7 +62,14 @@ export function mapInterruptRowToRecord(
   row: Record<string, unknown>,
   options?: { governanceEnabled?: boolean },
 ): InterruptRecord & { branch_id?: string } {
-  const governanceEnabled = options?.governanceEnabled ?? isLangGraphGovernanceControlAvailable();
+  const framework = row.framework ? String(row.framework) : undefined;
+  const governanceEnabled = options?.governanceEnabled ?? (
+    framework === 'ms_agent_framework'
+      ? isMafGovernanceControlAvailable()
+      : framework === 'langgraph'
+        ? isLangGraphGovernanceControlAvailable()
+        : false
+  );
   const decisionState =
     (row.decision_state ? String(row.decision_state) : undefined)
     ?? (row.decision || row.decision_id ? 'recorded' : 'none');
@@ -94,7 +120,7 @@ export function mapInterruptRowToRecord(
     delivery_state: deliveryState as InterruptRecord['delivery_state'],
     delivery_id: row.delivery_id ? String(row.delivery_id) : undefined,
     runtime_outcome: runtimeOutcome as InterruptRecord['runtime_outcome'],
-    framework: row.framework ? String(row.framework) : undefined,
+    framework,
     governance_available: governanceEnabled,
   };
 

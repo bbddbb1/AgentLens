@@ -1,10 +1,47 @@
 {
-  "facts": [
-    "request_response_correlation",
-    "continuation"
-  ],
+  "captured_facts": {
+    "attribute_keys": [
+      "edge_group.delivered",
+      "edge_group.delivery_status",
+      "edge_group.id",
+      "edge_group.type",
+      "executor.id",
+      "executor.type",
+      "message.payload_type",
+      "message.source_id",
+      "message.target_id",
+      "message.type",
+      "workflow.definition",
+      "workflow.id",
+      "workflow.name",
+      "workflow_builder.name"
+    ],
+    "event_attribute_keys": [
+      "agentlens.maf.request_id",
+      "agentlens.maf.request_type",
+      "agentlens.maf.response_type",
+      "agentlens.maf.safe_data_state",
+      "agentlens.maf.terminal_outcome"
+    ],
+    "event_names": [
+      "agentlens.maf.request_info",
+      "agentlens.maf.response_accepted",
+      "build.completed",
+      "build.started",
+      "build.validation_completed",
+      "workflow.completed",
+      "workflow.started"
+    ],
+    "span_count": 6,
+    "span_names": [
+      "edge_group.process InternalEdgeGroup",
+      "executor.process agentlens-reference-review-executor",
+      "workflow.build",
+      "workflow.run"
+    ]
+  },
   "fixture": "continuation",
   "framework": "ms_agent_framework",
   "maf_core_version": "1.10.0",
-  "primary_oracle": "native_facts"
+  "primary_oracle": "captured_real_maf_telemetry"
 }

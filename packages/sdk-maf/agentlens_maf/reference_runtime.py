@@ -103,6 +103,9 @@ class ReferenceReviewRequest:
 class ReferenceReviewResponse:
     approved: bool
     note: str = ""
+    # Private bridge-to-native correlation. It is never rendered as response content.
+    delivery_id: str = ""
+    post_acceptance_failure: bool = False
 
 
 class ReferenceReviewExecutor(Executor):
@@ -130,6 +133,22 @@ class ReferenceReviewExecutor(Executor):
     ) -> None:
         outcome = "continued" if response.approved else "alternative"
         from .enrichment import emit_enrichment, terminal_attributes
+        if response.post_acceptance_failure:
+            try:
+                # Exercise a native execution failure after MAF accepts the
+                # typed response, then report the correlated runtime result.
+                raise RuntimeError("reference post-acceptance processing failed")
+            except RuntimeError:
+                emit_enrichment(
+                    "agentlens.maf.response_accepted",
+                    terminal_attributes(
+                        "agentlens-reference-review-request",
+                        response,
+                        terminal_outcome="failed",
+                    ),
+                )
+                await ctx.yield_output(f"failed:{original_request.subject}")
+                return
         emit_enrichment(
             "agentlens.maf.response_accepted",
             terminal_attributes("agentlens-reference-review-request", response),

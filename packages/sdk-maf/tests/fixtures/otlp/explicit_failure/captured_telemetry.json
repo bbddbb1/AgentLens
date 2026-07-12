@@ -1,0 +1,111 @@
+{
+  "spans": [
+    {
+      "attributes": {
+        "workflow.definition": "<redacted-workflow-definition>",
+        "workflow.id": "<workflow-id>",
+        "workflow_builder.name": "agentlens-maf-reference-workflow"
+      },
+      "end_time_unix_nano": 1,
+      "events": [
+        {
+          "attributes": {},
+          "name": "build.started",
+          "timestamp": 0
+        },
+        {
+          "attributes": {},
+          "name": "build.validation_completed",
+          "timestamp": 0
+        },
+        {
+          "attributes": {},
+          "name": "build.completed",
+          "timestamp": 0
+        }
+      ],
+      "operation_name": "workflow.build",
+      "parent_span_id": null,
+      "span_id": "span-1",
+      "start_time_unix_nano": 0,
+      "status_code": "UNSET",
+      "trace_id": "trace-1"
+    },
+    {
+      "attributes": {
+        "executor.id": "agentlens-reference-executor",
+        "executor.type": "ReferenceExecutionExecutor",
+        "message.payload_type": "str",
+        "message.type": "MessageType.STANDARD"
+      },
+      "end_time_unix_nano": 1,
+      "events": [
+        {
+          "attributes": {
+            "exception.escaped": "False",
+            "exception.message": "reference executor failure",
+            "exception.stacktrace": "Traceback (most recent call last):\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\opentelemetry\\trace\\__init__.py\", line 619, in use_span\n    yield span\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\opentelemetry\\sdk\\trace\\__init__.py\", line 1178, in start_as_current_span\n    yield span\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\agent_framework\\_workflows\\_executor.py\", line 279, in execute\n    await handler(message, context)\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\agent_framework\\_workflows\\_executor.py\", line 664, in wrapper\n    return await func(self, message, ctx)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\code\\AgentLens\\packages\\sdk-maf\\agentlens_maf\\reference_runtime.py\", line 76, in process\n    raise RuntimeError(\"reference executor failure\")\nRuntimeError: reference executor failure\n",
+            "exception.type": "RuntimeError"
+          },
+          "name": "exception",
+          "timestamp": 0
+        }
+      ],
+      "operation_name": "executor.process agentlens-reference-executor",
+      "parent_span_id": "span-3",
+      "span_id": "span-2",
+      "start_time_unix_nano": 0,
+      "status_code": "ERROR",
+      "trace_id": "trace-2"
+    },
+    {
+      "attributes": {
+        "error.type": "RuntimeError",
+        "workflow.id": "<workflow-id>",
+        "workflow.name": "agentlens-maf-reference-workflow"
+      },
+      "end_time_unix_nano": 1,
+      "events": [
+        {
+          "attributes": {},
+          "name": "workflow.started",
+          "timestamp": 0
+        },
+        {
+          "attributes": {
+            "error.message": "reference executor failure",
+            "error.type": "RuntimeError"
+          },
+          "name": "workflow.error",
+          "timestamp": 0
+        },
+        {
+          "attributes": {
+            "exception.escaped": "False",
+            "exception.message": "reference executor failure",
+            "exception.stacktrace": "Traceback (most recent call last):\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\agent_framework\\_workflows\\_workflow.py\", line 572, in _run_workflow_with_tracing\n    await initial_executor_fn()\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\agent_framework\\_workflows\\_workflow.py\", line 659, in _execute_with_message_or_checkpoint\n    await executor.execute(\n    ...<6 lines>...\n    )\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\agent_framework\\_workflows\\_executor.py\", line 279, in execute\n    await handler(message, context)\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\agent_framework\\_workflows\\_executor.py\", line 664, in wrapper\n    return await func(self, message, ctx)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\code\\AgentLens\\packages\\sdk-maf\\agentlens_maf\\reference_runtime.py\", line 76, in process\n    raise RuntimeError(\"reference executor failure\")\nRuntimeError: reference executor failure\n",
+            "exception.type": "RuntimeError"
+          },
+          "name": "exception",
+          "timestamp": 0
+        },
+        {
+          "attributes": {
+            "exception.escaped": "False",
+            "exception.message": "reference executor failure",
+            "exception.stacktrace": "Traceback (most recent call last):\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\opentelemetry\\trace\\__init__.py\", line 619, in use_span\n    yield span\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\opentelemetry\\sdk\\trace\\__init__.py\", line 1178, in start_as_current_span\n    yield span\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\agent_framework\\_workflows\\_workflow.py\", line 572, in _run_workflow_with_tracing\n    await initial_executor_fn()\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\agent_framework\\_workflows\\_workflow.py\", line 659, in _execute_with_message_or_checkpoint\n    await executor.execute(\n    ...<6 lines>...\n    )\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\agent_framework\\_workflows\\_executor.py\", line 279, in execute\n    await handler(message, context)\n  File \"D:\\code\\AgentLens\\.venv\\Lib\\site-packages\\agent_framework\\_workflows\\_executor.py\", line 664, in wrapper\n    return await func(self, message, ctx)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\code\\AgentLens\\packages\\sdk-maf\\agentlens_maf\\reference_runtime.py\", line 76, in process\n    raise RuntimeError(\"reference executor failure\")\nRuntimeError: reference executor failure\n",
+            "exception.type": "RuntimeError"
+          },
+          "name": "exception",
+          "timestamp": 0
+        }
+      ],
+      "operation_name": "workflow.run",
+      "parent_span_id": null,
+      "span_id": "span-3",
+      "start_time_unix_nano": 0,
+      "status_code": "ERROR",
+      "trace_id": "trace-2"
+    }
+  ]
+}

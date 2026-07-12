@@ -128,7 +128,7 @@ describe('projectTraceSnapshot', () => {
     expect(transitionEdge!.target).toBe('span2');
   });
 
-  it('routes MAF-normalized identity through the existing snapshot projection', () => {
+  it('keeps MAF-normalized identity out of the public snapshot projection', () => {
     const snapshot = projectTraceSnapshot('m-maf', 'main', [{
       span_id: 'maf-executor',
       trace_id: 'maf-trace',
@@ -143,11 +143,7 @@ describe('projectTraceSnapshot', () => {
       },
     }]);
 
-    expect(snapshot.nodes[0]?.metadata?.native_runtime_identity).toMatchObject({
-      framework: 'ms_agent_framework',
-      workflow_id: 'workflow-1',
-      request_id: 'request-1',
-    });
+    expect(snapshot.nodes[0]?.metadata?.native_runtime_identity).toBeUndefined();
   });
 
   it('filters out future spans when maxTimeNs is provided', () => {
@@ -679,5 +675,40 @@ describe('provenance assembly from verbatim attributes', () => {
     const node = snapshot.nodes.find(n => n.id === 'tool-1');
     expect(node).toBeDefined();
     expect(node!.error_count).toBe(1);
+  });
+});
+
+describe('MAF public projection safety', () => {
+  it('omits native workflow definition, state, and identity from replay and graph output', () => {
+    const spans = [{
+      span_id: 'maf-span',
+      trace_id: 'maf-trace',
+      parent_span_id: null,
+      operation_name: 'executor.process',
+      start_time_unix_nano: '1000000',
+      end_time_unix_nano: '2000000',
+      status_code: 'OK',
+      attributes: {
+        'workflow.id': 'private-workflow-id',
+        'workflow.definition': '{"private":"definition"}',
+        'executor.id': 'private-executor-id',
+        'agentlens.maf.workflow_id': 'private-workflow-id',
+      },
+      events: [{
+        name: 'agentlens.maf.request_info',
+        attributes: {
+          'agentlens.maf.request_id': 'request-1',
+          'agentlens.maf.workflow_state': 'private-state',
+          'agentlens.maf.control_ref': 'private-control',
+        },
+      }],
+    }];
+
+    const replay = projectReplay('mission', 'main', spans);
+    const graph = projectTraceSnapshot('mission', 'main', spans);
+    const publicBlob = JSON.stringify({ replay, graph });
+    for (const privateValue of ['private-workflow-id', 'private-executor-id', 'private-state', 'private-control', 'workflow.definition']) {
+      expect(publicBlob).not.toContain(privateValue);
+    }
   });
 });

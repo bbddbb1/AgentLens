@@ -1,4 +1,5 @@
 {
+  "capture_file": "captured_telemetry.json",
   "fixture_generator": "packages/sdk-maf/tests/generate_fixtures.py",
   "fixtures": [
     "success",
@@ -13,5 +14,6 @@
     "unrelated_later_activity"
   ],
   "maf_core_version": "1.10.0",
-  "primary_oracle": "native_facts"
+  "primary_oracle": "captured_real_maf_telemetry",
+  "remaining_test_double": "DeterministicModelClient only; MAF workflow, agent, tool, and telemetry are real."
 }

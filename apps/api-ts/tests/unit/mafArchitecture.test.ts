@@ -36,4 +36,15 @@ describe('MAF normalization architecture', () => {
     expect(langGraphBridge).not.toContain('MafGovernanceBridge');
     expect(langGraphBridge).not.toContain('ms_agent_framework');
   });
+
+  it('keeps MAF event and identity parsing out of generic mission storage', () => {
+    const missionStore = readFileSync(resolve(root, 'src/services/missionStore.ts'), 'utf8');
+    expect(missionStore).not.toContain('agentlens.maf.');
+    expect(missionStore).not.toContain("'workflow.id'");
+    expect(missionStore).not.toContain("'executor.id'");
+    expect(missionStore).not.toContain('MAF_IDENTITY_POLICY');
+    expect(missionStore).not.toContain('isMafGovernance');
+    expect(missionStore).toContain('mafInteractionFact');
+    expect(missionStore).toContain('mafOutcomeFact');
+  });
 });

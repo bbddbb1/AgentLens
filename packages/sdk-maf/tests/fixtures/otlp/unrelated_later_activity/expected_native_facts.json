@@ -1,10 +1,38 @@
 {
-  "facts": [
-    "unrelated_activity",
-    "no_outcome_inference"
-  ],
+  "captured_facts": {
+    "attribute_keys": [
+      "executor.id",
+      "executor.type",
+      "message.payload_type",
+      "message.type",
+      "workflow.definition",
+      "workflow.id",
+      "workflow.name",
+      "workflow_builder.name"
+    ],
+    "event_attribute_keys": [
+      "agentlens.maf.request_id",
+      "agentlens.maf.request_type",
+      "agentlens.maf.response_type",
+      "agentlens.maf.safe_data_state"
+    ],
+    "event_names": [
+      "agentlens.maf.request_info",
+      "build.completed",
+      "build.started",
+      "build.validation_completed",
+      "workflow.completed",
+      "workflow.started"
+    ],
+    "span_count": 3,
+    "span_names": [
+      "executor.process agentlens-reference-review-executor",
+      "workflow.build",
+      "workflow.run"
+    ]
+  },
   "fixture": "unrelated_later_activity",
   "framework": "ms_agent_framework",
   "maf_core_version": "1.10.0",
-  "primary_oracle": "native_facts"
+  "primary_oracle": "captured_real_maf_telemetry"
 }

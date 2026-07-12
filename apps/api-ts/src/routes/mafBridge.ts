@@ -82,6 +82,10 @@ mafBridgeRouter.post('/api/v1/missions/:missionId/branches/:branchId/maf/bridge/
       if (!binding) { await client.query('ROLLBACK'); return res.status(401).json({ detail: 'Unauthorized MAF binding' }); }
       const actionable = await assertCurrentlyActionable(client, { missionId: req.params.missionId, branchId: req.params.branchId, interruptId: parsed.data.interrupt_id, framework: 'ms_agent_framework', identityPolicy: MAF_IDENTITY_POLICY });
       if (actionable.actionability !== 'actionable') { await client.query('COMMIT'); return res.status(409).json({ actionability: actionable.actionability, reason: actionable.reason }); }
+      if (!actionable.binding || actionable.binding.id !== binding.id) {
+        await client.query('COMMIT');
+        return res.status(409).json({ actionability: 'observed_only', reason: 'authenticated_binding_does_not_match_request' });
+      }
       const claim = await claimDelivery(client, { missionId: req.params.missionId, branchId: req.params.branchId, interruptId: parsed.data.interrupt_id, bindingId: binding.id, claimSeconds: parsed.data.claim_seconds });
       await client.query('COMMIT');
       return res.json({ claimed: claim.claimed, delivery_id: claim.deliveryId, delivery_state: claim.externalState, decision_id: claim.decisionId, decision_type: claim.decisionType, value: claim.claimed ? claim.value : undefined });

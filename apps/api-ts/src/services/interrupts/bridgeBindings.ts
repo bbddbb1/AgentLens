@@ -56,20 +56,28 @@ export async function registerBridgeBinding(
     ?? input.nativeIdentity.interrupt_request_id
     ?? input.interruptId;
 
-  // Supersede prior active bindings for the same scope.
+  // Keep an observed request's selected binding alive. Later registrations may
+  // replace only unselected bindings, never its claim authority.
   await client.query(
     `
-      UPDATE framework_bridge_bindings
+      UPDATE framework_bridge_bindings AS previous
       SET lifecycle_state = 'revoked',
           revoked_at = NOW(),
           updated_at = NOW()
-      WHERE mission_id = $1
-        AND branch_id = $2
-        AND framework = $5
-        AND lifecycle_state = 'active'
+      WHERE previous.mission_id = $1
+        AND previous.branch_id = $2
+        AND previous.framework = $5
+        AND previous.lifecycle_state = 'active'
         AND (
-          ($3::text IS NOT NULL AND interaction_request_id = $3)
-          OR ($4::text IS NOT NULL AND interrupt_id = $4)
+          ($3::text IS NOT NULL AND previous.interaction_request_id = $3)
+          OR ($4::text IS NOT NULL AND previous.interrupt_id = $4)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM interrupts AS observed
+          WHERE observed.mission_id = previous.mission_id
+            AND observed.branch_id = previous.branch_id
+            AND observed.authorized_binding_id = previous.id
         )
     `,
     [input.missionId, input.branchId, interactionRequestId ?? null, input.interruptId ?? null, framework],

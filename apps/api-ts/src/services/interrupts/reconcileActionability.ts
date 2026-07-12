@@ -45,6 +45,7 @@ export interface InterruptGovernanceRow {
   actionability?: string | null;
   decision_state?: string | null;
   identity_ambiguous?: boolean | null;
+  authorized_binding_id?: string | null;
   source_refs?: unknown;
 }
 
@@ -193,7 +194,7 @@ export async function reconcileInterruptActionability(
   const interruptResult = await client.query(
     `
       SELECT interrupt_id, mission_id, branch_id, framework, native_identity,
-             actionability, decision_state, identity_ambiguous
+             actionability, decision_state, identity_ambiguous, authorized_binding_id
       FROM interrupts
       WHERE mission_id = $1 AND branch_id = $2 AND interrupt_id = $3
       LIMIT 1
@@ -227,9 +228,15 @@ export async function reconcileInterruptActionability(
     identityPolicy: policy,
   });
 
+  const bindings = bindingsResult.rows.map((row) => mapBindingRow(row as Record<string, unknown>));
   if (interruptRow && controlAvailable && !evaluation.diagnostic?.includes('ambiguous')) {
-    for (const row of bindingsResult.rows) {
-      const binding = mapBindingRow(row as Record<string, unknown>);
+    // Keep claim authority with the exact live binding selected for observed
+    // native identity. A later matching control ref may not take it over.
+    const selected = interruptRow.authorized_binding_id
+      ? bindings.find((binding) => binding.id === interruptRow.authorized_binding_id)
+      : undefined;
+    const candidates = selected && isBindingLive(selected) ? [selected] : bindings;
+    for (const binding of candidates) {
       const candidate = evaluateActionability({
         governanceControlAvailable: controlAvailable,
         interrupt: interruptRow,
@@ -250,6 +257,7 @@ export async function reconcileInterruptActionability(
       `
         UPDATE interrupts
         SET actionability = $4,
+            authorized_binding_id = $6::uuid,
             identity_ambiguous = CASE
               WHEN $5::boolean THEN TRUE
               ELSE identity_ambiguous
@@ -263,6 +271,7 @@ export async function reconcileInterruptActionability(
         input.interruptId,
         evaluation.actionability,
         evaluation.actionability === 'identity_conflict',
+        evaluation.actionability === 'actionable' ? evaluation.binding?.id ?? null : null,
       ],
     );
   }

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import secrets
+import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import httpx
 
-from .enrichment import emit_enrichment, terminal_attributes
 from .reference_runtime import ReferenceReviewResponse
 
 DeliveryReceipt = Literal["accepted", "failed", "stale", "unknown"]
@@ -48,7 +48,12 @@ class MafGovernanceClient:
     def __init__(self, api_base_url: str, mission_id: str, branch_id: str, control_ref: str, client: httpx.Client | None = None):
         self.base_url = api_base_url.rstrip("/")
         self.mission_id, self.branch_id, self.control_ref = mission_id, branch_id, control_ref
-        self._client = client or httpx.Client(base_url=self.base_url, timeout=30)
+        token = (os.environ.get("AGENTLENS_SERVICE_TOKEN") or os.environ.get("AGENTLENS_API_KEY") or "").strip()
+        self._client = client or httpx.Client(
+            base_url=self.base_url,
+            timeout=30,
+            headers={"Authorization": f"Bearer {token}"} if token else {},
+        )
 
     def _request(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         response = self._client.post(
@@ -56,7 +61,7 @@ class MafGovernanceClient:
             json={"control_ref": self.control_ref, **payload},
         )
         if response.status_code >= 400:
-            raise RuntimeError(f"MAF bridge {action} failed: {response.status_code}")
+            raise RuntimeError(f"MAF bridge {action} failed: {response.status_code}: {response.text[:512]}")
         return response.json()
 
     def register(self, identity: MafNativeIdentity, lease_seconds: int = 60) -> dict[str, Any]:
@@ -107,9 +112,12 @@ class MafGovernanceBridge:
             if claim.decision_type == "structured_response":
                 if not isinstance(claim.value, dict):
                     return "failed"
-                response = self.expected_response_type(**claim.value)
+                response = self.expected_response_type(**{**claim.value, "delivery_id": claim.delivery_id})
             else:
-                response = self.expected_response_type(approved=claim.decision_type == "approve")
+                response = self.expected_response_type(
+                    approved=claim.decision_type == "approve",
+                    delivery_id=claim.delivery_id,
+                )
             await self.workflow.run(responses={self.pending_request_id: response})
         except (TypeError, ValueError):
             return "failed"
@@ -118,7 +126,4 @@ class MafGovernanceBridge:
             self._applied_delivery_ids.add(claim.delivery_id)
             return "unknown"
         self._applied_delivery_ids.add(claim.delivery_id)
-        attributes = terminal_attributes(self.pending_request_id, response)
-        attributes["agentlens.maf.delivery_id"] = claim.delivery_id
-        emit_enrichment("agentlens.maf.delivery_accepted", attributes)
         return "accepted"

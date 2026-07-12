@@ -24,4 +24,33 @@ def test_every_capability_row_is_backed_by_a_checked_in_fixture() -> None:
 
     for row in CAPABILITY_MATRIX:
         assert row.fixture in manifest["fixtures"]
-        assert (root / row.fixture / "expected_native_facts.json").is_file()
+        facts = json.loads((root / row.fixture / "expected_native_facts.json").read_text(encoding="utf-8"))
+        capture = json.loads((root / row.fixture / manifest["capture_file"]).read_text(encoding="utf-8"))
+        assert facts["primary_oracle"] == "captured_real_maf_telemetry"
+        assert facts["captured_facts"]["span_count"] == len(capture["spans"])
+        assert capture["spans"]
+
+
+def test_capability_matrix_asserts_real_captured_facts() -> None:
+    root = Path(__file__).parent / "fixtures" / "otlp"
+
+    def facts(fixture: str) -> dict[str, object]:
+        return json.loads((root / fixture / "expected_native_facts.json").read_text(encoding="utf-8"))["captured_facts"]
+
+    success = facts("success")
+    agent_tool = facts("agent_tool")
+    request = facts("request")
+    continuation = facts("continuation")
+    failure = facts("explicit_failure")
+
+    assert "workflow.build" in success["span_names"]
+    assert "workflow.id" in success["attribute_keys"]
+    assert "executor.id" in success["attribute_keys"]
+    assert "gen_ai.agent.id" in agent_tool["attribute_keys"]
+    assert "gen_ai.tool.name" in agent_tool["attribute_keys"]
+    assert {"workflow.started", "workflow.completed"} <= set(success["event_names"])
+    assert "workflow.error" in failure["event_names"]
+    assert "agentlens.maf.request_info" in request["event_names"]
+    assert {"agentlens.maf.request_id", "agentlens.maf.request_type", "agentlens.maf.response_type"} <= set(request["event_attribute_keys"])
+    assert "agentlens.maf.response_accepted" in continuation["event_names"]
+    assert "control_ref" not in json.dumps({row.fixture: facts(row.fixture) for row in CAPABILITY_MATRIX}).lower()

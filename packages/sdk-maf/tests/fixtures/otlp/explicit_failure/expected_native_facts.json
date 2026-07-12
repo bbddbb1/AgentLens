@@ -1,10 +1,41 @@
 {
-  "facts": [
-    "executor",
-    "failed"
-  ],
+  "captured_facts": {
+    "attribute_keys": [
+      "error.type",
+      "executor.id",
+      "executor.type",
+      "message.payload_type",
+      "message.type",
+      "workflow.definition",
+      "workflow.id",
+      "workflow.name",
+      "workflow_builder.name"
+    ],
+    "event_attribute_keys": [
+      "error.message",
+      "error.type",
+      "exception.escaped",
+      "exception.message",
+      "exception.stacktrace",
+      "exception.type"
+    ],
+    "event_names": [
+      "build.completed",
+      "build.started",
+      "build.validation_completed",
+      "exception",
+      "workflow.error",
+      "workflow.started"
+    ],
+    "span_count": 3,
+    "span_names": [
+      "executor.process agentlens-reference-executor",
+      "workflow.build",
+      "workflow.run"
+    ]
+  },
   "fixture": "explicit_failure",
   "framework": "ms_agent_framework",
   "maf_core_version": "1.10.0",
-  "primary_oracle": "native_facts"
+  "primary_oracle": "captured_real_maf_telemetry"
 }

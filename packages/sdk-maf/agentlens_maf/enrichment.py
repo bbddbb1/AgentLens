@@ -24,9 +24,16 @@ def emit_enrichment(name: str, attributes: Mapping[str, str]) -> None:
         span.add_event(name, attributes=dict(attributes))
 
 
-def terminal_attributes(request_id: str, response: ReferenceReviewResponse) -> dict[str, str]:
-    return {
+def terminal_attributes(
+    request_id: str,
+    response: ReferenceReviewResponse,
+    terminal_outcome: str | None = None,
+) -> dict[str, str]:
+    attributes = {
         "agentlens.maf.request_id": request_id,
         "agentlens.maf.response_type": type(response).__name__,
-        "agentlens.maf.terminal_outcome": "continued" if response.approved else "alternative",
+        "agentlens.maf.terminal_outcome": terminal_outcome or ("continued" if response.approved else "alternative"),
     }
+    if response.delivery_id:
+        attributes["agentlens.maf.delivery_id"] = response.delivery_id
+    return attributes
