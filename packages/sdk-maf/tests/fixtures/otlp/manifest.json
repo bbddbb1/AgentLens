@@ -1,5 +1,25 @@
 {
   "capture_file": "captured_telemetry.json",
+  "declared_test_doubles": [
+    "DeterministicModelClient only; workflow, agent, tool, and OTLP capture remain real."
+  ],
+  "fingerprint": {
+    "algorithm": "sha256",
+    "scope": "captured telemetry plus native facts"
+  },
+  "fingerprints": {
+    "agent_tool": "016bbf57747182f3bd40b04e62f64839434237db5760e4f625713d4b5bf908e5",
+    "alternative": "2cc31caeedb82cbf19f2aa3357a17ae0aa083b68a3de5967f1109b7ece813cd3",
+    "conflicting_identity": "65b8f904f521bfadb6545ec0265d351f79ae1b616d213ae0e4766c067cd4e4dd",
+    "continuation": "3f9006a54048d54bdae727b30e6531a0f34257e2b013b932a26bb3186888de97",
+    "explicit_failure": "1d01181c0392722b10286bf8fc4ed572608ca5baf70d49e0814895a86087efa7",
+    "missing_identity": "b35381f8eab6ca58b737bf1603a77722201f654698329c7ed12f8026f75bc861",
+    "post_acceptance_failure": "73b1309278ce3893bc7bc7ad5a03ebfcdf3abf6e9af04d324f6f3196c9f1851f",
+    "request": "da7616592de20145b5caa23b4321dc79894ed3d2bc9e7d9f0d084acca6bd2038",
+    "success": "6dd6ef1b829f7c8cce5ad11fc12196adc6449157f09cef49d4f3d23b58a42b8d",
+    "unknown_telemetry": "62a52ff9890d42185a6c9e4203d788fd40922941e8dfbd6fa567f7fea535cf1a",
+    "unrelated_later_activity": "303baf46c4ac671bf1da0df3657fe89f969179509221207d70edeea88b96e9fe"
+  },
   "fixture_generator": "packages/sdk-maf/tests/generate_fixtures.py",
   "fixtures": [
     "success",
@@ -14,7 +34,13 @@
     "unrelated_later_activity",
     "post_acceptance_failure"
   ],
+  "framework_version_context": {
+    "agentlens_sdk_maf": "0.1.0",
+    "maf_core": "1.10.0"
+  },
   "maf_core_version": "1.10.0",
+  "native_evidence_source": "agentlens_maf.reference_runtime, agentlens_maf.otel_capture, and captured MAF 1.10.0 WorkflowEvent/OTel facts",
   "primary_oracle": "captured_real_maf_telemetry",
+  "regeneration_command": "uv run --directory packages/sdk-maf pytest tests/test_generate_fixtures.py -q",
   "remaining_test_double": "DeterministicModelClient only; MAF workflow, agent, tool, and telemetry are real."
 }

@@ -22,6 +22,8 @@ class LangGraphNativeAttributes:
     INTERRUPT_REQUEST_TYPE = "agentlens.langgraph.interrupt_request_type"
     INTERRUPT_PROMPT = "agentlens.langgraph.interrupt_prompt"
     SUPPORTED_DECISIONS = "agentlens.langgraph.supported_decisions"
+    DELIVERY_ID = "agentlens.langgraph.delivery_id"
+    CONTINUED_WITH_INPUT = "agentlens.langgraph.continued_with_input"
     RETRIEVAL_MARKER = "agentlens.langgraph.retrieval"
     EXPLICIT_HANDOFF = "agentlens.langgraph.explicit_handoff"
     NATIVE_EXECUTION_KEY = "agentlens.native_execution_key"

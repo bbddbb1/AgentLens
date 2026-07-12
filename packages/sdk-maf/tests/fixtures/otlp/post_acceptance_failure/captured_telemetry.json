@@ -1,4 +1,17 @@
 {
+  "provenance": {
+    "declared_test_doubles": [
+      "DeterministicModelClient only; workflow, agent, tool, and OTLP capture remain real."
+    ],
+    "framework_version_context": {
+      "agentlens_sdk_maf": "0.1.0",
+      "maf_core": "1.10.0"
+    },
+    "generator": "packages/sdk-maf/tests/generate_fixtures.py",
+    "native_evidence_source": "agentlens_maf.reference_runtime, agentlens_maf.otel_capture, and captured MAF 1.10.0 WorkflowEvent/OTel facts",
+    "primary_oracle": "captured_real_maf_telemetry",
+    "regeneration_command": "uv run --directory packages/sdk-maf pytest tests/test_generate_fixtures.py -q"
+  },
   "spans": [
     {
       "attributes": {
@@ -87,7 +100,7 @@
       "attributes": {
         "edge_group.delivered": true,
         "edge_group.delivery_status": "delivered",
-        "edge_group.id": "InternalEdgeGroup/d99aad6a-5e45-4d41-b37a-2145c1abc046",
+        "edge_group.id": "InternalEdgeGroup/c276b4c1-5f16-438b-91f0-4cdb1a4c714f",
         "edge_group.type": "InternalEdgeGroup",
         "message.source_id": "internal:agentlens-reference-review-executor",
         "message.target_id": "agentlens-reference-review-executor"

@@ -19,6 +19,7 @@ from helpers.capture_otlp import (
     stable_uuid,
     write_fixture,
 )
+from helpers.fixture_fingerprint import recorded_library_versions
 
 
 def _span_dicts(recorded) -> list[dict]:
@@ -428,10 +429,25 @@ def generate_all() -> list[str]:
     )
     generated.append("unknown_telemetry")
 
+    fingerprints: dict[str, str] = {}
+    for fixture_id in generated:
+        fixture_dir = FIXTURES_ROOT / fixture_id
+        spans_doc = json.loads((fixture_dir / "spans.json").read_text(encoding="utf-8"))
+        fingerprints[fixture_id] = str(spans_doc["semantic_fingerprint"]["digest"])
+
     manifest = {
         "fixtures": generated,
         "root": str(FIXTURES_ROOT.as_posix()),
+        "fixture_generator": "packages/sdk-langgraph/tests/generate_fixtures.py",
+        "framework_version_context": recorded_library_versions(),
+        "native_evidence_source": "AgentLensLangGraphCallbackHandler callbacks and LangGraph-native graph/checkpointer facts",
         "primary_oracle": "native_facts",
+        "fingerprint": {"algorithm": "sha256", "scope": "semantic spans plus native oracle"},
+        "fingerprints": fingerprints,
+        "declared_test_doubles": [
+            "RecordingSpan and MagicMock AgentLens/Mission used only by fixture capture",
+        ],
+        "regeneration_command": "uv run --directory packages/sdk-langgraph pytest tests/test_generate_fixtures.py -q",
     }
     (FIXTURES_ROOT / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"

@@ -16,6 +16,22 @@
     ]
   },
   "primary_oracle": "native_facts",
+  "provenance": {
+    "declared_test_doubles": [
+      "RecordingSpan and MagicMock AgentLens/Mission used only by fixture capture"
+    ],
+    "framework_version_context": {
+      "agentlens_sdk_core": "0.1.0",
+      "agentlens_sdk_langgraph": "0.1.0",
+      "langchain_core": "1.3.3",
+      "langgraph": "1.1.10",
+      "opentelemetry_api": "1.41.1"
+    },
+    "generator": "packages/sdk-langgraph/tests/generate_fixtures.py",
+    "native_evidence_source": "AgentLensLangGraphCallbackHandler callbacks and LangGraph-native interrupt/checkpoint metadata",
+    "primary_oracle": "native_facts",
+    "regeneration_command": "uv run --directory packages/sdk-langgraph pytest tests/test_generate_fixtures.py -q"
+  },
   "semantic_fingerprint": {
     "algorithm": "sha256",
     "digest": "d33f160112ee0ed9d7d5b8255b06fa9bd81e5f014f5093f03dcb4920e79b0bf1"

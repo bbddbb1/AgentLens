@@ -1,0 +1,29 @@
+{
+  "framework": "langgraph",
+  "integration_version_context": {
+    "langgraph": "installed workspace version",
+    "agentlens_sdk_langgraph": "0.1.0",
+    "agentlens_sdk_core": "0.1.0"
+  },
+  "components": {
+    "langgraph_graph": "real",
+    "langgraph_memory_checkpointer": "real",
+    "callback_otlp_path": "real",
+    "agentlens_express_http": "real",
+    "service_authentication": "real",
+    "private_bridge_http": "real",
+    "postgresql": "real via API configuration",
+    "agentlens_http_mock": "not used by the primary gate",
+    "isolated_failure_injection": "existing mock tests only"
+  },
+  "declared_test_doubles": [],
+  "primary_oracle": "LangGraph native graph state plus public AgentLens lifecycle assertions",
+  "scenarios": [
+    "positive",
+    "accepted_without_terminal",
+    "wrong_scope",
+    "public_output"
+  ],
+  "database_isolation": "unique mission identifier per scenario and an isolated root branch within that mission; API PostgreSQL is configured by the system environment",
+  "rerun_command": "pnpm conformance:system:langgraph"
+}

@@ -11,8 +11,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID
 import logging
+import json
 
 from langchain_core.callbacks import BaseCallbackHandler
+from langgraph.errors import GraphInterrupt
+from langgraph.types import Interrupt
 
 from agentlens_sdk.client import AgentLens
 from agentlens_sdk.mission import Mission
@@ -244,6 +247,48 @@ def _extract_interrupt_payload(outputs: Any, metadata: Optional[Dict[str, Any]] 
     return result
 
 
+def _extract_interrupt_payload_from_error(
+    error: BaseException,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str] | None:
+    """Observe LangGraph's native ``GraphInterrupt`` callback payload.
+
+    LangGraph reports a node-level interrupt through ``on_chain_error`` and
+    returns the same native interrupt in the root ``__interrupt__`` result.
+    The adapter consumes the callback-owned exception facts here so callers do
+    not have to replay a lifecycle callback from the root result.
+    """
+    if not isinstance(error, GraphInterrupt):
+        return None
+    if len(error.args) != 1 or not isinstance(error.args[0], (list, tuple)):
+        return None
+    native_interrupts = error.args[0]
+    if (
+        not native_interrupts
+        or not all(isinstance(item, Interrupt) for item in native_interrupts)
+        or not all(_as_str(getattr(item, "id", None)) for item in native_interrupts)
+    ):
+        return None
+
+    enriched_metadata = dict(metadata or {})
+    first = native_interrupts[0]
+    value = getattr(first, "value", None)
+    if isinstance(first, dict):
+        value = first.get("value")
+    if isinstance(value, dict):
+        if value.get("prompt") is not None:
+            enriched_metadata["interrupt_prompt"] = str(value["prompt"])[:500]
+        if value.get("request_type") is not None:
+            enriched_metadata["interrupt_request_type"] = value["request_type"]
+        if isinstance(value.get("supported_decisions"), (list, tuple)):
+            enriched_metadata["supported_decisions"] = json.dumps(value["supported_decisions"])
+
+    return _extract_interrupt_payload(
+        {"__interrupt__": native_interrupts},
+        enriched_metadata,
+    )
+
+
 def _token_usage_from_response(response: Any) -> Dict[str, int]:
     """Extract token counts only from explicit response/llm_output metadata."""
     usage: Dict[str, int] = {}
@@ -424,13 +469,18 @@ class AgentLensLangGraphCallbackHandler(BaseCallbackHandler):
         # Observe resume only when explicitly identified.
         resume_of = identity.get(LangGraphNativeAttributes.RESUME_OF_INTERRUPT_ID)
         if resume_of and agent._span:
+            resume_attrs = {
+                AgentAttributes.INTERRUPT_ID: resume_of,
+                LangGraphNativeAttributes.RESUME_OF_INTERRUPT_ID: resume_of,
+                LangGraphNativeAttributes.RUN_ID: str(run_id),
+            }
+            delivery_id = _first_present(metadata, "governance_delivery_id", "delivery_id")
+            if delivery_id:
+                resume_attrs[LangGraphNativeAttributes.DELIVERY_ID] = delivery_id
+                resume_attrs[LangGraphNativeAttributes.CONTINUED_WITH_INPUT] = "true"
             agent._span.add_event(
                 AgentEvents.INTERRUPT_RESUMED,
-                {
-                    AgentAttributes.INTERRUPT_ID: resume_of,
-                    LangGraphNativeAttributes.RESUME_OF_INTERRUPT_ID: resume_of,
-                    LangGraphNativeAttributes.RUN_ID: str(run_id),
-                },
+                resume_attrs,
             )
 
         agent.set_task(task)
@@ -493,9 +543,18 @@ class AgentLensLangGraphCallbackHandler(BaseCallbackHandler):
         agent = self._active_agents.pop(run_id, None)
         self._node_names.pop(run_id, None)
         self._parent_runs.pop(run_id, None)
-        self._run_metadata.pop(run_id, None)
+        metadata = self._run_metadata.pop(run_id, {})
 
         if agent:
+            interrupt = _extract_interrupt_payload_from_error(error, metadata)
+            if interrupt and agent._span:
+                agent._span.add_event(AgentEvents.INTERRUPT_REQUESTED, interrupt)
+                interrupt_id = interrupt.get(LangGraphNativeAttributes.INTERRUPT_REQUEST_ID)
+                if interrupt_id:
+                    agent._span.set_attribute(
+                        LangGraphNativeAttributes.INTERRUPT_REQUEST_ID,
+                        interrupt_id,
+                    )
             agent.__exit__(type(error), error, getattr(error, "__traceback__", None))
 
     def on_tool_start(

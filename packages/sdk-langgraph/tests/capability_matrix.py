@@ -168,8 +168,8 @@ LANGGRAPH_CAPABILITY_MATRIX: tuple[CapabilityRow, ...] = (
     CapabilityRow(
         capability_id="interrupt_request",
         native_fact="Explicit interrupt request identity",
-        native_source="outputs/metadata containing __interrupt__ or langgraph interrupt id",
-        status="partial",
+        native_source="LangGraph __interrupt__ result plus on_chain_error(GraphInterrupt) callback facts",
+        status="covered",
         adapter_telemetry=(
             "agent.interrupt.requested",
             "agentlens.langgraph.interrupt_request_id",
@@ -178,7 +178,7 @@ LANGGRAPH_CAPABILITY_MATRIX: tuple[CapabilityRow, ...] = (
         expected_facts=("interrupt_request_id when explicit",),
         projected_surface="interrupt observation event + native_runtime_identity",
         references=("agentlens.langgraph.interrupt_request_id",),
-        limitation="Only when interrupt payload/id is explicit in callback outputs/metadata; no approval/resume control.",
+        limitation="The adapter observes explicit native interrupt facts; approval/resume control remains bridge-owned.",
     ),
     CapabilityRow(
         capability_id="resume_observation",

@@ -14,7 +14,6 @@ import { applyHierarchicalLayout } from '../graphLayout.js';
 import { normalizeSpansToFacts } from './normalization/index.js';
 import { originFrameworkFromAttrs } from './normalization/agentLensCompat.js';
 import { assembleModelProvenance } from './normalization/otelGenAi.js';
-import { hasLangGraphMarkers, langGraphActivityCorrelationId, langGraphRunId } from './normalization/langgraph.js';
 import { publicRuntimeIdentity, publicTelemetryAttributes, publicTelemetryName } from './normalization/publicMetadata.js';
 
 export type MaturityTier = 'L1' | 'L2' | 'L3';
@@ -55,16 +54,9 @@ function lookupNormalizedEventActivity(
   eventAttrs: Record<string, any>,
   eventIndex: number,
 ) {
-  const runId = langGraphRunId(eventAttrs);
-  const correlationId = langGraphActivityCorrelationId(eventAttrs);
-  if (runId) {
-    const byRun = index.byInvocationKey.get(`${spanId}:${eventName}:run:${runId}`);
-    if (byRun) return byRun;
-  }
-  if (correlationId) {
-    const byCorrelation = index.byInvocationKey.get(`${spanId}:${eventName}:correlation:${correlationId}`);
-    if (byCorrelation) return byCorrelation;
-  }
+  // Native identity keys are interpreted by the private normalizer. Generic
+  // projection resolves the already-normalized source reference only.
+  void eventAttrs;
   return index.bySpanEventIndex.get(`${spanId}:${eventName}:${eventIndex}`);
 }
 
@@ -423,9 +415,6 @@ export function projectTraceSnapshot(
       for (const event of span.events) {
         const eventAttrs = event.attributes ?? {};
         const eventName = event.name;
-
-        // LangGraph relationship facts are normalized before generic projection.
-        if (hasLangGraphMarkers({ ...attrs, ...eventAttrs })) continue;
 
         if (
           eventName === 'agent.review' ||

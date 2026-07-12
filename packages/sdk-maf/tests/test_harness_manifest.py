@@ -17,3 +17,8 @@ def test_harness_manifest_identifies_real_components_and_doubles() -> None:
         "postgresql": "real",
         "model_client": "deterministic_test_double",
     }
+    assert manifest["declared_test_doubles"] == ["DeterministicModelClient"]
+    assert set(manifest["scenarios"]) == {"positive", "accepted_without_terminal", "wrong_scope", "public_output"}
+    assert "unique mission" in manifest["database_isolation"]
+    assert "no assertion retry" in manifest["readiness_policy"]
+    assert "finally" in manifest["cleanup_policy"]

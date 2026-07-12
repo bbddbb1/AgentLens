@@ -4,6 +4,8 @@ Tests for the LangGraph callback handler.
 import uuid
 from unittest.mock import MagicMock, patch, ANY
 
+from langgraph.errors import GraphInterrupt
+from langgraph.types import Interrupt
 import pytest
 
 from agentlens_langgraph.instrumentor import (
@@ -264,6 +266,84 @@ class TestAgentLensLangGraphCallbackHandler:
         args = mock_agent.__exit__.call_args
         assert args[0][0] == ValueError
         assert args[0][1] is error
+
+    def test_on_chain_error_observes_native_graph_interrupt(self):
+        handler, lens, mission = self._make_handler()
+        mock_agent = self._make_mock_agent()
+        run_id = uuid.uuid4()
+        handler._active_agents[run_id] = mock_agent
+        handler._node_names[run_id] = "review"
+        handler._run_metadata[run_id] = {
+            "langgraph_node": "review",
+            "thread_id": "thread-native",
+        }
+        native_interrupt = Interrupt(
+            value={
+                "prompt": "Approve this request",
+                "request_type": "approval",
+                "supported_decisions": ["approve", "reject"],
+            },
+            id="native-interrupt-1",
+        )
+        error = GraphInterrupt([native_interrupt])
+
+        handler.on_chain_error(error, run_id=run_id)
+
+        event_names = [call.args[0] for call in mock_agent._span.add_event.call_args_list]
+        assert "agent.interrupt.requested" in event_names
+        interrupt_call = next(
+            call for call in mock_agent._span.add_event.call_args_list
+            if call.args[0] == "agent.interrupt.requested"
+        )
+        assert interrupt_call.args[1]["agentlens.langgraph.interrupt_request_id"] == "native-interrupt-1"
+        assert interrupt_call.args[1]["agentlens.langgraph.interrupt_prompt"] == "Approve this request"
+        assert interrupt_call.args[1]["agentlens.langgraph.supported_decisions"] == '["approve", "reject"]'
+
+    @pytest.mark.parametrize("error", [ValueError("task failed"), RuntimeError("task failed")])
+    def test_on_chain_error_does_not_classify_ordinary_failure_as_interrupt(self, error):
+        handler, _, mission = self._make_handler()
+        mock_agent = self._make_mock_agent()
+        run_id = uuid.uuid4()
+        handler._active_agents[run_id] = mock_agent
+        handler._node_names[run_id] = "review"
+
+        handler.on_chain_error(error, run_id=run_id)
+
+        event_names = [call.args[0] for call in mock_agent._span.add_event.call_args_list]
+        assert "agent.interrupt.requested" not in event_names
+
+    def test_on_chain_error_does_not_classify_interrupt_shaped_ordinary_exception(self):
+        handler, _, mission = self._make_handler()
+        mock_agent = self._make_mock_agent()
+        run_id = uuid.uuid4()
+        handler._active_agents[run_id] = mock_agent
+        handler._node_names[run_id] = "review"
+        shaped_interrupt = Interrupt(value={"prompt": "forged"}, id="forged-interrupt")
+
+        handler.on_chain_error(RuntimeError((shaped_interrupt,)), run_id=run_id)
+
+        event_names = [call.args[0] for call in mock_agent._span.add_event.call_args_list]
+        assert "agent.interrupt.requested" not in event_names
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            GraphInterrupt([]),
+            GraphInterrupt([object()]),
+            GraphInterrupt([Interrupt(value={"prompt": "missing id"}, id="")]),
+        ],
+    )
+    def test_on_chain_error_does_not_classify_invalid_native_payload(self, error):
+        handler, _, mission = self._make_handler()
+        mock_agent = self._make_mock_agent()
+        run_id = uuid.uuid4()
+        handler._active_agents[run_id] = mock_agent
+        handler._node_names[run_id] = "review"
+
+        handler.on_chain_error(error, run_id=run_id)
+
+        event_names = [call.args[0] for call in mock_agent._span.add_event.call_args_list]
+        assert "agent.interrupt.requested" not in event_names
 
     def test_on_chain_error_does_not_emit_handoff_rejected_for_nesting(self):
         handler, lens, mission = self._make_handler()

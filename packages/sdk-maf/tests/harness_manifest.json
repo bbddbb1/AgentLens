@@ -9,5 +9,11 @@
     "postgresql": "real",
     "model_client": "deterministic_test_double"
   },
-  "primary_oracle": "native_facts"
+  "declared_test_doubles": ["DeterministicModelClient"],
+  "primary_oracle": "native_facts",
+  "scenarios": ["positive", "accepted_without_terminal", "wrong_scope", "public_output"],
+  "database_isolation": "unique mission and branch identifiers per scenario; API PostgreSQL is configured by the system environment",
+  "readiness_policy": "bounded /api/health probe only; no assertion retry",
+  "cleanup_policy": "delete the run-owned mission in finally and retain primary/cleanup result",
+  "rerun_command": "pnpm conformance:system:maf"
 }

@@ -1,4 +1,17 @@
 {
+  "provenance": {
+    "declared_test_doubles": [
+      "DeterministicModelClient only; workflow, agent, tool, and OTLP capture remain real."
+    ],
+    "framework_version_context": {
+      "agentlens_sdk_maf": "0.1.0",
+      "maf_core": "1.10.0"
+    },
+    "generator": "packages/sdk-maf/tests/generate_fixtures.py",
+    "native_evidence_source": "agentlens_maf.reference_runtime, agentlens_maf.otel_capture, and captured MAF 1.10.0 WorkflowEvent/OTel facts",
+    "primary_oracle": "captured_real_maf_telemetry",
+    "regeneration_command": "uv run --directory packages/sdk-maf pytest tests/test_generate_fixtures.py -q"
+  },
   "spans": [
     {
       "attributes": {
@@ -52,7 +65,7 @@
     },
     {
       "attributes": {
-        "agent_framework.function.invocation.duration": 0.00029300013557076454,
+        "agent_framework.function.invocation.duration": 0.0002408998552709818,
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.call.id": "unknown",
         "gen_ai.tool.description": "Classifies the reference input deterministically.",

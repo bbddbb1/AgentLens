@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,18 @@ FIXTURE_NAMES = (
     "unrelated_later_activity",
     "post_acceptance_failure",
 )
+
+REGENERATION_COMMAND = "uv run --directory packages/sdk-maf pytest tests/test_generate_fixtures.py -q"
+NATIVE_EVIDENCE_SOURCE = (
+    "agentlens_maf.reference_runtime, agentlens_maf.otel_capture, and captured MAF 1.10.0 WorkflowEvent/OTel facts"
+)
+DECLARED_TEST_DOUBLES = ["DeterministicModelClient only; workflow, agent, tool, and OTLP capture remain real."]
+
+
+def semantic_fixture_fingerprint(spans: list[dict[str, object]], facts: dict[str, object]) -> str:
+    """Hash stable captured facts so fixture meaning cannot drift silently."""
+    payload = json.dumps({"spans": spans, "facts": facts}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _stable_value(key: str, value: object) -> object:
@@ -165,8 +178,21 @@ def generate_all(root: Path) -> list[str]:
         fixture_dir = root / name
         fixture_dir.mkdir(exist_ok=True)
         spans, modification = _apply_documented_fixture_condition(name, captured[name])
+        captured_facts = _captured_facts(spans)
+        fingerprint = semantic_fixture_fingerprint(spans, captured_facts)
+        provenance = {
+            "generator": "packages/sdk-maf/tests/generate_fixtures.py",
+            "framework_version_context": {
+                "maf_core": MAF_CORE_VERSION,
+                "agentlens_sdk_maf": "0.1.0",
+            },
+            "native_evidence_source": NATIVE_EVIDENCE_SOURCE,
+            "primary_oracle": "captured_real_maf_telemetry",
+            "declared_test_doubles": DECLARED_TEST_DOUBLES,
+            "regeneration_command": REGENERATION_COMMAND,
+        }
         (fixture_dir / "captured_telemetry.json").write_text(
-            json.dumps({"spans": spans}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            json.dumps({"spans": spans, "provenance": provenance}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         (fixture_dir / "expected_native_facts.json").write_text(
             json.dumps(
@@ -176,20 +202,34 @@ def generate_all(root: Path) -> list[str]:
                     "maf_core_version": MAF_CORE_VERSION,
                     "primary_oracle": "captured_real_maf_telemetry",
                     "fixture_modification": modification,
-                    "captured_facts": _captured_facts(spans),
+                    "provenance": provenance,
+                    "semantic_fingerprint": {"algorithm": "sha256", "digest": fingerprint},
+                    "captured_facts": captured_facts,
                 },
                 indent=2,
                 sort_keys=True,
             ) + "\n",
             encoding="utf-8",
         )
+    fingerprints = {
+        name: json.loads((root / name / "expected_native_facts.json").read_text(encoding="utf-8"))[
+            "semantic_fingerprint"
+        ]["digest"]
+        for name in FIXTURE_NAMES
+    }
     manifest = {
         "fixtures": list(FIXTURE_NAMES),
         "maf_core_version": installed,
         "fixture_generator": "packages/sdk-maf/tests/generate_fixtures.py",
+        "framework_version_context": {"maf_core": MAF_CORE_VERSION, "agentlens_sdk_maf": "0.1.0"},
+        "native_evidence_source": NATIVE_EVIDENCE_SOURCE,
         "primary_oracle": "captured_real_maf_telemetry",
         "capture_file": "captured_telemetry.json",
+        "fingerprint": {"algorithm": "sha256", "scope": "captured telemetry plus native facts"},
+        "fingerprints": fingerprints,
+        "declared_test_doubles": DECLARED_TEST_DOUBLES,
         "remaining_test_double": "DeterministicModelClient only; MAF workflow, agent, tool, and telemetry are real.",
+        "regeneration_command": REGENERATION_COMMAND,
     }
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return list(FIXTURE_NAMES)

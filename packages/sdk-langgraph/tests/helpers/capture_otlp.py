@@ -179,11 +179,22 @@ def write_fixture(
     dest.mkdir(parents=True, exist_ok=True)
     versions = library_versions or recorded_library_versions()
     fingerprint = semantic_fixture_fingerprint(spans, expected_native_facts)
+    provenance = {
+        "generator": "packages/sdk-langgraph/tests/generate_fixtures.py",
+        "framework_version_context": versions,
+        "native_evidence_source": "AgentLensLangGraphCallbackHandler callbacks and LangGraph-native interrupt/checkpoint metadata",
+        "primary_oracle": "native_facts",
+        "declared_test_doubles": [
+            "RecordingSpan and MagicMock AgentLens/Mission used only by fixture capture",
+        ],
+        "regeneration_command": "uv run --directory packages/sdk-langgraph pytest tests/test_generate_fixtures.py -q",
+    }
     payload = {
         "fixture_id": fixture_id,
         "generator": "packages/sdk-langgraph/tests/helpers/capture_otlp.py",
         "adapter": "AgentLensLangGraphCallbackHandler",
         "library_versions": versions,
+        "provenance": provenance,
         "semantic_fingerprint": {
             "algorithm": fingerprint["algorithm"],
             "digest": fingerprint["digest"],
@@ -194,6 +205,7 @@ def write_fixture(
     expected = {
         "fixture_id": fixture_id,
         "primary_oracle": "native_facts",
+        "provenance": provenance,
         "oracle": expected_native_facts,
         "semantic_fingerprint": {
             "algorithm": fingerprint["algorithm"],

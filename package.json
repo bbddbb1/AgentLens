@@ -21,7 +21,13 @@
     "lint": "turbo lint",
     "test": "turbo test",
     "clean": "turbo clean",
-    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "conformance:fast": "node scripts/conformance.mjs fast",
+    "conformance:system:langgraph": "node scripts/conformance.mjs system:langgraph",
+    "conformance:system:maf": "node scripts/conformance.mjs system:maf",
+    "conformance:system": "node scripts/conformance.mjs system",
+    "conformance:report": "node scripts/conformance.mjs report",
+    "conformance:release": "node scripts/conformance.mjs release"
   },
   "devDependencies": {
     "prettier": "^3.4.0",

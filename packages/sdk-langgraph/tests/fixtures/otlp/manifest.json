@@ -1,4 +1,27 @@
 {
+  "declared_test_doubles": [
+    "RecordingSpan and MagicMock AgentLens/Mission used only by fixture capture"
+  ],
+  "fingerprint": {
+    "algorithm": "sha256",
+    "scope": "semantic spans plus native oracle"
+  },
+  "fingerprints": {
+    "agent_success": "783a04e8b5de0d2a2245161b1d2da0aef2757f910ce0285e5a294bd0a7eab621",
+    "checkpoint_reference": "d33f160112ee0ed9d7d5b8255b06fa9bd81e5f014f5093f03dcb4920e79b0bf1",
+    "explicit_handoff": "f3e4c546c683682eb3b86a604633022c7971158182c44cf247cf4a08cd66c60d",
+    "interrupt_request": "687de3809a23376087c0b802c35629a9269ade9bda7fb2f2db7cdb827b158e97",
+    "interrupt_resume": "189b4ef24361f9e3c1acbd9ae7ac7863884da2b246230f8b31984b1622453f49",
+    "llm_token_usage": "6ba71c9af25c63619e2c4fa00bdb9927fb4a3bc6377074b3506932a818ae5c49",
+    "non_causal_overlap": "b846d7e4e1e2f327ea0c12ad066e7a5df838aa1bd70e7a0149f4c7521862e2bf",
+    "parent_child_correlation": "dea9e7af7dd2cfd83be9b6f4f22130a48c03a0c19ac0b630039d07a46cba3885",
+    "retrieval_explicit": "0486b89dd043af089e30fe0817af2f95fbbd0d5269c46ea5b15273237398a033",
+    "tool_failed": "accbd9de38b4a85b4eceb4b8d66763976c70aed73c61dfce2ff2bfc3488aba1d",
+    "tool_success": "8e0129904cee0b4f4e051807d354bd6745420555db7906c9426cae4052ddfdf3",
+    "unknown_telemetry": "c00f2d4fe42d11a3db40296d2815c22505f50f9168b7a65567850b15b390e166",
+    "unresolved_target": "384a3f43e5a0fc22a1560ed889a42f7ae38218c6878e73753c45b981f0bd0582"
+  },
+  "fixture_generator": "packages/sdk-langgraph/tests/generate_fixtures.py",
   "fixtures": [
     "agent_success",
     "tool_success",
@@ -14,6 +37,15 @@
     "non_causal_overlap",
     "unknown_telemetry"
   ],
+  "framework_version_context": {
+    "agentlens_sdk_core": "0.1.0",
+    "agentlens_sdk_langgraph": "0.1.0",
+    "langchain_core": "1.3.3",
+    "langgraph": "1.1.10",
+    "opentelemetry_api": "1.41.1"
+  },
+  "native_evidence_source": "AgentLensLangGraphCallbackHandler callbacks and LangGraph-native graph/checkpointer facts",
   "primary_oracle": "native_facts",
+  "regeneration_command": "uv run --directory packages/sdk-langgraph pytest tests/test_generate_fixtures.py -q",
   "root": "D:/code/AgentLens/packages/sdk-langgraph/tests/fixtures/otlp"
 }

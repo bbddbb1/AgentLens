@@ -64,3 +64,71 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
       - run: uv run pytest
+
+  conformance-fast:
+    name: Conformance (fast invariants)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v5
+      - run: pnpm install --frozen-lockfile
+      - run: uv sync
+      - run: pnpm conformance:fast
+
+  conformance-system:
+    name: Conformance (PostgreSQL-backed release gate)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agentlens
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d agentlens"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agentlens
+      AGENTLENS_API_URL: http://127.0.0.1:8001
+      AGENTLENS_SERVICE_TOKEN: conformance-ci-token
+      LANGGRAPH_GOVERNANCE_ENABLED: "true"
+      MAF_GOVERNANCE_ENABLED: "true"
+      PORT: "8001"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v5
+      - run: pnpm install --frozen-lockfile
+      - run: uv sync
+      - run: pnpm --filter api-ts build
+      - name: Start real API process
+        run: |
+          pnpm --filter api-ts start > api-conformance.log 2>&1 &
+          echo $! > api-conformance.pid
+      - run: pnpm conformance:release
+      - name: Retain conformance diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-system-diagnostics
+          path: |
+            artifacts/conformance
+            api-conformance.log

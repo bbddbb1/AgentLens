@@ -35,6 +35,13 @@ def test_manifest_lists_required_scenarios():
         "unknown_telemetry",
     }
     assert required.issubset(set(manifest["fixtures"]))
+    assert manifest["fixture_generator"] == "packages/sdk-langgraph/tests/generate_fixtures.py"
+    assert manifest["native_evidence_source"]
+    assert manifest["primary_oracle"] == "native_facts"
+    assert manifest["fingerprint"]["algorithm"] == "sha256"
+    assert set(manifest["fingerprints"]) == set(manifest["fixtures"])
+    assert manifest["declared_test_doubles"]
+    assert manifest["regeneration_command"].startswith("uv run")
 
 
 @pytest.mark.parametrize(
@@ -64,6 +71,10 @@ def test_fixture_has_spans_and_native_oracle(fixture_id: str):
     assert spans_doc["adapter"] == "AgentLensLangGraphCallbackHandler"
     assert isinstance(spans_doc["spans"], list)
     assert facts_doc["primary_oracle"] == "native_facts"
+    assert spans_doc["provenance"]["generator"] == "packages/sdk-langgraph/tests/generate_fixtures.py"
+    assert facts_doc["provenance"]["primary_oracle"] == "native_facts"
+    assert spans_doc["provenance"]["declared_test_doubles"]
+    assert facts_doc["semantic_fingerprint"]["digest"] == spans_doc["semantic_fingerprint"]["digest"]
     assert facts_doc["legacy_comparison"]["authoritative"] is False
 
 

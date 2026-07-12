@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   AgentAttributes,
-  AgentEvents,
   MissionAttributes,
   type AttributeMap,
   type CreateInterruptInput,
@@ -48,6 +47,7 @@ import { mapInterruptRowToRecord, serializeInterruptPublic } from './interrupts/
 import { validateStructuredDecisionValue } from './interrupts/structuredDecisionBounds.js';
 import { applyRuntimeOutcome, ensureDeliveryAttempt } from './interrupts/deliveryLifecycle.js';
 import { mafInteractionFact, mafOutcomeFact, mafTraceWorkflowIds } from './runtime/normalization/mafIngestion.js';
+import { langGraphInteractionFact, langGraphOutcomeFact } from './runtime/normalization/langgraphGovernance.js';
 import {
   assertCurrentlyActionable,
   reconcileInterruptActionability,
@@ -455,93 +455,39 @@ class MissionStore {
             });
           continue;
         }
-        if (event.name === 'agent.interrupt.resumed' || event.name === AgentEvents.INTERRUPT_RESUMED) {
-          const interruptId =
-            attributeValue(event.attributes, AgentAttributes.INTERRUPT_ID) ??
-            attributeValue(event.attributes, 'agentlens.langgraph.interrupt_request_id') ??
-            attributeValue(event.attributes, 'agentlens.langgraph.resume_of_interrupt_id');
-          if (!interruptId) continue;
-          const failed = attributeValue(event.attributes, 'agentlens.langgraph.runtime_failure') === 'true'
-            || attributeValue(event.attributes, 'gen_ai.error.type') !== undefined;
-          const continued = attributeValue(event.attributes, 'agentlens.langgraph.continued_with_input') === 'true';
-          const rejected = attributeValue(event.attributes, 'agentlens.langgraph.rejected_or_terminated') === 'true';
-          const deliveryId = attributeValue(event.attributes, 'agentlens.langgraph.delivery_id');
-          const resumeOf = attributeValue(event.attributes, 'agentlens.langgraph.resume_of_interrupt_id');
-          const correlatedInterrupt = interruptId || resumeOf;
-          if (!correlatedInterrupt) continue;
-          // Require explicit interrupt correlation — same-thread activity alone is insufficient.
-          const explicitlyCorrelated =
-            Boolean(attributeValue(event.attributes, AgentAttributes.INTERRUPT_ID))
-            || Boolean(attributeValue(event.attributes, 'agentlens.langgraph.interrupt_request_id'))
-            || Boolean(resumeOf)
-            || Boolean(deliveryId);
-          const outcome = failed
-            ? 'failed'
-            : rejected
-              ? 'rejected_or_terminated'
-              : continued
-                ? 'continued_with_input'
-                : 'resumed';
+        const langGraphOutcome = langGraphOutcomeFact(event);
+        if (langGraphOutcome) {
           await applyRuntimeOutcome(client, {
             missionId,
             branchId,
-            interruptId: correlatedInterrupt,
-            outcome,
-            deliveryId: deliveryId || undefined,
-            correlated: explicitlyCorrelated,
+            interruptId: langGraphOutcome.interruptId,
+            outcome: langGraphOutcome.outcome,
+            deliveryId: langGraphOutcome.deliveryId,
+            correlated: langGraphOutcome.explicitlyCorrelated,
           });
           continue;
         }
         const normalizedInteraction = mafInteractionFact(span, event, mafWorkflowIds);
-        if (event.name !== AgentEvents.INTERRUPT_REQUESTED && !normalizedInteraction) continue;
+        const langGraphInteraction = langGraphInteractionFact(span, event, missionId, branchId);
+        if (!normalizedInteraction && !langGraphInteraction) continue;
         interruptRequested = true;
-        const attrs = { ...(span.attributes ?? {}), ...(event.attributes ?? {}) } as Record<string, unknown>;
-        const interruptId =
-          attributeValue(event.attributes, AgentAttributes.INTERRUPT_ID) ??
-          attributeValue(span.attributes, AgentAttributes.INTERRUPT_ID) ??
-          attributeValue(event.attributes, 'agentlens.langgraph.interrupt_request_id') ??
-          normalizedInteraction?.interruptId ??
-          `${span.span_id}:interrupt`;
-        const resumeToken = attributeValue(event.attributes, AgentAttributes.RESUME_TOKEN);
-        const isLangGraph = Object.keys(attrs).some((key) => key.startsWith('agentlens.langgraph.'));
-        const framework = isLangGraph ? 'langgraph' : normalizedInteraction?.framework;
-        const nativeIdentity = isLangGraph
-          ? {
-              framework: 'langgraph',
-              thread_id: attributeValue(attrs, 'agentlens.langgraph.thread_id'),
-              run_id: attributeValue(attrs, 'agentlens.langgraph.run_id'),
-              parent_run_id: attributeValue(attrs, 'agentlens.langgraph.parent_run_id'),
-              interrupt_request_id: attributeValue(attrs, 'agentlens.langgraph.interrupt_request_id') ?? interruptId,
-              checkpoint_id: attributeValue(attrs, 'agentlens.langgraph.checkpoint_id'),
-              checkpoint_ns: attributeValue(attrs, 'agentlens.langgraph.checkpoint_ns'),
-              activity_correlation_id: attributeValue(attrs, 'agentlens.langgraph.activity_correlation_id'),
-              native_execution_key: attributeValue(attrs, 'agentlens.native_execution_key'),
-              mission_id: missionId,
-              branch_id: branchId,
-            }
-          : normalizedInteraction
-            ? { ...normalizedInteraction.nativeIdentity, mission_id: missionId, branch_id: branchId }
-            : null;
-        const safePrompt = attributeValue(attrs, 'agentlens.langgraph.interrupt_prompt')
-          ?? attributeValue(attrs, AgentAttributes.INTERRUPT_REASON);
-        const requestType = normalizedInteraction?.requestType ?? attributeValue(attrs, 'agentlens.langgraph.interrupt_request_type') ?? 'interrupt';
-        const supportedRaw = attributeValue(attrs, 'agentlens.langgraph.supported_decisions');
-        let supportedDecisionTypes: string[] = [];
-        if (supportedRaw) {
-          try {
-            const parsed = JSON.parse(supportedRaw);
-            if (Array.isArray(parsed)) supportedDecisionTypes = parsed.map(String);
-          } catch {
-            supportedDecisionTypes = supportedRaw.split(',').map((part) => part.trim()).filter(Boolean);
-          }
-        }
-        if (normalizedInteraction) supportedDecisionTypes = normalizedInteraction.supportedDecisionTypes;
+        const framework = langGraphInteraction?.framework ?? normalizedInteraction?.framework;
+        const interruptId = langGraphInteraction?.interruptId ?? normalizedInteraction?.interruptId ?? `${span.span_id}:interrupt`;
+        const resumeToken = langGraphInteraction?.resumeToken;
+        const nativeIdentity = langGraphInteraction?.nativeIdentity
+          ?? (normalizedInteraction ? { ...normalizedInteraction.nativeIdentity, mission_id: missionId, branch_id: branchId } : null);
+        const agentId = langGraphInteraction?.agentId ?? attributeValue(span.attributes, AgentAttributes.ID);
+        const safePrompt = langGraphInteraction?.safePrompt ?? attributeValue(event.attributes, AgentAttributes.INTERRUPT_REASON);
+        const requestType = langGraphInteraction?.requestType ?? normalizedInteraction?.requestType ?? 'interrupt';
+        const supportedDecisionTypes = langGraphInteraction?.supportedDecisionTypes ?? normalizedInteraction?.supportedDecisionTypes ?? [];
+        const scrubbedAttrs = langGraphInteraction?.publicAttributes ?? normalizedInteraction?.publicAttributes ?? { ...(event.attributes ?? {}) } as Record<string, unknown>;
+        const reason = langGraphInteraction?.reason ?? 'Human input required';
+        const resumeUrl = langGraphInteraction?.resumeUrl;
+        const timeoutAt = langGraphInteraction?.timeoutAt;
         const requestLifecycle = 'pending';
         const governance = frameworkGovernanceFor(framework);
         const initialActionability = governance ? (governance.controlAvailable ? 'observed_only' : 'unavailable') : 'observed_only';
 
-        // Scrub resume tokens from stored public-ish payload attributes.
-        const scrubbedAttrs = normalizedInteraction ? normalizedInteraction.publicAttributes : { ...(event.attributes ?? {}) } as Record<string, unknown>;
         delete scrubbedAttrs[AgentAttributes.RESUME_TOKEN];
         delete scrubbedAttrs['gen_ai.agent.resume.token'];
 
@@ -598,13 +544,13 @@ class MissionStore {
             missionId,
             branchId,
             interruptId,
-            attributeValue(span.attributes, AgentAttributes.ID) ?? null,
+            agentId ?? attributeValue(span.attributes, AgentAttributes.ID) ?? null,
             span.span_id,
-            attributeValue(event.attributes, AgentAttributes.INTERRUPT_REASON) ?? 'Human input required',
-            attributeValue(event.attributes, AgentAttributes.INTERRUPT_RESUME_URL) ?? null,
+            reason,
+            resumeUrl ?? null,
             resumeToken ? hashToken(resumeToken) : null,
             JSON.stringify({ event: event.name, attributes: scrubbedAttrs }),
-            attributeValue(event.attributes, AgentAttributes.TIMEOUT_AT) ?? null,
+            timeoutAt ?? null,
             framework ?? null,
             nativeIdentity ? JSON.stringify(nativeIdentity) : null,
             JSON.stringify([{ trace_id: span.trace_id, span_id: span.span_id, event_name: event.name }]),

@@ -1,0 +1,354 @@
+{
+  "manifest_kind": "test_only_cross_framework_invariant_manifest",
+  "manifest_version": 1,
+  "frameworks": ["langgraph", "maf"],
+  "invariants": [
+    {
+      "id": "native-identity",
+      "description": "Native identity remains distinct and exact-match authority is framework-owned.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "Coverage is limited to the captured native-fact corpus and the LangGraph bridge scenarios.",
+        "evidence": [
+          "packages/sdk-langgraph/tests/capability_matrix.py",
+          "packages/sdk-langgraph/tests/fixtures/otlp/interrupt_request/expected_native_facts.json",
+          "apps/api-ts/tests/unit/nativeIdentityAmbiguity.test.ts"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-langgraph pytest tests/test_capability_matrix.py tests/test_generate_fixtures.py -q",
+          "pnpm --filter api-ts exec vitest run tests/unit/nativeIdentityAmbiguity.test.ts tests/unit/langgraphConformance.test.ts"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "Coverage is limited to the pinned MAF 1.10.0 fixture corpus and its native request identity policy.",
+        "evidence": [
+          "packages/sdk-maf/agentlens_maf/capability_matrix.py",
+          "packages/sdk-maf/tests/fixtures/otlp/request/expected_native_facts.json",
+          "apps/api-ts/tests/unit/mafIngestion.test.ts"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-maf pytest tests/test_capability_matrix.py tests/test_generate_fixtures.py -q",
+          "pnpm --filter api-ts exec vitest run tests/unit/mafIngestion.test.ts tests/unit/mafArchitecture.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "projection-boundary",
+      "description": "Generic projection and shared Core consume normalized facts without native framework interpretation.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "The boundary is checked in the generic API production paths and the LangGraph native-fact projection suite.",
+        "evidence": [
+          "apps/api-ts/tests/unit/runtimeNormalizationBoundary.test.ts",
+          "apps/api-ts/tests/unit/langgraphConformance.test.ts",
+          "packages/protocol/src/types.ts"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/runtimeNormalizationBoundary.test.ts tests/unit/langgraphConformance.test.ts"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "The boundary is checked in the generic API production paths and the MAF architecture suite.",
+        "evidence": [
+          "apps/api-ts/tests/unit/mafArchitecture.test.ts",
+          "apps/api-ts/tests/unit/runtimeNormalizationBoundary.test.ts",
+          "packages/protocol/src/types.ts"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/mafArchitecture.test.ts tests/unit/runtimeNormalizationBoundary.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "explicit-interaction",
+      "description": "Only explicit native interaction evidence creates actionable control.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "The accepted scope covers explicit interrupt evidence; checkpoints, nesting, overlap, and later activity remain observation-only.",
+        "evidence": [
+          "packages/sdk-langgraph/tests/fixtures/otlp/interrupt_request/expected_native_facts.json",
+          "packages/sdk-langgraph/tests/fixtures/otlp/checkpoint_reference/expected_native_facts.json",
+          "packages/sdk-langgraph/tests/test_governance_conformance_fixtures.py"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-langgraph pytest tests/test_governance_conformance_fixtures.py tests/test_generate_fixtures.py -q"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "The accepted scope covers native request_info evidence; ordinary workflow activity and unclassified telemetry remain non-actionable.",
+        "evidence": [
+          "packages/sdk-maf/tests/fixtures/otlp/request/expected_native_facts.json",
+          "packages/sdk-maf/tests/fixtures/otlp/unknown_telemetry/expected_native_facts.json",
+          "packages/sdk-maf/tests/test_capability_matrix.py"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-maf pytest tests/test_capability_matrix.py tests/test_otel_capture.py -q"
+        ]
+      }
+    },
+    {
+      "id": "state-axis-separation",
+      "description": "Observation, decision, durable claim, delivery acceptance, and runtime outcome remain separate monotonic states.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "Fast and bridge tests cover accepted-without-terminal-evidence and failure-after-acceptance without claiming broader runtime semantics.",
+        "evidence": [
+          "packages/sdk-langgraph/tests/test_governance_integration_harness.py",
+          "apps/api-ts/tests/unit/deliveryClaimDurability.test.ts",
+          "apps/api-ts/tests/unit/interruptGovernancePersistence.test.ts",
+          "apps/api-ts/tests/unit/crossFrameworkConformance.test.ts"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-langgraph pytest tests/test_governance_integration_harness.py -q",
+          "pnpm --filter api-ts exec vitest run tests/unit/deliveryClaimDurability.test.ts tests/unit/interruptGovernancePersistence.test.ts tests/unit/crossFrameworkConformance.test.ts"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "Fast and bridge tests cover accepted-without-terminal-evidence and failure-after-acceptance as separate MAF outcomes.",
+        "evidence": [
+          "packages/sdk-maf/tests/test_governance_bridge.py",
+          "packages/sdk-maf/tests/fixtures/otlp/post_acceptance_failure/expected_native_facts.json",
+          "apps/api-ts/tests/unit/deliveryClaimDurability.test.ts"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-maf pytest tests/test_governance_bridge.py tests/test_reference_runtime.py -q",
+          "pnpm --filter api-ts exec vitest run tests/unit/deliveryClaimDurability.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "exact-authority",
+      "description": "Claims and receipts require authenticated exact framework, mission, branch, identity, and binding scope.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "The fast matrix covers wrong framework, scope, identity, generation, lease, and nonmatching binding rejection.",
+        "evidence": [
+          "apps/api-ts/src/services/interrupts/identityMatch.ts",
+          "apps/api-ts/tests/unit/policyEngine.test.ts",
+          "apps/api-ts/tests/unit/langgraphConformance.test.ts"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/policyEngine.test.ts tests/unit/nativeIdentityAmbiguity.test.ts tests/unit/langgraphConformance.test.ts"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "The fast matrix covers wrong framework, scope, identity, generation, lease, and nonmatching binding rejection.",
+        "evidence": [
+          "apps/api-ts/src/services/interrupts/identityMatch.ts",
+          "apps/api-ts/tests/unit/policyEngine.test.ts",
+          "packages/sdk-maf/tests/test_governance_bridge.py"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/policyEngine.test.ts tests/unit/frameworkGovernance.test.ts",
+          "uv run --directory packages/sdk-maf pytest tests/test_governance_bridge.py -q"
+        ]
+      }
+    },
+    {
+      "id": "request-delivery-correlation",
+      "description": "Terminal runtime outcome advances only from explicit request-and-delivery correlation.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "Later activity, checkpoint creation, shared thread identity, and HTTP success are negative cases in the bridge and fixture suites.",
+        "evidence": [
+          "packages/sdk-langgraph/tests/test_governance_integration_harness.py",
+          "packages/sdk-langgraph/tests/fixtures/otlp/interrupt_resume/expected_native_facts.json",
+          "apps/api-ts/tests/unit/interruptGovernancePersistence.test.ts"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-langgraph pytest tests/test_governance_integration_harness.py tests/test_governance_conformance_fixtures.py -q",
+          "pnpm --filter api-ts exec vitest run tests/unit/interruptGovernancePersistence.test.ts"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "Later workflow activity and mismatched response correlation remain non-terminal in the MAF fixture and bridge suites.",
+        "evidence": [
+          "packages/sdk-maf/tests/fixtures/otlp/unrelated_later_activity/expected_native_facts.json",
+          "packages/sdk-maf/tests/fixtures/otlp/post_acceptance_failure/expected_native_facts.json",
+          "packages/sdk-maf/tests/test_governance_bridge.py"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-maf pytest tests/test_governance_bridge.py tests/test_otel_capture.py -q"
+        ]
+      }
+    },
+    {
+      "id": "scope-isolation",
+      "description": "Framework, mission, and branch state remain isolated for observation and control.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "Fast tests prove cross-scope rejection; parallel system execution is intentionally deferred while CI runs gates serially.",
+        "evidence": [
+          "apps/api-ts/tests/unit/policyEngine.test.ts",
+          "apps/api-ts/tests/unit/interruptGovernancePersistence.test.ts",
+          "packages/sdk-langgraph/tests/test_governance_integration_harness.py"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/policyEngine.test.ts tests/unit/interruptGovernancePersistence.test.ts",
+          "uv run --directory packages/sdk-langgraph pytest tests/test_governance_integration_harness.py -q"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "Fast tests prove cross-scope rejection; parallel system execution is intentionally deferred while CI runs gates serially.",
+        "evidence": [
+          "apps/api-ts/tests/unit/policyEngine.test.ts",
+          "apps/api-ts/tests/unit/interruptGovernancePersistence.test.ts",
+          "packages/sdk-maf/tests/test_governance_bridge.py"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/policyEngine.test.ts tests/unit/interruptGovernancePersistence.test.ts",
+          "uv run --directory packages/sdk-maf pytest tests/test_governance_bridge.py -q"
+        ]
+      }
+    },
+    {
+      "id": "public-output-safety",
+      "description": "Public and diagnostic output is bounded observational metadata and excludes executable or private values.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "Scans cover interactions, replay, graph, explanation, audit, and native fixture projection; private bridge values remain process-local.",
+        "evidence": [
+          "apps/api-ts/tests/unit/governancePublicOutputScan.test.ts",
+          "packages/sdk-langgraph/tests/test_governance_conformance_fixtures.py",
+          "apps/web/tests/unit/governControls.test.ts"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/governancePublicOutputScan.test.ts tests/unit/governanceRules.test.ts",
+          "pnpm --filter web exec vitest run tests/unit/governControls.test.ts"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "Scans cover MAF public serialization, captured fixture redaction, and real-system public views.",
+        "evidence": [
+          "packages/sdk-maf/tests/test_public_output_safety.py",
+          "apps/api-ts/tests/unit/governancePublicOutputScan.test.ts",
+          "packages/sdk-maf/tests/run_system_harness.py"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-maf pytest tests/test_public_output_safety.py -q",
+          "pnpm --filter api-ts exec vitest run tests/unit/governancePublicOutputScan.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "governance-independence",
+      "description": "Governance availability and authentication are independent from telemetry observability and from the other framework.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "Fast configuration tests cover disabled, auth-unready, and independently enabled framework states.",
+        "evidence": [
+          "apps/api-ts/src/config/features.ts",
+          "apps/api-ts/tests/unit/frameworkGovernance.test.ts",
+          "docs/langgraph-governance-bridge.md"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/frameworkGovernance.test.ts tests/unit/governanceRules.test.ts"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "Fast configuration tests cover disabled, auth-unready, and independently enabled framework states.",
+        "evidence": [
+          "apps/api-ts/src/config/features.ts",
+          "apps/api-ts/tests/unit/frameworkGovernance.test.ts",
+          "docs/maf-reference-integration.md"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/frameworkGovernance.test.ts tests/unit/governanceRules.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "cross-framework-control-isolation",
+      "description": "A credential, flag, binding, or control reference for one framework cannot authorize the other.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "The route and identity policies are explicit; cross-framework control attempts are fast negative cases and system wrong-scope cases.",
+        "evidence": [
+          "apps/api-ts/src/routes/langgraphBridge.ts",
+          "apps/api-ts/src/routes/mafBridge.ts",
+          "apps/api-ts/tests/unit/mafArchitecture.test.ts"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/mafArchitecture.test.ts tests/unit/frameworkGovernance.test.ts"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "The route and identity policies are explicit; cross-framework control attempts are fast negative cases and system wrong-scope cases.",
+        "evidence": [
+          "apps/api-ts/src/routes/langgraphBridge.ts",
+          "apps/api-ts/src/routes/mafBridge.ts",
+          "apps/api-ts/tests/unit/mafArchitecture.test.ts"
+        ],
+        "commands": [
+          "pnpm --filter api-ts exec vitest run tests/unit/mafArchitecture.test.ts tests/unit/frameworkGovernance.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "fixture-provenance",
+      "description": "Captured fixture meaning is locked to its generator, version context, native source, oracle, fingerprint, and doubles.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "Fingerprint validation is deterministic and reports the checked-in regeneration command on drift.",
+        "evidence": [
+          "packages/sdk-langgraph/tests/fixtures/otlp/manifest.json",
+          "packages/sdk-langgraph/tests/helpers/fixture_fingerprint.py",
+          "packages/sdk-langgraph/tests/test_generate_fixtures.py"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-langgraph pytest tests/test_generate_fixtures.py -q"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "Fingerprint validation is deterministic and reports the checked-in regeneration command on drift.",
+        "evidence": [
+          "packages/sdk-maf/tests/fixtures/otlp/manifest.json",
+          "packages/sdk-maf/tests/generate_fixtures.py",
+          "packages/sdk-maf/tests/test_generate_fixtures.py"
+        ],
+        "commands": [
+          "uv run --directory packages/sdk-maf pytest tests/test_generate_fixtures.py -q"
+        ]
+      }
+    },
+    {
+      "id": "real-system-path",
+      "description": "Each accepted framework path crosses its declared real components and explicitly disclosed test doubles.",
+      "langgraph": {
+        "status": "covered",
+        "limitation": "The primary gate requires a running authenticated API and PostgreSQL-backed service; isolated mock tests remain for failure injection.",
+        "evidence": [
+          "packages/sdk-langgraph/tests/run_system_harness.py",
+          "packages/sdk-langgraph/tests/harness_manifest.json",
+          "docs/cross-framework-conformance.md"
+        ],
+        "commands": [
+          "pnpm conformance:system:langgraph"
+        ]
+      },
+      "maf": {
+        "status": "covered",
+        "limitation": "The primary gate requires a running authenticated API and PostgreSQL-backed service; the deterministic model client remains an explicit double.",
+        "evidence": [
+          "packages/sdk-maf/tests/run_system_harness.py",
+          "packages/sdk-maf/tests/harness_manifest.json",
+          "docs/cross-framework-conformance.md"
+        ],
+        "commands": [
+          "pnpm conformance:system:maf"
+        ]
+      }
+    }
+  ]
+}

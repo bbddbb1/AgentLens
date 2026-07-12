@@ -460,6 +460,24 @@ export default function MissionWorkspacePage() {
     () => sequenceNumThroughFrame(snapshots, events, currentFrame),
     [snapshots, events, currentFrame],
   );
+  const runtimeContextReady = Boolean(
+    missionId
+      && missionId !== 'demo-mission'
+      && currentBranchId
+      && frameSequenceNum !== undefined,
+  );
+  const activeRuntimeSummary = runtimeContextReady
+    && runtimeSummary?.mission_id === missionId
+    && runtimeSummary?.branch_id === currentBranchId
+    && runtimeSummary?.sequence_num === frameSequenceNum
+    ? runtimeSummary
+    : null;
+  const activeRuntimeExplanation = runtimeContextReady
+    && runtimeExplanation?.mission_id === missionId
+    && runtimeExplanation?.branch_id === currentBranchId
+    && runtimeExplanation?.as_of_sequence_num === frameSequenceNum
+    ? runtimeExplanation
+    : null;
 
   const syncReplayToGraph = useCallback((replay: ReplayStateResponse) => {
     // Inject pending interrupt flags into snapshots so nodes can render badges
@@ -543,13 +561,9 @@ export default function MissionWorkspacePage() {
 
   useEffect(() => {
     if (!missionId || missionId === 'demo-mission') {
-      setRuntimeSummary(null);
-      setRuntimeExplanationState(null);
       return;
     }
     if (!currentBranchId || frameSequenceNum === undefined) {
-      setRuntimeSummary(null);
-      setRuntimeExplanationState(null);
       return;
     }
 
@@ -575,19 +589,19 @@ export default function MissionWorkspacePage() {
   useEffect(() => {
     const snapshot = snapshots[currentFrame] ?? snapshots[snapshots.length - 1] ?? null;
     const selectedActivity = resolveSelectedActivity(
-      runtimeExplanation,
+      activeRuntimeExplanation,
       snapshot,
       selectedActivityId,
       selectedNodeId,
       selectedEventId,
     );
 
-    if (!runtimeExplanation) {
+    if (!activeRuntimeExplanation) {
       setActivityContextState(null);
       return;
     }
-    setActivityContextState(runtimeExplanation.selected_activity_state ?? null);
-    if (runtimeExplanation.selected_activity_state?.kind === 'no_activity' || runtimeExplanation.activities.length === 0) {
+    setActivityContextState(activeRuntimeExplanation.selected_activity_state ?? null);
+    if (activeRuntimeExplanation.selected_activity_state?.kind === 'no_activity' || activeRuntimeExplanation.activities.length === 0) {
       setSelectedActivityId(null);
       setSelectedEventId(null);
       setSelectedNodeId(null);
@@ -595,7 +609,7 @@ export default function MissionWorkspacePage() {
     }
 
     if (
-      runtimeExplanation.selected_activity_state?.kind === 'overview'
+      activeRuntimeExplanation.selected_activity_state?.kind === 'overview'
       && !selectedActivityId
       && !selectedNodeId
       && !selectedEventId
@@ -616,7 +630,7 @@ export default function MissionWorkspacePage() {
     }
   }, [
     currentFrame,
-    runtimeExplanation,
+    activeRuntimeExplanation,
     selectedActivityId,
     selectedEventId,
     selectedNodeId,
@@ -749,13 +763,13 @@ export default function MissionWorkspacePage() {
               objective={mission?.objective ?? 'Mission overview'}
               missionStatus={missionStatus}
               missionPhase={currentState?.phase ?? mission?.phase ?? 'executing'}
-              serverSummary={runtimeSummary}
-              serverExplanation={runtimeExplanation}
+              serverSummary={activeRuntimeSummary}
+              serverExplanation={activeRuntimeExplanation}
               onEnhance={missionId !== 'demo-mission' ? handleEnhanceSummary : undefined}
               isEnhancing={isEnhancingSummary}
             />
             <div className="flex-1 min-h-0 overflow-hidden">
-              <MissionTimeline explanation={runtimeExplanation} />
+              <MissionTimeline explanation={activeRuntimeExplanation} />
             </div>
           </div>
         }
@@ -784,8 +798,8 @@ export default function MissionWorkspacePage() {
             {currentSnapshot && (
               <CurrentEventAuthorityCard
                 currentSnapshot={currentSnapshot}
-                runtimeSummary={runtimeSummary}
-                runtimeExplanation={runtimeExplanation}
+                runtimeSummary={activeRuntimeSummary}
+                runtimeExplanation={activeRuntimeExplanation}
               />
             )}
           </div>
@@ -796,8 +810,8 @@ export default function MissionWorkspacePage() {
             onBranchChange={loadReplay}
             missionObjective={mission?.objective ?? 'Mission overview'}
             missionStatus={missionStatus}
-            runtimeExplanation={runtimeExplanation}
-            runtimeSummary={runtimeSummary}
+            runtimeExplanation={activeRuntimeExplanation}
+            runtimeSummary={activeRuntimeSummary}
           />
         }
         bottomPanel={
