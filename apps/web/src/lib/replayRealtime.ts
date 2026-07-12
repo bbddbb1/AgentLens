@@ -24,6 +24,7 @@ export function shouldReloadReplayForRealtimeMessage(
     return !currentBranchId || message.branch_id === currentBranchId;
   }
   if (!LEGACY_RELOAD_TYPES.has(message.type)) return false;
-  const branchId = message.branch?.id ?? message.snapshot?.branch_id ?? message.interrupt?.branch_id ?? message.job?.branch_id;
+  const legacyMessage = message as LegacyReplayReloadMessage;
+  const branchId = legacyMessage.branch?.id ?? legacyMessage.snapshot?.branch_id ?? legacyMessage.interrupt?.branch_id ?? legacyMessage.job?.branch_id;
   return !branchId || branchId === currentBranchId;
 }

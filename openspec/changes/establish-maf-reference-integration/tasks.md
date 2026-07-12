@@ -64,7 +64,7 @@
 ## 8. Real End-to-End System Conformance
 
 - [x] 8.1 Add a repeatable harness manifest that records MAF version and explicitly labels the real MAF runtime, OTel/OTLP path, Express HTTP, service authentication, private bridge HTTP, PostgreSQL database, and deterministic model double.
-- [ ] 8.2 Run the full real path from MAF workflow request through OTLP ingestion, interaction observation, binding registration, decision API, one-time claim, native response, correlated telemetry/result, persisted state, and public replay/interaction response.
+- [x] 8.2 Run the full real path from MAF workflow request through OTLP ingestion, interaction observation, binding registration, decision API, one-time claim, native response, correlated telemetry/result, persisted state, and public replay/interaction response.
 - [ ] 8.3 Add end-to-end positive/structured continuation and truthful alternative path coverage, including successful Agent/Tool and executor lifecycle assertions using native facts as the primary oracle.
 - [ ] 8.4 Add end-to-end explicit failure, accepted-delivery-without-outcome, runtime-failure-after-acceptance, and pre-acceptance-delivery-failure cases.
 - [ ] 8.5 Add end-to-end duplicate decision/polling, bridge restart after durable claim, optional source-executor identity, missing/conflicting required identity, expired binding, independent feature flags, MAF-enabled-without-auth, missing/invalid auth, valid control reference without service auth, authenticated wrong framework/mission/branch, unrelated later activity, and cross-framework control rejection cases.
@@ -76,4 +76,4 @@
 - [x] 9.2 Document MAF 1.10.0 capability limitations, native identity terminology, request-response semantics, telemetry enrichment boundary, private bridge ownership, state-axis separation, and independent feature-flag deployment.
 - [x] 9.3 Add architecture tests confirming MAF code does not enter the LangGraph package, LangGraph code does not interpret MAF, generic projection contains no MAF keys, each route directly passes a small constant identity policy, and no public adapter/profile/policy contract, registry, strategy framework, adapter factory, dynamic dispatch, or discovery mechanism is introduced.
 - [x] 9.4 Run all existing LangGraph observability/governance/security/UI tests and resolve only genuine framework-neutral regressions without changing LangGraph native semantics.
-- [ ] 9.5 Run MAF and workspace Python tests, API/web tests, real PostgreSQL/HTTP/OTLP conformance, builds, lint/type checks, public-output scans, and `openspec validate establish-maf-reference-integration --type change --strict`; resolve all relevant failures.
+- [x] 9.5 Run MAF and workspace Python tests, API/web tests, real PostgreSQL/HTTP/OTLP conformance, builds, lint/type checks, public-output scans, and `openspec validate establish-maf-reference-integration --type change --strict`; resolve all relevant failures.

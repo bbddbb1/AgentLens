@@ -366,7 +366,7 @@ const statusConfig: Record<string, { icon: React.ReactNode; color: string; label
   paused: { icon: <PauseCircle size={12} />, color: '#fbbf24', label: 'Paused' },
 };
 
-export function CurrentEventAuthorityCard({
+function CurrentEventAuthorityCard({
   currentSnapshot,
   runtimeSummary,
   runtimeExplanation = null,
