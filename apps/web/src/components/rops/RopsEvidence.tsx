@@ -2,10 +2,8 @@
  * ROPS Level 4 — Evidence View (spec section 5.2 R-6 / 6 / 9.4 / 11).
  *
  * The audit fallback. Shows the recorded `EventEnvelope` and its `payload` / `metadata`
- * / `model` / `causal` / `policy` / `error` / `content_hash` / `previous_hash`
- * verbatim. L4 is where an operator verifies a projection against the ledger:
- * "if a projection looks wrong, L4 is where the operator verifies against the
- * ledger." (spec R-6)
+ * / `model` / `causal` / `policy` / `error` verbatim. L4 compares a projection
+ * with recorded span-backed evidence.
  *
  * Nothing is interpreted. Unrecognized payload/metadata keys appear verbatim
  * under "Recorded Attributes" (spec 8.2). No truncation of recorded evidence (spec 7.4):
@@ -163,10 +161,6 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
       </EvidenceSection>
 
       {/* Cryptographic linkage — Evidence */}
-      <EvidenceSection title="Cryptographic Linkage">
-        <HashRow label="content_hash (SHA-256)" value={envelope.content_hash} onCopy={copy} copied={copied} copyKey="content" />
-        <HashRow label="previous_hash" value={envelope.previous_hash} onCopy={copy} copied={copied} copyKey="previous" />
-      </EvidenceSection>
     </div>
   );
 }
@@ -212,38 +206,6 @@ function EvidenceRow({
           </button>
         )}
       </div>
-    </div>
-  );
-}
-
-function HashRow({
-  label,
-  value,
-  onCopy,
-  copied,
-  copyKey,
-}: {
-  label: string;
-  value: string | undefined;
-  onCopy: (text: string, key: string) => void;
-  copied: string | null;
-  copyKey: string;
-}) {
-  const display = value ?? 'No hash recorded.';
-  return (
-    <div className="flex flex-col bg-[rgba(0,0,0,0.18)] p-1.5 rounded border border-[rgba(255,255,255,0.02)] relative">
-      <span className="text-[8px] uppercase tracking-wider text-[#5d6180]">{label}</span>
-      <span className="text-[10px] font-mono text-[#cfd3e6] break-all pr-6" title={display}>{display}</span>
-      {value && (
-        <button
-          type="button"
-          onClick={() => onCopy(value, copyKey)}
-          className="absolute right-1.5 top-1.5 p-1 rounded text-[#5d6180] hover:text-white hover:bg-[rgba(255,255,255,0.05)]"
-          title="Copy hash"
-        >
-          {copied === copyKey ? <CheckCircle2 size={10} className="text-[#34d399]" /> : <Copy size={10} />}
-        </button>
-      )}
     </div>
   );
 }

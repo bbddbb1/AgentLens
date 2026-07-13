@@ -100,6 +100,20 @@ describe('graphStore', () => {
     expect(useGraphStore.getState().selectedNodeId).toBeNull();
   });
 
+  it('clears graph content and selection before a workspace context changes', () => {
+    useGraphStore.setState({
+      nodes: [{ id: 'node-1', type: 'default', position: { x: 0, y: 0 }, data: {} }],
+      edges: [{ id: 'edge-1', source: 'node-1', target: 'node-2' }],
+      baseNodes: [{ id: 'node-1', type: 'agent', label: 'Agent', status: 'active', position: { x: 0, y: 0 } }],
+      snapshots: [{ id: 'snapshot-1', mission_id: 'm1', branch_id: 'branch-a', sequence_num: 2, timestamp: '2026-01-01T00:00:00.000Z', nodes: [], edges: [] }],
+      selectedNodeId: 'node-1',
+    });
+
+    useGraphStore.getState().clearWorkspace();
+
+    expect(useGraphStore.getState()).toMatchObject({ nodes: [], edges: [], baseNodes: [], snapshots: [], selectedNodeId: null });
+  });
+
   it('sets zoom level', () => {
     useGraphStore.getState().setZoomLevel(2.5);
     expect(useGraphStore.getState().zoomLevel).toBe(2.5);
@@ -247,6 +261,34 @@ describe('replayStore', () => {
   it('sets playing state', () => {
     useReplayStore.getState().setIsPlaying(true);
     expect(useReplayStore.getState().isPlaying).toBe(true);
+  });
+
+  it('clears branch, frame, selection, and runtime state together', () => {
+    useReplayStore.setState({
+      isPlaying: true,
+      currentFrame: 3,
+      totalFrames: 4,
+      currentBranchId: 'branch-b',
+      branches: [{ id: 'branch-b', mission_id: 'm1', name: 'Branch B', status: 'active', metadata: {}, created_at: '', updated_at: '' }],
+      events: [replayEvent('e3', 3)],
+      currentState: { mission_id: 'm1', branch_id: 'branch-b', status: 'active', phase: 'executing', sequence_num: 3, agents: {}, interrupts: {}, nodes: [], edges: [] },
+      selectedEventId: 'e3',
+      selectedActivityId: 'activity-3',
+    });
+
+    useReplayStore.getState().clearWorkspace();
+
+    expect(useReplayStore.getState()).toMatchObject({
+      currentFrame: 0,
+      totalFrames: 0,
+      currentBranchId: null,
+      branches: [],
+      events: [],
+      currentState: null,
+      selectedEventId: null,
+      selectedActivityId: null,
+      activityContextState: null,
+    });
   });
 
   it('clamps current frame to valid range', () => {

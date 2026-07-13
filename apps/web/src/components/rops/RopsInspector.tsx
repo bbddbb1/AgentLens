@@ -1015,11 +1015,6 @@ function ProvenanceBlock({ prov }: { prov: NonNullable<ReturnType<typeof envelop
           <RopsFieldRow label="triggered_by_event_id" field={prov.causal.triggeredByEventId} />
         </div>
       )}
-      <div className="pt-1 space-y-1">
-        <div className="text-[9px] text-[#6b708a]">Cryptographic Linkage</div>
-        <RopsFieldRow label="content_hash" field={prov.contentHash} />
-        <RopsFieldRow label="previous_hash" field={prov.previousHash} />
-      </div>
     </div>
   );
 }

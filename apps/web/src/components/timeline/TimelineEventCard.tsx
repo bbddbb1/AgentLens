@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, ChevronDown, ChevronUp, FileText, PauseCircle, Sparkles, UserRound, XCircle } from 'lucide-react';
+import { Bot, CheckCircle2, ChevronDown, ChevronUp, PauseCircle, Sparkles, XCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import type { RuntimeExplanationActivity } from '@agentlens/protocol';

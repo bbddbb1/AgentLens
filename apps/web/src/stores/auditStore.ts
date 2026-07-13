@@ -14,12 +14,11 @@
  */
 
 import { create } from 'zustand';
-import type { EventEnvelope, MissionAuditEventResponse } from '@agentlens/protocol';
+import type { EventEnvelope } from '@agentlens/protocol';
 import { api } from '@/lib/api';
 
 interface AuditStoreState {
   events: EventEnvelope[];
-  integrity: MissionAuditEventResponse['integrity'] | null;
   isLoading: boolean;
   /** The (missionId, branchId, sequenceNum) tuple the current events were loaded for. */
   loadedFor: { missionId: string; branchId: string; sequenceNum: number | undefined } | null;
@@ -40,7 +39,6 @@ interface AuditStoreState {
 
 export const useAuditStore = create<AuditStoreState>((set, get) => ({
   events: [],
-  integrity: null,
   isLoading: false,
   loadedFor: null,
 
@@ -68,7 +66,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => ({
   },
 
   clear: () =>
-    set({ events: [], integrity: null, isLoading: false, loadedFor: null }),
+    set({ events: [], isLoading: false, loadedFor: null }),
 }));
 
 function runLoad(
@@ -77,13 +75,12 @@ function runLoad(
   branchId: string,
   sequenceNum: number | undefined,
 ) {
-  set({ isLoading: true });
+  set({ events: [], isLoading: true, loadedFor: null });
   api
     .audit.events(missionId, branchId, sequenceNum)
     .then((res) => {
       set({
         events: res.events ?? [],
-        integrity: res.integrity ?? null,
         isLoading: false,
         loadedFor: { missionId, branchId, sequenceNum },
       });
