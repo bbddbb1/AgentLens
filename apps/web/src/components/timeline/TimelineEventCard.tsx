@@ -1,32 +1,32 @@
 import { Bot, CheckCircle2, ChevronDown, ChevronUp, PauseCircle, Sparkles, XCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import type { RuntimeExplanationActivity } from '@agentlens/protocol';
+import type { RuntimeActivity } from '@agentlens/protocol';
 import { formatTimelineOutputBadge, isRedactionValue, resolveNormalizedIoDisplay } from '@/lib/rops/fieldCondition';
 import { safePreview, SUMMARY_IO_PREVIEW_MAX } from '@/lib/safePreview';
 import { AgentAvatar } from '@/components/common/AgentAvatar';
 
-function statusTone(status: RuntimeExplanationActivity['status']): string {
+function statusTone(status: RuntimeActivity['status']): string {
   if (status === 'completed') return 'text-[#34d399]';
   if (status === 'failed') return 'text-[#f87171]';
   if (status === 'waiting') return 'text-[#fbbf24]';
   return 'text-[#67e8f9]';
 }
 
-function statusIcon(status: RuntimeExplanationActivity['status']): React.ReactNode {
+function statusIcon(status: RuntimeActivity['status']): React.ReactNode {
   if (status === 'completed') return <CheckCircle2 size={12} />;
   if (status === 'failed') return <XCircle size={12} />;
   if (status === 'waiting') return <PauseCircle size={12} />;
   return <Sparkles size={12} />;
 }
 
-function activityTime(activity: RuntimeExplanationActivity): string {
-  const timestamp = activity.started_at ?? activity.ended_at ?? activity.evidence_refs[0]?.timestamp;
+function activityTime(activity: RuntimeActivity): string {
+  const timestamp = activity.timestamp;
   if (!timestamp) return 'Unknown time';
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function activityTypeBadge(kind: RuntimeExplanationActivity['kind']): string {
+function activityTypeBadge(kind: RuntimeActivity['kind']): string {
   switch (kind) {
     case 'agent':
       return 'AGENT';
@@ -46,11 +46,13 @@ function activityTypeBadge(kind: RuntimeExplanationActivity['kind']): string {
       return 'HITL';
     case 'checkpoint':
       return 'CHK';
+    default:
+      return 'ACT';
   }
 }
 
 interface TimelineEventCardProps {
-  activity: RuntimeExplanationActivity;
+  activity: RuntimeActivity;
   isCurrent: boolean;
   onSelect: () => void;
 }
@@ -88,7 +90,7 @@ export function TimelineEventCard({ activity, isCurrent, onSelect }: TimelineEve
                 {activityTypeBadge(activity.kind)}
               </div>
               <div className="mt-1 text-[12px] leading-snug text-[#d7dbeb]">
-                {record?.primary_label ?? activity.title} | {record?.action.value ?? activity.action} | {record?.status_or_outcome.value ?? activity.outcome ?? activity.status}
+                {record?.primary_label ?? activity.title ?? activity.label} | {record?.action.value ?? activity.action} | {record?.status_or_outcome.value ?? activity.outcome}
               </div>
             </div>
           </div>
@@ -100,7 +102,7 @@ export function TimelineEventCard({ activity, isCurrent, onSelect }: TimelineEve
         <div className="w-full mt-2 flex items-center justify-between text-[10px] text-[#7b819f]">
           <div className="flex items-center gap-2">
             <span className="rounded-full bg-[rgba(255,255,255,0.05)] px-2 py-0.5 text-[9px] text-[#7c83a3]">
-              #{activity.sequence_num ?? activity.evidence_refs[0]?.sequence_num ?? 0}
+              #{activity.sequence_num ?? 0}
             </span>
             <span className="rounded-full bg-[rgba(129,140,248,0.12)] border border-[rgba(129,140,248,0.2)] px-1.5 py-0.5 text-[9px] text-[#a5b4fc] font-bold">
               {activityTypeBadge(activity.kind)}

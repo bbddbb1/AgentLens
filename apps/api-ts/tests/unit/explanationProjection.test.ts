@@ -99,10 +99,14 @@ describe('projectRuntimeExplanation', () => {
 
   it('keeps historical frames from inheriting final mission state', () => {
     const events = [
-      event(0, 'mission.created'),
+      event(0, 'framework.activity', {}, { metadata: {
+        runtime_lifecycle: 'started', runtime_lifecycle_basis: 'explicit_event',
+      } }),
       event(1, 'interrupt.requested', { interrupt_id: 'int-1', reason: 'Approval needed' }),
       event(2, 'interrupt.decision', { interrupt_id: 'int-1', decision: 'approve' }),
-      event(3, 'mission.status_changed', { status: 'completed' }),
+      event(3, 'framework.interaction', {}, { metadata: {
+        runtime_lifecycle: 'completed', runtime_lifecycle_basis: 'explicit_event',
+      } }),
     ];
 
     const historical = projectRuntimeExplanation({
@@ -136,8 +140,57 @@ describe('projectRuntimeExplanation', () => {
 
     expect(explanation.activities).toHaveLength(1);
     expect(explanation.activities[0]?.started_at).toBeUndefined();
-    expect(explanation.consistency_flags.some((flag) => flag.code === 'orphan_terminal')).toBe(true);
     expect(explanation.consistency_flags.some((flag) => flag.code === 'missing_start')).toBe(true);
+    expect(explanation.consistency_flags.some((flag) => flag.code === 'orphan_terminal')).toBe(false);
+  });
+
+  it.each([
+    ['active', [event(0, 'framework.activity', {}, { metadata: { runtime_lifecycle: 'started', runtime_lifecycle_basis: 'explicit_event' } })]],
+    ['waiting', [event(0, 'interrupt.requested', { interrupt_id: 'int-1' })]],
+    ['completed', [event(0, 'framework.interaction', {}, { metadata: { runtime_lifecycle: 'completed', runtime_lifecycle_basis: 'explicit_event' } })]],
+    ['failed', [event(0, 'framework.interaction', {}, { metadata: { runtime_lifecycle: 'failed', runtime_lifecycle_basis: 'explicit_event' } })]],
+  ] as const)('derives %s from explicit runtime lifecycle evidence', (expected, events) => {
+    expect(projectRuntimeExplanation({ mission_id: 'm1', branch_id: 'main', events }).run_outcome).toBe(expected);
+  });
+
+  it('returns unknown when run evidence is missing and ignores mission-container status', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [event(0, 'mission.status_changed', { status: 'completed' })],
+    });
+    expect(explanation.run_outcome).toBe('unknown');
+    expect(explanation.consistency_flags.some((flag) => flag.code === 'run_evidence_insufficient')).toBe(true);
+  });
+
+  it('returns unknown when terminal run evidence conflicts', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'framework.interaction', {}, { metadata: { runtime_lifecycle: 'completed', runtime_lifecycle_basis: 'explicit_event' } }),
+        event(1, 'framework.interaction', {}, { metadata: { runtime_lifecycle: 'failed', runtime_lifecycle_basis: 'explicit_event' } }),
+      ],
+    });
+    expect(explanation.run_outcome).toBe('unknown');
+    expect(explanation.consistency_flags.some((flag) => flag.code === 'run_evidence_conflict')).toBe(true);
+  });
+
+  it('returns unknown when multiple execution-root candidates provide no terminal evidence', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'span.started', {}, { span_id: 'root-1', metadata: {
+          runtime_lifecycle: 'started', runtime_lifecycle_basis: 'execution_root_span', runtime_root_candidate: true,
+        } }),
+        event(1, 'span.started', {}, { span_id: 'root-2', metadata: {
+          runtime_lifecycle: 'started', runtime_lifecycle_basis: 'execution_root_span', runtime_root_candidate: true,
+        } }),
+      ],
+    });
+    expect(explanation.run_outcome).toBe('unknown');
+    expect(explanation.consistency_flags[0]?.message).toContain('2 execution-root candidates');
   });
 
   it('keeps frame overview as the authority state when selectable activities exist', () => {
@@ -241,6 +294,41 @@ describe('projectRuntimeExplanation', () => {
 
     expect(explanation.activities.map((activity) => activity.id)).toEqual(['llm:req-1', 'retrieval:ret-1']);
     expect(explanation.consistency_flags.some((flag) => flag.code === 'shared_span_multiple_invocations')).toBe(true);
+  });
+
+  it('deduplicates repeated relationship and shared-span conditions by stable identity', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main',
+      events: [
+        event(0, 'tool.called', { 'gen_ai.tool.name': 'a' }, { span_id: 'shared', parent_span_id: 'missing', causal: { tool_call_id: 'a', parent_span_id: 'missing' } }),
+        event(1, 'tool.completed', { 'gen_ai.tool.name': 'a' }, { span_id: 'shared', parent_span_id: 'missing', causal: { tool_call_id: 'a', parent_span_id: 'missing' } }),
+        event(2, 'tool.called', { 'gen_ai.tool.name': 'b' }, { span_id: 'shared', parent_span_id: 'missing', causal: { tool_call_id: 'b', parent_span_id: 'missing' } }),
+      ],
+    });
+    expect(explanation.consistency_flags.filter((flag) => flag.code === 'dangling_parent_span')).toHaveLength(1);
+    expect(explanation.consistency_flags.filter((flag) => flag.code === 'shared_span_multiple_invocations')).toHaveLength(1);
+  });
+
+  it('coalesces equivalent terminal evidence and flags only conflicting terminal outcomes', () => {
+    const equivalent = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main',
+      events: [
+        event(0, 'tool.called', { 'gen_ai.tool.name': 'fetch' }, { span_id: 'tool', causal: { tool_call_id: 'call' } }),
+        event(1, 'tool.completed', { 'gen_ai.tool.name': 'fetch' }, { span_id: 'tool', causal: { tool_call_id: 'call' } }),
+        event(2, 'span.completed', { operation_name: 'execute_tool', 'gen_ai.tool.name': 'fetch' }, { span_id: 'tool', causal: { tool_call_id: 'call' } }),
+      ],
+    });
+    expect(equivalent.consistency_flags.some((flag) => flag.code === 'duplicate_terminal')).toBe(false);
+
+    const conflicting = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main',
+      events: [
+        event(0, 'tool.called', { 'gen_ai.tool.name': 'fetch' }, { span_id: 'tool', causal: { tool_call_id: 'call' } }),
+        event(1, 'tool.completed', { 'gen_ai.tool.name': 'fetch' }, { span_id: 'tool', causal: { tool_call_id: 'call' } }),
+        event(2, 'tool.failed', { 'gen_ai.tool.name': 'fetch' }, { span_id: 'tool', causal: { tool_call_id: 'call' } }),
+      ],
+    });
+    expect(conflicting.consistency_flags.filter((flag) => flag.code === 'duplicate_terminal')).toHaveLength(1);
   });
 
   it('never leaks redacted values through explanation inputs or outputs', () => {

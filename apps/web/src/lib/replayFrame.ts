@@ -1,3 +1,4 @@
+import { eventsThroughCursor, orderFrameEvents } from '@agentlens/protocol';
 import type { EventEnvelope, GraphSnapshot, MissionEventRecord } from '@agentlens/protocol';
 
 /** Snapshot at a replay frame index (clamped). */
@@ -40,7 +41,8 @@ export function sequenceNumThroughFrame(
       ? snapshot.source_event_sequence_num
       : spanStartSeq;
 
-  return maxSequenceThroughTimestamp(events, snapshot.timestamp, linkedSeq);
+  if (linkedSeq !== undefined) return lastSequenceAtSourceTimestamp(events, linkedSeq);
+  return lastSequenceThroughTimestamp(events, snapshot.timestamp, linkedSeq);
 }
 
 /** Representative mission event for timeline / audit context at a frame. */
@@ -98,24 +100,40 @@ export function findFrameForEvent(
   return bestFrame;
 }
 
-function maxSequenceThroughTimestamp(
+function lastSequenceThroughTimestamp(
   events: readonly MissionEventRecord[],
   timestamp: string,
   floorSeq?: number,
 ): number | undefined {
   const snapshotMs = Date.parse(timestamp);
-  let maxSeq = floorSeq ?? -1;
+  let lastSeq = floorSeq;
 
-  for (const event of events) {
-    if (floorSeq !== undefined && event.sequence_num < floorSeq) continue;
+  for (const event of orderFrameEvents(events)) {
     const eventMs = Date.parse(event.timestamp);
     if (!Number.isNaN(snapshotMs) && !Number.isNaN(eventMs) && eventMs <= snapshotMs) {
-      maxSeq = Math.max(maxSeq, event.sequence_num);
+      lastSeq = event.sequence_num;
     }
   }
 
-  if (maxSeq >= 0) return maxSeq;
-  return floorSeq ?? events[0]?.sequence_num;
+  return lastSeq ?? events[0]?.sequence_num;
+}
+
+function lastSequenceAtSourceTimestamp(
+  events: readonly MissionEventRecord[],
+  sourceSequenceNum: number,
+): number {
+  const ordered = orderFrameEvents(events);
+  const source = ordered.find((event) => event.sequence_num === sourceSequenceNum);
+  const sourceRaw = source?.metadata?.runtime_timestamp_unix_nano;
+  if (typeof sourceRaw !== 'string') return sourceSequenceNum;
+  let last = sourceSequenceNum;
+  for (const event of ordered) {
+    const eventRaw = event.metadata?.runtime_timestamp_unix_nano;
+    if (typeof eventRaw !== 'string') continue;
+    if (BigInt(eventRaw) > BigInt(sourceRaw)) break;
+    last = event.sequence_num;
+  }
+  return last;
 }
 
 function lastEventThroughTimestamp(
@@ -126,12 +144,10 @@ function lastEventThroughTimestamp(
   if (Number.isNaN(snapshotMs)) return null;
 
   let best: MissionEventRecord | null = null;
-  for (const event of events) {
+  for (const event of orderFrameEvents(events)) {
     const eventMs = Date.parse(event.timestamp);
     if (!Number.isNaN(eventMs) && eventMs <= snapshotMs) {
-      if (!best || event.sequence_num > best.sequence_num) {
-        best = event;
-      }
+      best = event;
     }
   }
   return best;
@@ -145,7 +161,7 @@ export function eventsThroughFrame(
 ): MissionEventRecord[] {
   const cutoff = sequenceNumThroughFrame(snapshots, events, frameIndex);
   if (cutoff === undefined) return [...events];
-  return events.filter((event) => event.sequence_num <= cutoff);
+  return eventsThroughCursor(events, cutoff);
 }
 
 function envelopeEvidenceScore(envelope: EventEnvelope): number {
@@ -173,9 +189,7 @@ export function selectEnvelopeForNode(
   envelopes: readonly EventEnvelope[],
 ): EventEnvelope | null {
   const spanId = node.source_span_id ?? node.evidence_span_id ?? node.span_id ?? node.id;
-  const matched = envelopes
-    .filter((envelope) => envelope.span_id === spanId)
-    .sort((a, b) => (a.sequence_num ?? 0) - (b.sequence_num ?? 0));
+  const matched = orderFrameEvents(envelopes.filter((envelope) => envelope.span_id === spanId));
 
   if (matched.length === 0) return null;
 

@@ -1,5 +1,5 @@
 export type NodeType = 'agent' | 'task' | 'tool' | 'human' | 'memory' | 'team' | 'artifact';
-export type NodeStatus = 'idle' | 'active' | 'completed' | 'failed' | 'waiting' | 'reviewing';
+export type NodeStatus = 'idle' | 'active' | 'completed' | 'failed' | 'waiting' | 'reviewing' | 'unknown';
 export type EdgeType = 'dependency' | 'uses' | 'delegation' | 'critique' | 'review' | 'escalation' | 'data_flow' | 'approval' | 'member_of' | 'produces';
 export type EdgeStatus = 'pending' | 'active' | 'completed' | 'failed';
 
@@ -27,7 +27,7 @@ export type RuntimeExplanationActivityKind =
   | 'artifact'
   | 'human'
   | 'checkpoint';
-export type RuntimeExplanationRunOutcome = 'active' | 'waiting' | 'completed' | 'failed';
+export type RuntimeExplanationRunOutcome = 'active' | 'waiting' | 'completed' | 'failed' | 'unknown';
 export type RuntimeExplanationRelationBasis =
   | 'explicit_link'
   | 'trigger_reference'
@@ -44,7 +44,9 @@ export type RuntimeExplanationConsistencyCode =
   | 'ambiguous_parallelism'
   | 'shared_span_multiple_invocations'
   | 'branch_fork_cutoff_conflict'
-  | 'incomplete_lifecycle';
+  | 'incomplete_lifecycle'
+  | 'run_evidence_insufficient'
+  | 'run_evidence_conflict';
 export type RuntimeExplanationConsistencySeverity = 'info' | 'warning' | 'error';
 
 export interface RuntimeExplanationEvidenceRef {

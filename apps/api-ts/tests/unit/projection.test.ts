@@ -271,6 +271,86 @@ describe('projectReplay', () => {
     expect(replay.projection_version).toBe('span_projection.v1');
   });
 
+  it('preserves persisted OTLP event nanoseconds and excludes span-final attributes from earlier events', () => {
+    const captured = {
+      span_id: 'llm-span', trace_id: 'trace-1', parent_span_id: 'run-span', operation_name: 'llm.call',
+      start_time_unix_nano: '1783949756835000000', end_time_unix_nano: '1783949765222012400', status_code: 'OK',
+      attributes: {
+        'gen_ai.request.model': 'deepseek-v4-flash',
+        'gen_ai.workflow.status': 'completed',
+        'gen_ai.workflow.phase': 'completed',
+        'gen_ai.usage.output_tokens': 629,
+      },
+      events: [{
+        name: 'gen_ai.call', timestamp: '1783949765222001500',
+        attributes: { 'event.marker': 'terminal', 'gen_ai.usage.output_tokens': 629 },
+      }],
+    };
+    const replay = projectReplay('m-time', 'main', [captured]);
+    const start = replay.events.find((entry) => entry.id === 'llm-span')!;
+    const terminal = replay.events.find((entry) => entry.span_id === 'llm-span' && entry.id.includes('-event-'))!;
+
+    expect(terminal.timestamp).toBe('2026-07-13T13:36:05.222Z');
+    expect(start.payload).not.toHaveProperty('gen_ai.workflow.status');
+    expect(start.payload).not.toHaveProperty('gen_ai.workflow.phase');
+    expect(start.payload).not.toHaveProperty('gen_ai.usage.output_tokens');
+    expect(terminal.payload).toHaveProperty('event.marker', 'terminal');
+  });
+
+  it('uses a unique execution-container root as a completion fallback without treating a LangGraph activity root as a run', () => {
+    const executionRoot = {
+      span_id: 'run-span', trace_id: 'trace-run', parent_span_id: null, operation_name: 'mission.execute',
+      start_time_unix_nano: '1000000000', end_time_unix_nano: '3000000000', status_code: 'OK', attributes: {}, events: [],
+    };
+    const langGraphActivityRoot = {
+      span_id: 'agent-span', trace_id: 'trace-agent', parent_span_id: '', operation_name: 'agent:researcher',
+      start_time_unix_nano: '1000000000', end_time_unix_nano: '3000000000', status_code: 'OK',
+      attributes: { 'agentlens.langgraph.run_id': 'run-1', 'agent.span.kind': 'agent' }, events: [],
+    };
+
+    expect(projectReplay('m-run', 'main', [executionRoot]).current_state?.status).toBe('completed');
+    expect(projectReplay('m-langgraph', 'main', [langGraphActivityRoot]).current_state?.status).toBe('unknown');
+  });
+
+  it('prefers explicit workflow terminal evidence when MAF-style telemetry has multiple parentless spans', () => {
+    const spans = [
+      {
+        span_id: 'build', trace_id: 'trace-build', parent_span_id: null, operation_name: 'workflow.build',
+        start_time_unix_nano: '1000000000', end_time_unix_nano: '2000000000', status_code: 'UNSET', attributes: {}, events: [],
+      },
+      {
+        span_id: 'workflow', trace_id: 'trace-run', parent_span_id: null, operation_name: 'workflow.run',
+        start_time_unix_nano: '2000000000', end_time_unix_nano: '4000000000', status_code: 'UNSET',
+        attributes: { 'workflow.id': 'wf-1' },
+        events: [{ name: 'workflow.completed', timestamp: '3900000000', attributes: { 'workflow.id': 'wf-1' } }],
+      },
+    ];
+    const replay = projectReplay('m-maf', 'main', spans);
+    expect(replay.current_state?.status).toBe('completed');
+    expect(replay.events.find((entry) => entry.span_id === 'workflow' && entry.id.includes('-event-'))?.metadata?.runtime_lifecycle).toBe('completed');
+  });
+
+  it('does not leak a later execution-root candidate into an earlier frame', async () => {
+    const { projectRuntimeExplanation } = await import('@agentlens/protocol');
+    const replay = projectReplay('m-roots', 'main', [
+      {
+        span_id: 'run-1', trace_id: 'trace-1', parent_span_id: null, operation_name: 'workflow.run',
+        start_time_unix_nano: '1000000000', end_time_unix_nano: '2000000000', status_code: 'OK', attributes: {}, events: [],
+      },
+      {
+        span_id: 'run-2', trace_id: 'trace-2', parent_span_id: null, operation_name: 'workflow.run',
+        start_time_unix_nano: '10000000000', end_time_unix_nano: '11000000000', status_code: 'OK', attributes: {}, events: [],
+      },
+    ]);
+    const firstEnd = replay.events.find((entry) => entry.id === 'run-1-end')!;
+    const historical = projectRuntimeExplanation({
+      mission_id: 'm-roots', branch_id: 'main', events: replay.events as any,
+      as_of_sequence_num: firstEnd.sequence_num,
+    });
+    expect(historical.run_outcome).toBe('completed');
+    expect(replay.current_state?.status).toBe('unknown');
+  });
+
   it('emits task.started (not tool.called) for execute_tool span start', () => {
     const toolSpan = {
       span_id: 'tool-span',

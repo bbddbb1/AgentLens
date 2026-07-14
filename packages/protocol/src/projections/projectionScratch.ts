@@ -5,6 +5,7 @@ import type {
   RuntimeEventRef,
   RuntimeFactWarning,
 } from '../types.js';
+import { eventsThroughCursor } from './runtimeProjection.js';
 
 export const NOISE_EVENT_TYPES = new Set(['span.started', 'span.completed']);
 
@@ -443,9 +444,7 @@ export function scanEventsToScratch(
   upToSequenceNum?: number,
 ): MissionProjectionScratch {
   const scratch = createMissionScratch(initialPhase);
-  const filtered = [...events]
-    .filter((e) => upToSequenceNum === undefined || e.sequence_num <= upToSequenceNum)
-    .sort((a, b) => a.sequence_num - b.sequence_num);
+  const filtered = eventsThroughCursor(events, upToSequenceNum);
 
   for (const event of filtered) {
     applyEventToScratch(scratch, event);
@@ -461,6 +460,7 @@ export function statusLabel(status: NodeStatus): string {
     failed: 'Failed',
     waiting: 'Waiting',
     reviewing: 'Reviewing',
+    unknown: 'Unknown',
   };
   return labels[status] ?? status;
 }

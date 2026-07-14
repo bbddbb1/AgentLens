@@ -20,6 +20,7 @@ import type {
   RuntimeProgressMarker,
   RuntimeSelectedActivityState,
 } from '../types.js';
+import { eventsThroughCursor } from './runtimeProjection.js';
 
 export interface ProjectRuntimeExplanationInput {
   mission_id: string;
@@ -237,6 +238,8 @@ function runtimeOutcomeLabel(status: RuntimeExplanationRunOutcome): string {
       return 'Failed';
     case 'waiting':
       return 'Waiting';
+    case 'unknown':
+      return 'Unknown';
     default:
       return 'Active';
   }
@@ -593,6 +596,25 @@ function createFlag(
   return { code, severity, message, activity_id, relation_id, evidence_refs: refs };
 }
 
+function dedupeFlags(flags: RuntimeExplanationConsistencyFlag[]): RuntimeExplanationConsistencyFlag[] {
+  const deduped = new Map<string, RuntimeExplanationConsistencyFlag>();
+  for (const flag of flags) {
+    const conditionIdentity =
+      flag.code === 'dangling_parent_span' || flag.code === 'shared_span_multiple_invocations'
+        ? `${flag.code}:${flag.message}`
+        : `${flag.code}:${flag.activity_id ?? ''}:${flag.relation_id ?? ''}:${flag.message}`;
+    const existing = deduped.get(conditionIdentity);
+    if (!existing) {
+      deduped.set(conditionIdentity, { ...flag, evidence_refs: [...flag.evidence_refs] });
+      continue;
+    }
+    const refs = new Map(existing.evidence_refs.map((ref) => [`${ref.branch_id ?? ''}:${ref.sequence_num}:${ref.event_id}`, ref]));
+    for (const ref of flag.evidence_refs) refs.set(`${ref.branch_id ?? ''}:${ref.sequence_num}:${ref.event_id}`, ref);
+    existing.evidence_refs = [...refs.values()];
+  }
+  return [...deduped.values()];
+}
+
 function hasPath(relations: RuntimeExplanationRelation[], source: string, target: string): boolean {
   const adjacency = new Map<string, string[]>();
   for (const relation of relations) {
@@ -637,6 +659,8 @@ function deriveRunStatus(runOutcome: RuntimeExplanationRunOutcome): RunStatus {
       return 'Failed';
     case 'waiting':
       return 'Waiting';
+    case 'unknown':
+      return 'Unknown';
     default:
       return 'Active';
   }
@@ -652,8 +676,10 @@ function deriveRuntimePhase(
       ? 'Completed'
       : runOutcome === 'failed'
         ? 'Failed'
-        : runOutcome === 'waiting'
+      : runOutcome === 'waiting'
           ? 'Waiting'
+          : runOutcome === 'unknown'
+            ? 'Unknown'
           : refs.length === 0
             ? 'Unknown'
             : 'Active Work';
@@ -720,9 +746,7 @@ function buildOperatorFacingRecord(
 export function projectRuntimeExplanation(
   input: ProjectRuntimeExplanationInput,
 ): RuntimeExplanationProjection {
-  const filtered = [...input.events]
-    .filter((event) => input.as_of_sequence_num === undefined || event.sequence_num <= input.as_of_sequence_num)
-    .sort((left, right) => left.sequence_num - right.sequence_num);
+  const filtered = eventsThroughCursor(input.events, input.as_of_sequence_num);
 
   const asOfSequenceNum = input.as_of_sequence_num ?? filtered[filtered.length - 1]?.sequence_num ?? 0;
   const asOfTimestamp = filtered[filtered.length - 1]?.timestamp;
@@ -734,18 +758,37 @@ export function projectRuntimeExplanation(
   let runStartAt: string | undefined;
   let runCompletedAt: string | undefined;
   let runFailedAt: string | undefined;
+  const runtimeRootCandidateIds = new Set<string>();
+  let explicitRunStartedAt: string | undefined;
+  const runTerminalEvidence: Array<{
+    state: 'completed' | 'failed';
+    basis: string;
+    ref: RuntimeExplanationEvidenceRef;
+  }> = [];
 
   for (const event of filtered) {
     const payload = (event.payload ?? {}) as Record<string, unknown>;
-    if (!runStartAt && event.event_type === 'mission.created') {
+    const metadata = (event.metadata ?? {}) as Record<string, unknown>;
+    const lifecycle = metadata.runtime_lifecycle;
+    const lifecycleBasis = typeof metadata.runtime_lifecycle_basis === 'string'
+      ? metadata.runtime_lifecycle_basis
+      : 'recorded_event';
+    if (metadata.runtime_root_candidate === true && event.span_id) runtimeRootCandidateIds.add(event.span_id);
+    if (
+      lifecycle === 'started'
+      && !runStartAt
+    ) {
       runStartAt = event.timestamp;
     }
-    if (event.event_type === 'mission.status_changed' || event.event_type === 'mission.updated') {
-      const status = stringValue(payload, 'status');
-      if (status === 'completed') runCompletedAt = event.timestamp;
-      if (status === 'failed') runFailedAt = event.timestamp;
+    if (lifecycle === 'started' && lifecycleBasis !== 'execution_root_span' && !explicitRunStartedAt) {
+      explicitRunStartedAt = event.timestamp;
     }
-
+    if (lifecycle === 'completed' || lifecycle === 'failed') {
+      const ref = evidenceRef(event);
+      runTerminalEvidence.push({ state: lifecycle, basis: lifecycleBasis, ref });
+      if (lifecycle === 'completed') runCompletedAt ??= event.timestamp;
+      if (lifecycle === 'failed') runFailedAt ??= event.timestamp;
+    }
     const interruptId = stringValue(payload, 'interrupt_id', 'gen_ai.agent.interrupt.id');
     if (event.event_type === 'interrupt.requested' && interruptId) pendingInterrupts.add(interruptId);
     if ((event.event_type === 'interrupt.decision' || event.event_type === 'interrupt.resumed') && interruptId) {
@@ -797,22 +840,13 @@ export function projectRuntimeExplanation(
       if (!activity.started_at) {
         activity.started_at = event.timestamp;
       }
-      activity.sequence_num = Math.min(activity.sequence_num ?? event.sequence_num, event.sequence_num);
+      activity.sequence_num ??= event.sequence_num;
     } else if (projection.phase === 'instant') {
       activity.started_at ??= event.timestamp;
       activity.ended_at ??= event.timestamp;
       activity.terminal_status = projection.completed_status;
     } else {
       if (!activity.started_at) {
-        flags.push(
-          createFlag(
-            'orphan_terminal',
-            'warning',
-            `Terminal evidence arrived without a recorded start for ${projection.id}.`,
-            [ref],
-            projection.id,
-          ),
-        );
         flags.push(
           createFlag(
             'missing_start',
@@ -823,15 +857,17 @@ export function projectRuntimeExplanation(
           ),
         );
       } else if (activity.ended_at) {
-        flags.push(
-          createFlag(
-            'duplicate_terminal',
-            'warning',
-            `Multiple terminal lifecycle events were recorded for ${projection.id}.`,
-            [ref],
-            projection.id,
-          ),
-        );
+        if (activity.terminal_status !== projection.completed_status) {
+          flags.push(
+            createFlag(
+              'duplicate_terminal',
+              'error',
+              `Conflicting terminal lifecycle outcomes were recorded for ${projection.id}.`,
+              [ref],
+              projection.id,
+            ),
+          );
+        }
       } else {
         activity.ended_at = event.timestamp;
         activity.terminal_status = projection.completed_status;
@@ -843,17 +879,14 @@ export function projectRuntimeExplanation(
     if (ids.size > 1) {
       const related = [...ids].sort();
       const refs = related.flatMap((id) => activityMap.get(id)?.evidence_refs ?? []);
-      for (const id of related) {
-        flags.push(
-          createFlag(
-            'shared_span_multiple_invocations',
-            'warning',
-            `Span ${spanId} backs multiple invocation identities.`,
-            refs,
-            id,
-          ),
-        );
-      }
+      flags.push(
+        createFlag(
+          'shared_span_multiple_invocations',
+          'warning',
+          `Span ${spanId} backs multiple invocation identities.`,
+          refs,
+        ),
+      );
     }
   }
 
@@ -909,13 +942,13 @@ export function projectRuntimeExplanation(
         outputs: activity.outputs,
         error: activity.error,
         artifacts: activity.artifacts,
-        evidence_refs: [...activity.evidence_refs].sort((left, right) => left.sequence_num - right.sequence_num),
+        evidence_refs: [...activity.evidence_refs],
       };
     })
     .sort((left, right) => {
-      const leftSeq = left.sequence_num ?? Number.MAX_SAFE_INTEGER;
-      const rightSeq = right.sequence_num ?? Number.MAX_SAFE_INTEGER;
-      if (leftSeq !== rightSeq) return leftSeq - rightSeq;
+      const leftTime = Date.parse(left.started_at ?? left.ended_at ?? '');
+      const rightTime = Date.parse(right.started_at ?? right.ended_at ?? '');
+      if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) return leftTime - rightTime;
       return left.id.localeCompare(right.id);
     });
 
@@ -978,7 +1011,7 @@ export function projectRuntimeExplanation(
       const id = `${candidate.basis}:${candidate.source_activity_id}->${candidate.target_activity_id}`;
       const existing = relationMap.get(id);
       if (existing) {
-        existing.evidence_refs = [...existing.evidence_refs, ...refs].sort((left, right) => left.sequence_num - right.sequence_num);
+        existing.evidence_refs = [...existing.evidence_refs, ...refs];
       } else {
         relationMap.set(id, {
           id,
@@ -1065,7 +1098,7 @@ export function projectRuntimeExplanation(
           id: `parallel:${parentId}:${activityIds.join(',')}`,
           activity_ids: activityIds,
           basis: 'parent_overlap',
-          evidence_refs: refs.sort((left, right) => left.sequence_num - right.sequence_num),
+          evidence_refs: refs,
         });
       }
     }
@@ -1117,7 +1150,7 @@ export function projectRuntimeExplanation(
       predecessor_activity_ids: uniquePredecessors,
       downstream_activity_id: targetId,
       parallel_group_id: candidateGroup.id,
-      evidence_refs: refs.sort((left, right) => left.sequence_num - right.sequence_num),
+      evidence_refs: refs,
     });
   }
 
@@ -1148,11 +1181,44 @@ export function projectRuntimeExplanation(
     };
   });
 
-  const runOutcome: RuntimeExplanationRunOutcome =
-    runFailedAt ? 'failed'
-      : pendingInterrupts.size > 0 ? 'waiting'
-        : runCompletedAt ? 'completed'
-          : 'active';
+  const runtimeRootCandidateCount = runtimeRootCandidateIds.size;
+  const effectiveTerminalEvidence = runTerminalEvidence.filter(
+    (entry) => entry.basis !== 'execution_root_span' || runtimeRootCandidateCount === 1,
+  );
+  const terminalStates = new Set(effectiveTerminalEvidence.map((entry) => entry.state));
+  const terminalRefs = effectiveTerminalEvidence.map((entry) => entry.ref);
+  const hasTerminalConflict = terminalStates.size > 1;
+  const hasWaitingTerminalConflict = pendingInterrupts.size > 0 && terminalStates.size > 0;
+  let runOutcome: RuntimeExplanationRunOutcome;
+  if (hasTerminalConflict || hasWaitingTerminalConflict) {
+    runOutcome = 'unknown';
+    flags.push(createFlag(
+      'run_evidence_conflict',
+      'error',
+      hasWaitingTerminalConflict
+        ? 'Terminal run evidence conflicts with an unresolved waiting interaction at this frame.'
+        : 'Recorded run-terminal evidence contains conflicting outcomes.',
+      terminalRefs,
+    ));
+  } else if (terminalStates.has('failed')) {
+    runOutcome = 'failed';
+  } else if (terminalStates.has('completed')) {
+    runOutcome = 'completed';
+  } else if (pendingInterrupts.size > 0) {
+    runOutcome = 'waiting';
+  } else if (explicitRunStartedAt || (runStartAt && runtimeRootCandidateCount === 1)) {
+    runOutcome = 'active';
+  } else {
+    runOutcome = 'unknown';
+    flags.push(createFlag(
+      'run_evidence_insufficient',
+      'warning',
+      runtimeRootCandidateCount > 1
+        ? `Run outcome is unknown because ${runtimeRootCandidateCount} execution-root candidates were recorded.`
+        : 'Run outcome is unknown because no explicit lifecycle or unique execution-root evidence was recorded.',
+      [],
+    ));
+  }
   const runDurationMs = (() => {
     const start = parseTimestamp(runStartAt);
     const end = parseTimestamp(runFailedAt ?? runCompletedAt);
@@ -1188,7 +1254,7 @@ export function projectRuntimeExplanation(
     relations,
     parallel_groups: parallelGroups.sort((left, right) => left.id.localeCompare(right.id)),
     merge_groups: mergeGroups.sort((left, right) => left.id.localeCompare(right.id)),
-    consistency_flags: flags.sort((left, right) => {
+    consistency_flags: dedupeFlags(flags).sort((left, right) => {
       if (left.code !== right.code) return left.code.localeCompare(right.code);
       if ((left.activity_id ?? '') !== (right.activity_id ?? '')) {
         return (left.activity_id ?? '').localeCompare(right.activity_id ?? '');

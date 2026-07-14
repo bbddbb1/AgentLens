@@ -70,10 +70,6 @@ export const FORBIDDEN_FIELDS = [
   'generated.suggested_title',
   'generated.llm_warnings',
   'RuntimeSummary.narrative',
-  'WhyThisState.aiNarrative',
-  'ReviewPanel.summary',
-  'ReviewPanel.conflicts',
-  'ReviewPanel.anomalies',
 ] as const;
 
 /** Predicate: is a field key allowed under ROPS? (false => X-class, never render). */
@@ -119,7 +115,7 @@ function projection<T>(key: string, value: T | undefined | null): RopsField<T> {
 // Status / lifecycle vocabulary (spec section 7.1 / 7.2)
 // ---------------------------------------------------------------------------
 
-export type NodeStatusLabel = 'Idle' | 'Active' | 'Completed' | 'Failed' | 'Waiting' | 'Reviewing';
+export type NodeStatusLabel = 'Idle' | 'Active' | 'Completed' | 'Failed' | 'Waiting' | 'Reviewing' | 'Unknown';
 
 const NODE_STATUS_LABELS: Record<string, NodeStatusLabel> = {
   idle: 'Idle',
@@ -128,6 +124,7 @@ const NODE_STATUS_LABELS: Record<string, NodeStatusLabel> = {
   failed: 'Failed',
   waiting: 'Waiting',
   reviewing: 'Reviewing',
+  unknown: 'Unknown',
 };
 
 /** Deterministic label for a `NodeStatus` (mirrors `statusLabel` in the core). */

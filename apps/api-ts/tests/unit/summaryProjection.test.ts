@@ -47,6 +47,26 @@ describe('describeRuntimeEvent', () => {
 });
 
 describe('projectRuntimeSummary', () => {
+  it('uses the explanation as the single run status and phase authority', () => {
+    const completed = event('framework.interaction', {}, 0);
+    completed.metadata = { runtime_lifecycle: 'completed', runtime_lifecycle_basis: 'explicit_event' };
+    const summary = projectRuntimeSummary({
+      mission_id: 'm1', branch_id: 'main', objective: 'Test', status: 'active', phase: 'executing', events: [completed],
+    });
+    expect(summary).toMatchObject({ status: 'completed', run_status: 'Completed', phase: 'Completed' });
+    expect(summary.current_phase?.label).toBe('Completed');
+    expect(summary.runtime_phase?.label).toBe('Completed');
+  });
+
+  it('returns an explicit unknown summary when execution evidence is insufficient', () => {
+    const summary = projectRuntimeSummary({
+      mission_id: 'm1', branch_id: 'main', objective: 'Test', status: 'active', phase: 'executing',
+      events: [event('mission.created', {}, 0)],
+    });
+    expect(summary).toMatchObject({ status: 'unknown', run_status: 'Unknown', phase: 'Unknown' });
+    expect(summary.headline).toBe('Execution outcome unknown');
+  });
+
   it('builds progressive execution summary from events only', () => {
     const events = [
       event('agent.registered', { agent_id: 'planner', name: 'Planner', role: 'planner' }, 0),

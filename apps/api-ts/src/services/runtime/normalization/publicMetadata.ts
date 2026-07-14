@@ -11,6 +11,18 @@ export function publicTelemetryAttributes(attrs: Record<string, any> | undefined
   return Object.fromEntries(Object.entries(source).filter(([key]) => !FORBIDDEN_PUBLIC_KEY.test(key)));
 }
 
+const FINAL_ONLY_ATTRIBUTE = /(?:^|[._])(?:status|phase|terminal|outcome|result|output|finish_reason|usage)(?:$|[._])/i;
+
+/**
+ * Span attributes are exported at span end. Do not project final-only values
+ * onto the synthetic span-start event, where they would become future evidence.
+ */
+export function publicSpanStartAttributes(attrs: Record<string, any> | undefined): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(publicTelemetryAttributes(attrs)).filter(([key]) => !FINAL_ONLY_ATTRIBUTE.test(key)),
+  );
+}
+
 /** Replace framework-native operation/event names with public-neutral labels. */
 export function publicTelemetryName(
   spanAttributes: Record<string, any> | undefined,

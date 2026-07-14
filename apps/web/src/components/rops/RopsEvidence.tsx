@@ -1,7 +1,7 @@
 /**
  * ROPS Level 4 — Evidence View (spec section 5.2 R-6 / 6 / 9.4 / 11).
  *
- * The audit fallback. Shows the recorded `EventEnvelope` and its `payload` / `metadata`
+ * Shows the recorded `EventEnvelope` and its `payload` / `metadata`
  * / `model` / `causal` / `policy` / `error` verbatim. L4 compares a projection
  * with recorded span-backed evidence.
  *
@@ -53,7 +53,7 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-[#22d3ee]" />
-          <span className="text-[9px] uppercase tracking-[0.12em] text-[#06b6d4] font-bold">ROPS Evidence View (L4)</span>
+          <span className="text-[9px] uppercase tracking-[0.12em] text-[#06b6d4] font-bold">Recorded evidence</span>
         </div>
         <span className="text-[9px] bg-[rgba(6,182,212,0.1)] text-[#22d3ee] border border-[#06b6d4]/20 px-2 py-0.5 rounded-md font-mono">
           seq #{envelope.sequence_num}
@@ -63,7 +63,7 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
             type="button"
             onClick={onClose}
             className="p-1 rounded text-[#5d6180] hover:text-white hover:bg-[rgba(255,255,255,0.05)]"
-            title="Close L4"
+            title="Close recorded evidence"
           >
             <X size={12} />
           </button>
@@ -160,7 +160,6 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
         )}
       </EvidenceSection>
 
-      {/* Cryptographic linkage — Evidence */}
     </div>
   );
 }

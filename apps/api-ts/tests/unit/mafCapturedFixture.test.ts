@@ -49,4 +49,9 @@ describe('captured real MAF fixture', () => {
     const unknownTelemetry = readFixture('unknown_telemetry');
     expect(unknownTelemetry.flatMap((span) => span.events ?? []).some((event) => event.name === 'agentlens.maf.request_info')).toBe(false);
   });
+
+  it('derives run completion and failure from captured workflow lifecycle events despite multiple roots', () => {
+    expect(projectReplay('maf-success', 'main', readFixture('success')).current_state?.status).toBe('completed');
+    expect(projectReplay('maf-failure', 'main', readFixture('explicit_failure')).current_state?.status).toBe('failed');
+  });
 });

@@ -21,7 +21,6 @@ import {
   useOnViewportChange,
 } from '@xyflow/react';
 import { useGraphStore } from '@/stores/graphStore';
-import { useReviewStore } from '@/stores/reviewStore';
 import { useReplayStore } from '@/stores/replayStore';
 import { AgentNode } from './AgentNode';
 import { TaskNode } from './TaskNode';
@@ -75,7 +74,6 @@ function MissionGraphInner() {
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(storeEdges);
-  const { setActiveCommentTarget } = useReviewStore();
   const lastZoomRef = useRef(storeNodes.length > 0 ? 1 : 1);
 
   useEffect(() => {
@@ -127,17 +125,15 @@ function MissionGraphInner() {
           ? (node.data as { activity?: { id?: string } }).activity?.id ?? null
           : null;
       setSelectedActivityId(activityId);
-      setActiveCommentTarget({ type: 'node', id: node.id });
     },
-    [setSelectedActivityId, setSelectedNodeId, setActiveCommentTarget],
+    [setSelectedActivityId, setSelectedNodeId],
   );
 
   const onPaneClick = useCallback(() => {
     setSelectedNodeId(null);
     setSelectedActivityId(null);
-    setActiveCommentTarget(null);
     useGraphStore.getState().setHighlightedEdgeId(null);
-  }, [setSelectedActivityId, setSelectedNodeId, setActiveCommentTarget]);
+  }, [setSelectedActivityId, setSelectedNodeId]);
 
   return (
     <div className="relative h-full w-full pt-[52px]">

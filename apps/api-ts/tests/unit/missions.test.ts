@@ -15,6 +15,7 @@ vi.mock('../../src/db/postgres.js', () => ({
 }));
 
 import { missionStore } from '../../src/services/missionStore.js';
+import { projectReplay } from '../../src/services/runtime/projection.js';
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -454,8 +455,7 @@ describe('missionStore — getAuditEvents and EventEnvelope', () => {
     mockQuery.mockResolvedValueOnce({ rows: [fakeRow()], rowCount: 1 }); // getMission
     mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'dev-branch', name: 'Dev', status: 'active', created_at: now, updated_at: now }], rowCount: 1 }); // branches
     
-    mockClient.query.mockResolvedValueOnce({
-      rows: [
+    const spanRows = [
         {
           id: '550e8400-e29b-41d4-a716-446655440000',
           mission_id: '550e8400-e29b-41d4-a716-446655440000',
@@ -481,17 +481,27 @@ describe('missionStore — getAuditEvents and EventEnvelope', () => {
           status_code: 'OK',
           attributes: {},
           events: [],
-        }
-      ],
+        },
+      ];
+    mockClient.query.mockResolvedValueOnce({
+      rows: spanRows,
       rowCount: 2,
     }); // spans
     mockClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // interrupts
 
-    const result = await missionStore.getAuditEvents('550e8400-e29b-41d4-a716-446655440000', 'dev-branch', 1);
+    const cutoff = projectReplay(
+      '550e8400-e29b-41d4-a716-446655440000',
+      'dev-branch',
+      spanRows.map((row) => ({
+        ...row,
+        operation_name: row.name,
+      })),
+    ).events[1].sequence_num;
+    const result = await missionStore.getAuditEvents('550e8400-e29b-41d4-a716-446655440000', 'dev-branch', cutoff);
     
-    // Each finished span has started + completed event. Sequence number 1 corresponds to the completed event of the first span.
+    // Each finished span has started + completed evidence. The exact stable cursor
+    // for the first completion selects the same chronological prefix.
     expect(result.events).toHaveLength(2);
-    expect(result.events[0].sequence_num).toBe(0);
-    expect(result.events[1].sequence_num).toBe(1);
+    expect(result.events[1].sequence_num).toBe(cutoff);
   });
 });

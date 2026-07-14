@@ -83,6 +83,24 @@ describe('sequenceNumThroughFrame', () => {
     expect(sequenceNumThroughFrame(snapshots, events, 1)).toBeGreaterThanOrEqual(3);
     expect(sequenceNumThroughFrame(snapshots, events, 0)).toBe(0);
   });
+
+  it('includes every event at the exact source nanosecond without admitting a later same-millisecond event', () => {
+    const sameTimeEvents = [
+      event('a-root', 900, '2026-06-27T12:53:10.000Z', { metadata: { runtime_timestamp_unix_nano: '1000000000' } }),
+      event('b-lifecycle', 100, '2026-06-27T12:53:10.000Z', { metadata: { runtime_timestamp_unix_nano: '1000000000' } }),
+      event('c-future', 500, '2026-06-27T12:53:10.000Z', { metadata: { runtime_timestamp_unix_nano: '1000000001' } }),
+    ];
+    const sameTimeSnapshots = [{
+      ...snapshots[0],
+      sequence_num: 100,
+      source_event_id: 'b-lifecycle',
+      source_event_sequence_num: 100,
+    }];
+
+    expect(sequenceNumThroughFrame([...sameTimeSnapshots, snapshots[1]], sameTimeEvents, 0)).toBe(100);
+    expect(eventsThroughFrame([...sameTimeSnapshots, snapshots[1]], sameTimeEvents, 0).map((entry) => entry.id))
+      .toEqual(['a-root', 'b-lifecycle']);
+  });
 });
 
 describe('eventAtFrame', () => {

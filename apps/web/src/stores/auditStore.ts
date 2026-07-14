@@ -5,7 +5,7 @@
  * envelopes that share its `span_id` to surface runtime evidence (tool I/O,
  * search query, result count, retrieval backend, failure reason). Those
  * envelopes are produced by the existing `GET /audit/events` endpoint and
- * filtered server-side to `sequence_num <= frame`.
+ * filtered server-side through the exact stable frame cursor.
  *
  * This store exists so that graph node components rendered outside the right
  * sidebar (e.g. `ToolNode` / `TaskNode` / `AgentNode` hover popovers) can read
@@ -43,7 +43,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => ({
   loadedFor: null,
 
   load: (missionId, branchId, sequenceNum) => {
-    if (!missionId || missionId === 'demo-mission') {
+    if (!missionId) {
       return;
     }
     const resolvedBranch = branchId ?? 'main';

@@ -199,6 +199,14 @@ export function computeVisibleGraph(input: GraphVisibilityInput): GraphVisibilit
     return true;
   });
 
+  // Zoom is a presentation preference, never permission to erase an entire
+  // recorded frame. Sparse frames may contain only tool, memory, or artifact
+  // nodes, so fall back to their recorded nodes when the current zoom taxonomy
+  // would otherwise produce an inaccessible empty canvas.
+  if (filteredNodes.length === 0 && nodes.length > 0) {
+    filteredNodes = nodes;
+  }
+
   const zoomFilteredNodes = filteredNodes;
   const zoomFilteredEdges = filteredEdges;
   let hiddenContext: HiddenGraphContext | null = null;

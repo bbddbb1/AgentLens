@@ -780,31 +780,6 @@ function SelectedActivityPrioritySection({
   );
 }
 
-function ActivityOverview({ node }: { node: GraphNode }) {
-  const activity = node.activity;
-  if (!activity) return null;
-  return (
-    <RopsSection title="Selected activity">
-      <div className="rounded-lg border border-[rgba(129,140,248,0.12)] bg-[rgba(129,140,248,0.04)] p-2">
-        <div className="text-[11px] font-medium text-[#d0d4ea]">
-          {activity.action}
-          <span className="mx-1.5 text-[#4f536d]">·</span>
-          <span className={activity.status === 'failed' ? 'text-[#f87171]' : activity.status === 'waiting' ? 'text-[#fbbf24]' : 'text-[#a5b4fc]'}>
-            {activity.outcome}
-          </span>
-          {activity.duration_ms !== undefined && (
-            <span className="text-[#8f95b2]"> · {formatDurationMs(activity.duration_ms)}</span>
-          )}
-          <ProvenanceTag provenance="projection" />
-        </div>
-        {activity.subtitle && (
-          <div className="mt-1 font-mono text-[9px] text-[#6b708a]">{activity.subtitle}</div>
-        )}
-      </div>
-    </RopsSection>
-  );
-}
-
 function PanelShell({
   objectType,
   name,
@@ -822,7 +797,7 @@ function PanelShell({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-[#818cf8]" />
-          <span className="text-[9px] uppercase tracking-[0.12em] text-[#818cf8] font-bold">ROPS Inspector</span>
+          <span className="text-[9px] uppercase tracking-[0.12em] text-[#818cf8] font-bold">Inspect</span>
         </div>
         <div className="flex items-center gap-1.5">
           {profile && (

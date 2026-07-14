@@ -3,14 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { ArrowLeft, CheckCircle2, GitBranch, Loader2, Maximize2, Minimize2, PauseCircle, Telescope, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, CircleHelp, GitBranch, Loader2, PauseCircle, Telescope, XCircle } from 'lucide-react';
 import type { ReplayStateResponse, RuntimeExplanationProjection, RuntimeSummary } from '@agentlens/protocol';
 import { CanvasToolbar } from '@/components/graph/CanvasToolbar';
 import { MissionGraph } from '@/components/graph/MissionGraph';
 import { RightSidebar } from '@/components/layout/RightSidebar';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell';
-import { RuntimeSummaryPanel } from '@/components/runtime/RuntimeSummaryPanel';
 import { MissionTimeline } from '@/components/timeline/MissionTimeline';
 import { api } from '@/lib/api';
 import { selectedFrameAuthority } from '@/lib/runtimeAuthority';
@@ -18,7 +17,6 @@ import { matchNodeToActivity, resolveSelectedActivity } from '@/lib/runtimeFocus
 import { sequenceNumThroughFrame } from '@/lib/replayFrame';
 import { shouldReloadReplayForRealtimeMessage } from '@/lib/replayRealtime';
 import { useGraphStore } from '@/stores/graphStore';
-import { useLayoutStore } from '@/stores/layoutStore';
 import type { Mission } from '@/stores/missionStore';
 import { useReplayStore } from '@/stores/replayStore';
 
@@ -27,6 +25,8 @@ const statusConfig = {
   completed: { icon: <CheckCircle2 size={12} />, color: '#34d399', label: 'Completed' },
   failed: { icon: <XCircle size={12} />, color: '#f87171', label: 'Failed' },
   paused: { icon: <PauseCircle size={12} />, color: '#fbbf24', label: 'Paused' },
+  waiting: { icon: <PauseCircle size={12} />, color: '#fbbf24', label: 'Waiting' },
+  unknown: { icon: <CircleHelp size={12} />, color: '#5d6180', label: 'Unknown' },
 };
 
 function websocketBaseUrl(): string {
@@ -58,7 +58,6 @@ export default function MissionWorkspacePage() {
   const setSelectedActivityId = useReplayStore((state) => state.setSelectedActivityId);
   const setSelectedEventId = useReplayStore((state) => state.setSelectedEventId);
   const setActivityContextState = useReplayStore((state) => state.setActivityContextState);
-  const { isGraphFullscreen, setIsGraphFullscreen } = useLayoutStore();
   const params = useParams<{ id?: string }>();
   const missionId = Array.isArray(params?.id) ? params.id[0] ?? '' : params?.id ?? '';
   const requestVersion = useRef(0);
@@ -208,12 +207,12 @@ export default function MissionWorkspacePage() {
     return () => ws.close();
   }, [currentBranchId, frameSequenceNum, loadReplay, missionId]);
 
-  const missionStatus = mission?.status ?? currentState?.status ?? 'active';
-  const statusBadge = statusConfig[missionStatus as keyof typeof statusConfig] ?? statusConfig.active;
-  const pendingInterrupts = useMemo(() => Object.values(currentState?.interrupts ?? {}).filter((interrupt) => interrupt.status === 'pending').length, [currentState]);
-  const activeAgents = useMemo(() => Object.values(currentState?.agents ?? {}).filter((agent) => agent.status === 'active').length, [currentState]);
   const authority = selectedFrameAuthority(activeRuntimeSummary);
-
+  const runtimeStatus = authority.status?.toLowerCase() ?? 'unknown';
+  const statusBadge = statusConfig[runtimeStatus as keyof typeof statusConfig] ?? statusConfig.unknown;
+  const frameTimestamp = activeRuntimeExplanation?.as_of_timestamp
+    ?? snapshots[currentFrame]?.timestamp
+    ?? null;
   return (
     <div className="h-screen flex flex-col bg-[#0a0b10] overflow-hidden">
       <header className="flex items-center justify-between px-4 py-2 border-b border-[rgba(255,255,255,0.05)] bg-[rgba(10,11,16,0.9)] backdrop-blur-xl z-40">
@@ -225,23 +224,24 @@ export default function MissionWorkspacePage() {
             <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: `${statusBadge.color}15`, color: statusBadge.color }}>{statusBadge.icon}{statusBadge.label}</div>
             <h1 className="text-[13px] font-medium text-[#e8eaf0] max-w-md truncate">{mission?.objective ?? 'Mission workspace'}</h1>
           </div>
-          <label className="flex items-center gap-1.5 text-[10px] text-[#8f95b2]">
+          <div aria-label="Workspace context" className="flex items-center gap-2 text-[10px] text-[#8f95b2]">
+            <label className="flex items-center gap-1.5">
             <GitBranch size={12} className="text-[#67e8f9]" />
             <span className="sr-only">Workspace branch</span>
             <select aria-label="Workspace branch" value={currentBranchId ?? ''} onChange={(event) => void loadReplay(event.target.value)} disabled={!currentBranchId} className="max-w-40 rounded border border-[rgba(255,255,255,0.08)] bg-[#12131a] px-2 py-1 text-[10px] text-[#d8dbef] disabled:opacity-50">
               {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
             </select>
-            {frameSequenceNum !== undefined && <span className="font-mono text-[#5d6180]">seq #{frameSequenceNum}</span>}
-          </label>
+            </label>
+            {snapshots.length > 0 && <span>frame {Math.min(currentFrame + 1, snapshots.length)}/{snapshots.length}</span>}
+            {frameSequenceNum !== undefined && <span className="font-mono text-[#7c83a3]">seq #{frameSequenceNum}</span>}
+            {frameTimestamp && <time className="font-mono text-[#5d6180]" dateTime={frameTimestamp}>{new Date(frameTimestamp).toISOString()}</time>}
+          </div>
         </div>
-        <button type="button" aria-label={isGraphFullscreen ? 'Exit graph fullscreen' : 'Enter graph fullscreen'} onClick={() => setIsGraphFullscreen(!isGraphFullscreen)} className="p-1.5 rounded-lg text-[#5d6180] hover:text-[#e8eaf0] hover:bg-[rgba(255,255,255,0.04)] transition-colors">
-          {isGraphFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-        </button>
       </header>
       <WorkspaceShell
-        leftPanel={<div className="flex flex-col h-full min-h-0"><RuntimeSummaryPanel serverSummary={activeRuntimeSummary} serverExplanation={activeRuntimeExplanation} /><div className="flex-1 min-h-0 overflow-hidden"><MissionTimeline explanation={activeRuntimeExplanation} /></div></div>}
-        centerPanel={<div className="relative flex-1 overflow-hidden"><CanvasToolbar agentCount={Object.keys(currentState?.agents ?? {}).length} branchCount={branches.length} pendingInterrupts={pendingInterrupts} activeAgents={activeAgents} /><MissionGraph />{missionLoadError && <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(10,11,16,0.72)] backdrop-blur-sm p-6"><div className="max-w-md rounded-2xl border border-[rgba(248,113,113,0.18)] bg-[rgba(36,17,20,0.92)] px-5 py-4 text-center shadow-[0_24px_64px_rgba(0,0,0,0.4)]"><div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[rgba(248,113,113,0.12)] text-[#f87171]"><XCircle size={18} /></div><h2 className="text-[14px] font-semibold text-[#f3d0d0]">Mission unavailable</h2><p className="mt-2 text-[12px] leading-relaxed text-[#d8b4b4]">{missionLoadError}</p></div></div>}</div>}
-        rightPanel={<RightSidebar missionId={missionId} onBranchChange={loadReplay} runtimeExplanation={activeRuntimeExplanation} runtimeSummary={activeRuntimeSummary} />}
+        leftPanel={<MissionTimeline explanation={activeRuntimeExplanation} summary={activeRuntimeSummary} />}
+        centerPanel={<section aria-label="Graph" className="relative flex-1 overflow-hidden"><CanvasToolbar agentCount={Object.keys(currentState?.agents ?? {}).length} /><MissionGraph />{missionLoadError && <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(10,11,16,0.72)] backdrop-blur-sm p-6"><div className="max-w-md rounded-2xl border border-[rgba(248,113,113,0.18)] bg-[rgba(36,17,20,0.92)] px-5 py-4 text-center shadow-[0_24px_64px_rgba(0,0,0,0.4)]"><div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[rgba(248,113,113,0.12)] text-[#f87171]"><XCircle size={18} /></div><h2 className="text-[14px] font-semibold text-[#f3d0d0]">Mission unavailable</h2><p className="mt-2 text-[12px] leading-relaxed text-[#d8b4b4]">{missionLoadError}</p></div></div>}</section>}
+        rightPanel={<RightSidebar missionId={missionId} onBranchChange={loadReplay} runtimeSummary={activeRuntimeSummary} />}
         bottomPanel={<StatusBar metrics={<div className="flex items-center gap-3 text-[10px]"><span className="text-[#5d6180] capitalize">{zoomBand} view</span><span className={totalEdgeCount > 0 && visibleEdgeCount / totalEdgeCount < 0.3 ? 'text-[#fbbf24]' : 'text-[#9498b0]'}>{visibleEdgeCount} / {totalEdgeCount} edges visible</span>{authority.incompatibilities.length > 0 && <span className="text-[#fbbf24]">frame authority mismatch</span>}</div>} />}
       />
     </div>

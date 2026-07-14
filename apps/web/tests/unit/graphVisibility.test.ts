@@ -53,6 +53,28 @@ describe('graphVisibility', () => {
     expect(result.edges.every((edge) => edge.type === 'delegation')).toBe(true);
   });
 
+  it('keeps sparse recorded nodes accessible when zoom filtering matches none', () => {
+    const sparseNodes: GraphNode[] = [
+      { id: 'tool-only', type: 'tool', label: 'lookup', status: 'completed', position: { x: 0, y: 0 } },
+    ];
+    const result = computeVisibleGraph({
+      nodes: sparseNodes,
+      edges: [],
+      edgeVisibility: defaultEdgeVisibility(),
+      tracePreset: 'none',
+      showActiveOnly: false,
+      zoomLevel: 0.3,
+      focusModeEnabled: false,
+      focusDepth: 1,
+      selectedNodeId: null,
+      highlightedEdgeId: null,
+      bundleEdges: true,
+      disableParticles: false,
+    });
+
+    expect(result.nodes.map((node) => node.id)).toEqual(['tool-only']);
+  });
+
   it('computes focus neighborhood', () => {
     const neighborhood = getFocusNeighborhood('a1', edges, 1);
     expect(neighborhood.has('a1')).toBe(true);
