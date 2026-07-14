@@ -74,6 +74,7 @@ interface GraphStore {
   setBundleEdges: (value: boolean) => void;
   toggleFocusMode: () => void;
   setNodeLayoutPosition: (nodeId: string, position: { x: number; y: number }) => void;
+  clearWorkspace: () => void;
 
   applySnapshot: (snapshot: GraphSnapshot) => void;
   recomputeDisplayGraph: () => void;
@@ -367,6 +368,32 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       nodes: get().nodes.map((node) =>
         node.id === nodeId ? { ...node, position } : node,
       ),
+    });
+  },
+
+  clearWorkspace: () => {
+    if (highlightTimeout) {
+      clearTimeout(highlightTimeout);
+      highlightTimeout = null;
+    }
+    set({
+      nodes: [],
+      edges: [],
+      baseNodes: [],
+      baseEdges: [],
+      snapshots: [],
+      currentSnapshotIndex: 0,
+      selectedNodeId: null,
+      activeNodeId: null,
+      hoveredNodeId: null,
+      highlightedEdgeId: null,
+      highlightedNodeIds: [],
+      highlightedEdgeIds: [],
+      visibleEdgeCount: 0,
+      totalEdgeCount: 0,
+      satelliteCounts: {},
+      hiddenContext: null,
+      layoutPositions: {},
     });
   },
 

@@ -38,6 +38,7 @@ interface ReplayStore {
   nextFrame: () => void;
   prevFrame: () => void;
   optimisticBranchCreated: (branch: ReplayBranch) => void;
+  clearWorkspace: () => void;
   reset: () => void;
 }
 
@@ -106,6 +107,21 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
       currentBranchId: branch.id,
       isPlaying: false,
     })),
+
+  clearWorkspace: () =>
+    set({
+      isPlaying: false,
+      currentFrame: 0,
+      totalFrames: 0,
+      durationSeconds: null,
+      currentBranchId: null,
+      branches: [],
+      events: [],
+      currentState: null,
+      selectedEventId: null,
+      selectedActivityId: null,
+      activityContextState: null,
+    }),
 
   reset: () =>
     set({

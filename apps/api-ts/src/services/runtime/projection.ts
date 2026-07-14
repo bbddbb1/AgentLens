@@ -3,20 +3,111 @@ import type {
   GraphSnapshot,
   GraphNode,
   GraphEdge,
+  EventEnvelope,
   MissionEventRecord,
   NodeType,
   ProjectionProfile,
   ReplayStateResponse,
   RuntimeAgentState,
 } from '@agentlens/protocol';
-import { scanEventsToScratch } from '@agentlens/protocol';
+import { projectRuntimeExplanation, scanEventsToScratch } from '@agentlens/protocol';
 import { applyHierarchicalLayout } from '../graphLayout.js';
 import { normalizeSpansToFacts } from './normalization/index.js';
 import { originFrameworkFromAttrs } from './normalization/agentLensCompat.js';
 import { assembleModelProvenance } from './normalization/otelGenAi.js';
-import { publicRuntimeIdentity, publicTelemetryAttributes, publicTelemetryName } from './normalization/publicMetadata.js';
+import { publicRuntimeIdentity, publicSpanStartAttributes, publicTelemetryAttributes, publicTelemetryName } from './normalization/publicMetadata.js';
 
 export type MaturityTier = 'L1' | 'L2' | 'L3';
+
+type RunLifecycleState = 'started' | 'completed' | 'failed';
+
+const FNV_64_OFFSET = 0xcbf29ce484222325n;
+const FNV_64_PRIME = 0x100000001b3n;
+const SAFE_SEQUENCE_MASK = (1n << 53n) - 1n;
+
+function stableHash64(value: string): bigint {
+  let hash = FNV_64_OFFSET;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= BigInt(value.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * FNV_64_PRIME);
+  }
+  return hash;
+}
+
+function stableSequenceNum(eventId: string): number {
+  const value = Number(stableHash64(eventId) & SAFE_SEQUENCE_MASK);
+  return value === 0 ? 1 : value;
+}
+
+function canonicalValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalValue).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalValue(entry)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? String(value);
+}
+
+function stableSpanEventId(spanId: string, event: any, occurrence: number): string {
+  const identity = canonicalValue({
+    name: event?.name ?? '',
+    timestamp: event?.timestamp ?? event?.time ?? '',
+    attributes: event?.attributes ?? {},
+  });
+  return `${spanId}-event-${stableHash64(identity).toString(16)}-${occurrence}`;
+}
+
+function runtimeTimestampNanos(value: unknown, fallback: unknown): string {
+  const selected = value ?? fallback;
+  if (typeof selected === 'bigint') return selected.toString();
+  if (typeof selected === 'number' && Number.isFinite(selected)) return Math.trunc(selected).toString();
+  if (typeof selected === 'string' && /^\d+$/.test(selected)) return selected;
+  const millis = Date.parse(String(selected));
+  return String(BigInt(Number.isNaN(millis) ? 0 : millis) * 1_000_000n);
+}
+
+function eventTimestampIso(event: any, fallback: string): string {
+  const persisted = event?.timestamp;
+  if (persisted !== undefined && persisted !== null && persisted !== '') {
+    const numeric = Number(persisted);
+    if (Number.isFinite(numeric)) return new Date(numeric / 1e6).toISOString();
+    const parsed = new Date(String(persisted));
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  const legacy = event?.time;
+  if (legacy !== undefined && legacy !== null && legacy !== '') {
+    const parsed = new Date(legacy);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  return fallback;
+}
+
+function explicitRunLifecycle(eventName: unknown): RunLifecycleState | undefined {
+  if (typeof eventName !== 'string') return undefined;
+  const normalized = eventName.toLowerCase();
+  if (/(?:^|\.)(?:workflow|run|mission)\.started$/.test(normalized)) return 'started';
+  if (/(?:^|\.)(?:workflow|run|mission)\.(?:completed|output)$/.test(normalized)) return 'completed';
+  if (/(?:^|\.)(?:workflow|run|mission)\.failed$/.test(normalized)) return 'failed';
+  return undefined;
+}
+
+const EXECUTION_CONTAINER_OPERATIONS = new Set([
+  'workflow.run',
+  'workflow.session',
+  'workflow_invoke',
+  'workflow.invoke',
+  'mission.execute',
+  'run.execute',
+]);
+
+function isExecutionRootCandidate(span: any): boolean {
+  const parent = span?.parent_span_id;
+  if (parent !== undefined && parent !== null && String(parent).length > 0) return false;
+  const operation = String(span?.operation_name ?? span?.name ?? '').toLowerCase();
+  return EXECUTION_CONTAINER_OPERATIONS.has(operation);
+}
 
 function indexNormalizedActivities(facts: ReturnType<typeof normalizeSpansToFacts>) {
   const bySpanId = new Map<string, (typeof facts.activities)[number]>();
@@ -633,7 +724,7 @@ export function projectTraceSnapshot(
  * Ephemeral Time-Sliced Projection for Replay/Time-Travel.
  * Stateless, pure function.
  */
-export function projectReplay(
+export function projectReplayEvidence(
   missionId: string,
   branchId: string,
   spans: any[],
@@ -642,19 +733,19 @@ export function projectReplay(
   const sortedSpans = [...spans].sort((a, b) => Number(a.start_time_unix_nano) - Number(b.start_time_unix_nano));
   const normalizedFacts = normalizeSpansToFacts(sortedSpans);
   const normalizedActivityIndex = indexNormalizedActivities(normalizedFacts);
+  const executionRootCandidates = sortedSpans.filter(isExecutionRootCandidate);
+  const executionRootCandidateIds = new Set(executionRootCandidates.map((span) => String(span.span_id)));
   const {
     bySpanId: normalizedActivityBySpanId,
   } = normalizedActivityIndex;
   const timestamps = Array.from(new Set(sortedSpans.map((s) => Number(s.start_time_unix_nano)))).sort((a, b) => a - b);
 
-  const snapshots = timestamps.map((ts, idx) => {
+  const snapshots = timestamps.map((ts) => {
     const snap = projectTraceSnapshot(missionId, branchId, sortedSpans, ts);
-    snap.sequence_num = idx;
     const currentSpan = sortedSpans.find((s) => Number(s.start_time_unix_nano) === ts);
     if (currentSpan) {
       snap.event_description = `Span started: ${publicTelemetryName(currentSpan.attributes, currentSpan.operation_name ?? currentSpan.name ?? 'span')}`;
       snap.source_event_id = currentSpan.span_id;
-      snap.source_event_sequence_num = idx;
     }
     return snap;
   });
@@ -701,13 +792,18 @@ export function projectReplay(
       trace_id: span.trace_id,
       parent_span_id: span.parent_span_id ?? undefined,
       payload: {
-        ...publicTelemetryAttributes(attrs),
+        ...publicSpanStartAttributes(attrs),
         operation_name: operationName,
-        duration_ms: span.end_time_unix_nano ? (Number(span.end_time_unix_nano) - Number(span.start_time_unix_nano)) / 1e6 : undefined,
       },
       metadata: {
         maturity_tier: tier,
+        runtime_timestamp_unix_nano: String(span.start_time_unix_nano),
         ...nativeRuntimeMetadata,
+        ...(executionRootCandidateIds.has(String(span.span_id)) ? {
+          runtime_root_candidate: true,
+          runtime_lifecycle: 'started',
+          runtime_lifecycle_basis: 'execution_root_span',
+        } : {}),
       },
       actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
       actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
@@ -723,21 +819,17 @@ export function projectReplay(
     // Unpack internal span.events (PR-4, G1-G6, G13)
     if (Array.isArray(span.events)) {
       let eventIdx = 0;
+      const eventIdentityOccurrences = new Map<string, number>();
       for (const otelEvent of span.events) {
         const currentEventIndex = eventIdx;
-        const eventTimeIso = otelEvent.time
-          ? new Date(otelEvent.time).toISOString()
-          : startIso;
+        const eventTimeIso = eventTimestampIso(otelEvent, startIso);
 
         const eventAttrs = otelEvent.attributes ?? {};
         const normalizedType = publicTelemetryName(attrs, otelEvent.name, eventAttrs);
+        const runLifecycle = explicitRunLifecycle(otelEvent.name);
         const mergedPayload = {
-          ...publicTelemetryAttributes(attrs),
           ...publicTelemetryAttributes(eventAttrs),
           operation_name: operationName,
-          duration_ms: span.end_time_unix_nano
-            ? (Number(span.end_time_unix_nano) - Number(span.start_time_unix_nano)) / 1e6
-            : undefined,
         };
         const mergedAttrs = { ...attrs, ...eventAttrs };
         const eventActivity = lookupNormalizedEventActivity(
@@ -748,8 +840,15 @@ export function projectReplay(
           currentEventIndex,
         );
         const eventNativeRuntimeMetadata = publicRuntimeIdentity(eventActivity?.native_runtime_identity);
+        const eventIdentity = canonicalValue({
+          name: otelEvent?.name ?? '',
+          timestamp: otelEvent?.timestamp ?? otelEvent?.time ?? '',
+          attributes: otelEvent?.attributes ?? {},
+        });
+        const occurrence = eventIdentityOccurrences.get(eventIdentity) ?? 0;
+        eventIdentityOccurrences.set(eventIdentity, occurrence + 1);
         events.push({
-          id: `${span.span_id}-event-${eventIdx++}`,
+          id: stableSpanEventId(span.span_id, otelEvent, occurrence),
           mission_id: missionId,
           branch_id: eventBranchId,
           sequence_num: seq++,
@@ -763,7 +862,15 @@ export function projectReplay(
           payload: mergedPayload,
           metadata: {
             maturity_tier: tier,
+            runtime_timestamp_unix_nano: runtimeTimestampNanos(
+              otelEvent?.timestamp ?? otelEvent?.time,
+              span.start_time_unix_nano,
+            ),
             ...eventNativeRuntimeMetadata,
+            ...(runLifecycle ? {
+              runtime_lifecycle: runLifecycle,
+              runtime_lifecycle_basis: 'explicit_event',
+            } : {}),
           },
           actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
           actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
@@ -775,6 +882,7 @@ export function projectReplay(
           source_span_id: span.span_id,
           source_event_id: normalizedType,
         } as any);
+        eventIdx += 1;
       }
     }
 
@@ -799,7 +907,13 @@ export function projectReplay(
         },
         metadata: {
           maturity_tier: tier,
+          runtime_timestamp_unix_nano: String(span.end_time_unix_nano),
           ...nativeRuntimeMetadata,
+          ...(executionRootCandidateIds.has(String(span.span_id)) ? {
+            runtime_root_candidate: true,
+            runtime_lifecycle: span.status_code === 'ERROR' ? 'failed' : 'completed',
+            runtime_lifecycle_basis: 'execution_root_span',
+          } : {}),
         },
       actor_type: attrs['agentlens.actor.type'] ?? attrs['actor_type'] ?? (agentId ? 'agent' : undefined),
       actor_id: attrs['agentlens.actor.id'] ?? attrs['actor_id'] ?? (agentId ?? undefined),
@@ -838,7 +952,7 @@ export function projectReplay(
         resume_url: intr.resume_url,
         ...(intr.payload ?? {}),
       },
-      metadata: {},
+      metadata: { runtime_timestamp_unix_nano: String(BigInt(new Date(intr.created_at).getTime()) * 1_000_000n) },
       causal: intr.span_id ? { parent_span_id: intr.span_id } : undefined,
       source_span_id: intr.span_id ?? undefined,
       source_event_id: 'interrupt.requested',
@@ -865,7 +979,7 @@ export function projectReplay(
           delivery_state: intr.delivery_state,
           runtime_outcome: intr.runtime_outcome,
         },
-        metadata: {},
+        metadata: { runtime_timestamp_unix_nano: String(BigInt(new Date(intr.decided_at).getTime()) * 1_000_000n) },
         causal: {
           parent_span_id: intr.span_id ?? undefined,
           decision_for_event_id: `interrupt-${intr.interrupt_id}-requested`,
@@ -893,7 +1007,7 @@ export function projectReplay(
           interrupt_id: intr.interrupt_id,
           ...(intr.decision_payload ?? {}),
         },
-        metadata: {},
+        metadata: { runtime_timestamp_unix_nano: String(BigInt(new Date(intr.resumed_at).getTime()) * 1_000_000n) },
         causal: {
           parent_span_id: intr.span_id ?? undefined,
           triggered_by_event_id: `interrupt-${intr.interrupt_id}-decision`,
@@ -904,8 +1018,27 @@ export function projectReplay(
     }
   }
 
-  // Sort events chronologically
-  events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime() || a.sequence_num - b.sequence_num);
+  // A sequence number is a stable evidence cursor derived from the stable event
+  // identity. The array is the chronological presentation order. This permits
+  // late telemetry to be inserted without renumbering previously published
+  // event or frame references.
+  const cursorOwners = new Map<number, string>();
+  for (const event of events) {
+    const cursor = stableSequenceNum(event.id);
+    const owner = cursorOwners.get(cursor);
+    if (owner && owner !== event.id) {
+      throw new Error(`Stable replay cursor collision between ${owner} and ${event.id}`);
+    }
+    cursorOwners.set(cursor, event.id);
+    event.sequence_num = cursor;
+    event.branch_sequence_num = cursor;
+  }
+  events.sort((a, b) => {
+    const leftRaw = BigInt(runtimeTimestampNanos(a.metadata?.runtime_timestamp_unix_nano, a.timestamp));
+    const rightRaw = BigInt(runtimeTimestampNanos(b.metadata?.runtime_timestamp_unix_nano, b.timestamp));
+    if (leftRaw !== rightRaw) return leftRaw < rightRaw ? -1 : 1;
+    return a.id.localeCompare(b.id);
+  });
 
   const spanStartSeqBySpanId = new Map<string, number>();
   for (const event of events) {
@@ -917,6 +1050,7 @@ export function projectReplay(
     if (!snap.source_event_id) continue;
     const seq = spanStartSeqBySpanId.get(snap.source_event_id);
     if (seq !== undefined) {
+      snap.sequence_num = seq;
       snap.source_event_sequence_num = seq;
     }
   }
@@ -926,9 +1060,7 @@ export function projectReplay(
     ? (timestamps[timestamps.length - 1] - timestamps[0]) / 1e9
     : null;
 
-  const replayPhase =
-    lastSnapshot?.nodes.some((n) => n.status === 'failed') ? 'failed' : 'completed';
-  const runtimeAgents = buildRuntimeAgentsFromEvents(events, replayPhase);
+  const runtimeAgents = buildRuntimeAgentsFromEvents(events, 'Unknown');
 
   const interruptsRecord: Record<string, any> = {};
   for (const intr of interrupts) {
@@ -981,10 +1113,39 @@ export function projectReplay(
       sequence_num: lastSnapshot?.sequence_num ?? 0,
       agents: runtimeAgents,
       interrupts: interruptsRecord,
-      status: lastSnapshot?.nodes.some((n) => n.status === 'failed') ? 'failed' : 'completed',
-      phase: replayPhase,
+      status: 'unknown',
+      phase: 'Unknown',
       nodes: lastSnapshot?.nodes ?? [],
       edges: lastSnapshot?.edges ?? [],
     },
+  };
+}
+
+/** Public Replay composition: evidence first, then L1 execution interpretation. */
+export function projectReplay(
+  missionId: string,
+  branchId: string,
+  spans: any[],
+  interrupts: any[] = [],
+): ReplayStateResponse {
+  const replay = projectReplayEvidence(missionId, branchId, spans, interrupts);
+  const explanation = projectRuntimeExplanation({
+    mission_id: missionId,
+    branch_id: branchId,
+    events: replay.events as EventEnvelope[],
+  });
+  return {
+    ...replay,
+    current_state: replay.current_state
+      ? {
+          ...replay.current_state,
+          status: explanation.run_outcome,
+          phase: explanation.runtime_phase?.label ?? 'Unknown',
+          agents: buildRuntimeAgentsFromEvents(
+            replay.events,
+            explanation.runtime_phase?.label ?? 'Unknown',
+          ),
+        }
+      : null,
   };
 }

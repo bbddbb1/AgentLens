@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { MissionEventRecord, ReplayBranch } from '@agentlens/protocol';
+import { eventsThroughCursor, MissionEventRecord, orderFrameEvents, ReplayBranch } from '@agentlens/protocol';
 import { ROOT_BRANCH_ID } from './types.js';
 
 export function createDefaultBranch(missionId: string): ReplayBranch {
@@ -40,14 +40,16 @@ export function selectEventsForBranch(
     const branch = lineage[index];
     const nextBranch = lineage[index + 1];
     const upperBound = nextBranch?.forked_from_sequence_num;
-    for (const event of events) {
-      if (event.branch_id !== branch.id) continue;
-      if (upperBound !== undefined && event.sequence_num > upperBound) continue;
+    const branchEvents = events.filter((event) => event.branch_id === branch.id);
+    const visibleBranchEvents = upperBound === undefined
+      ? orderFrameEvents(branchEvents)
+      : eventsThroughCursor(branchEvents, upperBound);
+    for (const event of visibleBranchEvents) {
       selected.push(event);
     }
   }
 
-  return selected.sort((left, right) => left.sequence_num - right.sequence_num);
+  return orderFrameEvents(selected);
 }
 
 export function createMissionEventRecord(

@@ -15,6 +15,7 @@ import type {
   RuntimeSummaryProgressEntry,
   RuntimeSummaryWarning,
 } from '../types.js';
+import { eventsThroughCursor } from './runtimeProjection.js';
 import { projectAllNodeStates } from './nodeStateProjection.js';
 import { projectRuntimeExplanation } from './explanationProjection.js';
 import {
@@ -366,7 +367,9 @@ function toCompatibilityActivity(activity: import('../types.js').RuntimeExplanat
         ? 'Waiting'
         : activity.status === 'completed'
           ? 'Completed'
-          : 'Active';
+          : activity.status === 'unknown'
+            ? 'Unknown'
+            : 'Active';
 
   return {
     id: activity.id,
@@ -440,6 +443,8 @@ function statusLabel(status: import('../types.js').RuntimeExplanationRunOutcome)
       return 'failed';
     case 'waiting':
       return 'waiting';
+    case 'unknown':
+      return 'unknown';
     default:
       return 'active';
   }
@@ -455,6 +460,7 @@ function headlineFromExplanation(
   if (explanation.run_outcome === 'waiting') return 'Waiting for human intervention';
   if (explanation.run_outcome === 'failed') return 'Execution failed';
   if (explanation.run_outcome === 'completed') return 'Execution completed';
+  if (explanation.run_outcome === 'unknown') return 'Execution outcome unknown';
   const active = explanation.activities.find((activity) => activity.status === 'active')
     ?? explanation.activities[explanation.activities.length - 1];
   return active ? `${active.title} active` : 'Execution active';
@@ -488,9 +494,7 @@ function summaryPendingWork(
 }
 
 export function projectRuntimeSummary(input: ProjectRuntimeSummaryInput): RuntimeSummary {
-  const events = [...input.events]
-    .filter((event) => input.up_to_sequence_num === undefined || event.sequence_num <= input.up_to_sequence_num)
-    .sort((left, right) => left.sequence_num - right.sequence_num);
+  const events = eventsThroughCursor(input.events, input.up_to_sequence_num);
   const explanation = projectRuntimeExplanation({
     mission_id: input.mission_id,
     branch_id: input.branch_id,
@@ -583,12 +587,13 @@ export function projectRuntimeSummary(input: ProjectRuntimeSummaryInput): Runtim
   const activities = explanation.activities.map(toCompatibilityActivity);
   const storyActivities = buildStoryActivities(activities);
   const majorPhases = collectPhaseHistory(events);
-  const currentPhase = buildCurrentPhase(input.phase, events, sequence_num, frameTimestamp);
+  const currentPhase = explanation.runtime_phase
+    ?? buildCurrentPhase(input.phase, events, sequence_num, frameTimestamp);
   const projectedStatus =
     explanation.run_outcome === 'waiting'
       ? 'waiting'
       : explanation.run_outcome;
-  const authoritativePhase = explanation.runtime_phase ?? currentPhase;
+  const authoritativePhase = currentPhase;
   const progressMarkers = explanation.progress_markers ?? progress.map((entry) => ({
     sequence_num: entry.sequence_num,
     timestamp: entry.timestamp,
@@ -606,7 +611,7 @@ export function projectRuntimeSummary(input: ProjectRuntimeSummaryInput): Runtim
     objective: input.objective,
     status: projectedStatus,
     run_status: explanation.run_status,
-    phase: input.phase,
+    phase: authoritativePhase.label,
     current_phase: currentPhase,
     runtime_phase: authoritativePhase,
     major_phases: majorPhases.length > 0 ? majorPhases : [currentPhase],

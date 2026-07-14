@@ -2,7 +2,6 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { useGraphStore } from '../../src/stores/graphStore.js';
 import { useMissionStore } from '../../src/stores/missionStore.js';
 import { useReplayStore } from '../../src/stores/replayStore.js';
-import { useReviewStore } from '../../src/stores/reviewStore.js';
 import type { EventEnvelope, GraphSnapshot } from '@agentlens/protocol';
 
 function replayEvent(id: string, sequence_num = 0): EventEnvelope {
@@ -61,9 +60,6 @@ beforeEach(() => {
     durationSeconds: null, currentBranchId: null, branches: [], events: [],
     currentState: null, selectedEventId: null, selectedActivityId: null, activityContextState: null,
   });
-  useReviewStore.setState({
-    reviews: [], comments: [], activeCommentTarget: null, isCommentPanelOpen: true,
-  });
 });
 
 // ====================================================================
@@ -98,6 +94,20 @@ describe('graphStore', () => {
     useGraphStore.getState().setSelectedNodeId('node-1');
     useGraphStore.getState().setSelectedNodeId(null);
     expect(useGraphStore.getState().selectedNodeId).toBeNull();
+  });
+
+  it('clears graph content and selection before a workspace context changes', () => {
+    useGraphStore.setState({
+      nodes: [{ id: 'node-1', type: 'default', position: { x: 0, y: 0 }, data: {} }],
+      edges: [{ id: 'edge-1', source: 'node-1', target: 'node-2' }],
+      baseNodes: [{ id: 'node-1', type: 'agent', label: 'Agent', status: 'active', position: { x: 0, y: 0 } }],
+      snapshots: [{ id: 'snapshot-1', mission_id: 'm1', branch_id: 'branch-a', sequence_num: 2, timestamp: '2026-01-01T00:00:00.000Z', nodes: [], edges: [] }],
+      selectedNodeId: 'node-1',
+    });
+
+    useGraphStore.getState().clearWorkspace();
+
+    expect(useGraphStore.getState()).toMatchObject({ nodes: [], edges: [], baseNodes: [], snapshots: [], selectedNodeId: null });
   });
 
   it('sets zoom level', () => {
@@ -249,6 +259,34 @@ describe('replayStore', () => {
     expect(useReplayStore.getState().isPlaying).toBe(true);
   });
 
+  it('clears branch, frame, selection, and runtime state together', () => {
+    useReplayStore.setState({
+      isPlaying: true,
+      currentFrame: 3,
+      totalFrames: 4,
+      currentBranchId: 'branch-b',
+      branches: [{ id: 'branch-b', mission_id: 'm1', name: 'Branch B', status: 'active', metadata: {}, created_at: '', updated_at: '' }],
+      events: [replayEvent('e3', 3)],
+      currentState: { mission_id: 'm1', branch_id: 'branch-b', status: 'active', phase: 'executing', sequence_num: 3, agents: {}, interrupts: {}, nodes: [], edges: [] },
+      selectedEventId: 'e3',
+      selectedActivityId: 'activity-3',
+    });
+
+    useReplayStore.getState().clearWorkspace();
+
+    expect(useReplayStore.getState()).toMatchObject({
+      currentFrame: 0,
+      totalFrames: 0,
+      currentBranchId: null,
+      branches: [],
+      events: [],
+      currentState: null,
+      selectedEventId: null,
+      selectedActivityId: null,
+      activityContextState: null,
+    });
+  });
+
   it('clamps current frame to valid range', () => {
     useReplayStore.setState({ totalFrames: 5, events: Array.from({ length: 5 }, (_, i) => replayEvent(`e${i}`, i)) });
     useReplayStore.getState().setCurrentFrame(10);
@@ -356,82 +394,5 @@ describe('replayStore', () => {
 
     useReplayStore.getState().reset();
     expect(useReplayStore.getState().activityContextState).toBeNull();
-  });
-});
-
-// ====================================================================
-// reviewStore
-// ====================================================================
-
-describe('reviewStore', () => {
-  it('has default state', () => {
-    const state = useReviewStore.getState();
-    expect(state.reviews).toEqual([]);
-    expect(state.comments).toEqual([]);
-    expect(state.activeCommentTarget).toBeNull();
-    expect(state.isCommentPanelOpen).toBe(true);
-  });
-
-  it('sets reviews', () => {
-    const reviews = [{
-      id: 'r1', mission_id: 'm1', status: 'pending' as const,
-      created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
-    }];
-    useReviewStore.getState().setReviews(reviews);
-    expect(useReviewStore.getState().reviews).toHaveLength(1);
-  });
-
-  it('sets comments', () => {
-    const comments = [{
-      id: 'c1', mission_id: 'm1', body: 'Interesting',
-      resolved: false, created_at: '2026-01-01T00:00:00.000Z',
-    }];
-    useReviewStore.getState().setComments(comments);
-    expect(useReviewStore.getState().comments).toHaveLength(1);
-  });
-
-  it('adds a comment to existing list', () => {
-    useReviewStore.setState({
-      comments: [{ id: 'c1', mission_id: 'm1', body: 'First', resolved: false, created_at: '' }],
-    });
-    useReviewStore.getState().addComment({
-      id: 'c2', mission_id: 'm1', body: 'Second',
-      resolved: false, created_at: '2026-01-01T00:00:00.000Z',
-    });
-    expect(useReviewStore.getState().comments).toHaveLength(2);
-  });
-
-  it('resolves a comment by id', () => {
-    useReviewStore.setState({
-      comments: [
-        { id: 'c1', mission_id: 'm1', body: 'A', resolved: false, created_at: '' },
-        { id: 'c2', mission_id: 'm1', body: 'B', resolved: false, created_at: '' },
-      ],
-    });
-    useReviewStore.getState().resolveComment('c1');
-    const comments = useReviewStore.getState().comments;
-    expect(comments[0].resolved).toBe(true);
-    expect(comments[1].resolved).toBe(false);
-  });
-
-  it('does not throw when resolving non-existent comment', () => {
-    useReviewStore.getState().resolveComment('nonexistent');
-    expect(useReviewStore.getState().comments).toEqual([]);
-  });
-
-  it('toggles comment panel', () => {
-    useReviewStore.getState().setCommentPanelOpen(false);
-    expect(useReviewStore.getState().isCommentPanelOpen).toBe(false);
-  });
-
-  it('sets active comment target', () => {
-    useReviewStore.getState().setActiveCommentTarget({ type: 'node', id: 'n1' });
-    expect(useReviewStore.getState().activeCommentTarget).toEqual({ type: 'node', id: 'n1' });
-  });
-
-  it('clears active comment target', () => {
-    useReviewStore.getState().setActiveCommentTarget({ type: 'node', id: 'n1' });
-    useReviewStore.getState().setActiveCommentTarget(null);
-    expect(useReviewStore.getState().activeCommentTarget).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import type { MissionEventRecord, RuntimeNodeProjection } from '@agentlens/protocol';
+import type { RuntimeNodeProjection } from '@agentlens/protocol';
 import { getRuntimeNodeProjection } from '@agentlens/protocol';
 import { api } from '@/lib/api';
 import type { RuntimeSummary } from '@agentlens/protocol';
@@ -11,7 +11,6 @@ interface UseNodeProjectionOptions {
   agentId: string | null;
   branchId?: string;
   sequenceNum?: number;
-  events: MissionEventRecord[];
   runtimeSummary?: RuntimeSummary | null;
   serverProjection?: RuntimeNodeProjection | null;
 }
@@ -21,7 +20,6 @@ export function useNodeProjection({
   agentId,
   branchId,
   sequenceNum,
-  events: _events,
   runtimeSummary,
   serverProjection = null,
 }: UseNodeProjectionOptions) {
@@ -45,7 +43,7 @@ export function useNodeProjection({
   }
 
   const enhance = useCallback(async () => {
-    if (!agentId || missionId === 'demo-mission') return null;
+    if (!agentId) return null;
     setIsEnhancing(true);
     try {
       const result = await api.nodeProjection.enhance(missionId, agentId, {

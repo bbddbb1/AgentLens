@@ -10,6 +10,7 @@ import {
   NODE_PROJECTION_VERSION,
   DETERMINISTIC_PROMPT_VERSION,
 } from './runtimeProjection.js';
+import { eventsThroughCursor } from './runtimeProjection.js';
 import { buildDeterministicUnderstanding } from './deterministicUnderstanding.js';
 import {
   applyEventToScratch,
@@ -98,12 +99,8 @@ export function projectAllNodeStates(input: ProjectAllNodeStatesInput): RuntimeN
     input.up_to_sequence_num,
   );
 
-  const filtered = input.events.filter(
-    (e) => input.up_to_sequence_num === undefined || e.sequence_num <= input.up_to_sequence_num,
-  );
-  const sequence_num = filtered.length > 0
-    ? Math.max(...filtered.map((e) => e.sequence_num))
-    : -1;
+  const filtered = eventsThroughCursor(input.events, input.up_to_sequence_num);
+  const sequence_num = filtered.at(-1)?.sequence_num ?? -1;
 
   return [...scratch.agents.entries()]
     .map(([agentId, agent]) => buildNodeProjection(scratch, agentId, agent, {
@@ -116,9 +113,7 @@ export function projectAllNodeStates(input: ProjectAllNodeStatesInput): RuntimeN
 
 export function projectNodeState(input: ProjectNodeStateInput): RuntimeNodeProjection | null {
   const scratch = createMissionScratch('executing');
-  const filtered = [...input.events]
-    .filter((e) => input.up_to_sequence_num === undefined || e.sequence_num <= input.up_to_sequence_num)
-    .sort((a, b) => a.sequence_num - b.sequence_num);
+  const filtered = eventsThroughCursor(input.events, input.up_to_sequence_num);
 
   for (const event of filtered) {
     applyEventToScratch(scratch, event);

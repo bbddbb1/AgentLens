@@ -10,14 +10,11 @@ import type {
   MissionEventRecord,
   ReplayBranch,
   ReplayStateResponse,
-  SemanticSummaryResult,
   RuntimeExplanationProjection,
   RuntimeSummary,
   RuntimeNodeProjection,
-  AuditIntegrityReport,
   MissionAuditEventResponse,
 } from '@agentlens/protocol';
-import type { Comment, Review } from '@/stores/reviewStore';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
 
@@ -111,64 +108,6 @@ export const api = {
       request<EventsResponse>(`/api/v1/missions/${missionId}/events${branchId ? `?branch_id=${branchId}` : ''}`),
   },
 
-  reviews: {
-    list: (missionId: string) => request<Review[]>(`/api/v1/missions/${missionId}/reviews`),
-
-    create: (missionId: string, data: { status?: string; body?: string }) =>
-      request<Review>(`/api/v1/missions/${missionId}/reviews`, { method: 'POST', body: JSON.stringify(data) }),
-  },
-
-  comments: {
-    list: (missionId: string, targetType?: string, targetId?: string) => {
-      const url = `/api/v1/missions/${missionId}/comments`;
-      const params = new URLSearchParams();
-      if (targetType) params.set('target_type', targetType);
-      if (targetId) params.set('target_id', targetId);
-      const qs = params.toString();
-      return request<Comment[]>(qs ? `${url}?${qs}` : url);
-    },
-
-    create: (missionId: string, data: {
-      body: string;
-      review_id?: string;
-      parent_id?: string;
-      target_type?: string;
-      target_id?: string;
-      target_context?: Record<string, unknown>;
-    }) =>
-      request<Comment>(`/api/v1/missions/${missionId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
-
-    resolve: (missionId: string, commentId: string) =>
-      request<{ status: string }>(`/api/v1/missions/${missionId}/comments/${commentId}/resolve`, { method: 'PATCH' }),
-  },
-
-  semantic: {
-    summaries: (missionId: string, level?: string, branchId?: string) => {
-      const params = new URLSearchParams();
-      if (level) params.append('level', level);
-      if (branchId) params.append('branch_id', branchId);
-      const query = params.toString();
-      return request<SemanticSummaryResult[]>(`/api/v1/missions/${missionId}/summary${query ? `?${query}` : ''}`);
-    },
-
-    generate: (missionId: string, branchId?: string) => {
-      const query = branchId ? `?branch_id=${branchId}` : '';
-      return request<SemanticSummaryResult>(`/api/v1/missions/${missionId}/summary/generate${query}`, { method: 'POST' });
-    },
-
-    whyThisState: (missionId: string, data: { sequence_num: number; branch_id?: string }) =>
-      request<SemanticSummaryResult>(`/api/v1/missions/${missionId}/why-this-state`, { method: 'POST', body: JSON.stringify(data) }),
-
-    whyThisStateDemo: (data: {
-      missionId: string;
-      phase?: string;
-      eventDescription?: string;
-      agentStates: Array<{ name: string; role: string; status: string; summary?: string }>;
-      pendingInterrupts: number;
-    }) =>
-      request<SemanticSummaryResult>('/api/why-this-state', { method: 'POST', body: JSON.stringify(data) }),
-  },
-
   runtimeSummary: {
     get: (missionId: string, options?: { branchId?: string; sequenceNum?: number; enhance?: boolean }) => {
       const params = new URLSearchParams();
@@ -232,13 +171,6 @@ export const api = {
     },
   },
 
-  sharing: {
-    share: (missionId: string, data: { user_email: string; permission: string; encrypted_key: string }) =>
-      request<Record<string, unknown>>(`/api/v1/missions/${missionId}/share`, { method: 'POST', body: JSON.stringify(data) }),
-
-    list: (missionId: string) => request<Record<string, unknown>[]>(`/api/v1/missions/${missionId}/shares`),
-  },
-
   audit: {
     events: (missionId: string, branchId?: string, sequenceNum?: number) => {
       const params = new URLSearchParams();
@@ -247,7 +179,5 @@ export const api = {
       const query = params.toString();
       return request<MissionAuditEventResponse>(`/api/v1/missions/${missionId}/audit/events${query ? `?${query}` : ''}`);
     },
-    verify: (missionId: string) =>
-      request<AuditIntegrityReport>(`/api/v1/missions/${missionId}/audit/verify`),
   },
 };

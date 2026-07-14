@@ -21,6 +21,8 @@ import {
   type RuntimeSummary,
   type RuntimeNodeProjection,
   SPAN_PROJECTION_VERSION,
+  eventsThroughCursor,
+  orderFrameEvents,
   projectRuntimeExplanation,
 } from '@agentlens/protocol';
 import { BuiltInRules, PolicyEngine } from './policyEngine.js';
@@ -65,7 +67,7 @@ import {
   createDefaultBranch,
   selectEventsForBranch,
   projectTraceSnapshot,
-  projectReplay,
+  projectReplayEvidence,
 } from './runtimeState.js';
 
 interface CreateMissionInput {
@@ -99,24 +101,40 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function maxSequenceThroughTimestamp(
+function lastSequenceThroughTimestamp(
   events: readonly EventEnvelope[],
   timestamp: string,
   floorSeq?: number,
 ): number | undefined {
   const snapshotMs = Date.parse(timestamp);
-  let maxSeq = floorSeq ?? -1;
+  let lastSeq = floorSeq;
 
-  for (const event of events) {
-    if (floorSeq !== undefined && event.sequence_num < floorSeq) continue;
+  for (const event of orderFrameEvents(events)) {
     const eventMs = Date.parse(event.timestamp);
     if (!Number.isNaN(snapshotMs) && !Number.isNaN(eventMs) && eventMs <= snapshotMs) {
-      maxSeq = Math.max(maxSeq, event.sequence_num);
+      lastSeq = event.sequence_num;
     }
   }
 
-  if (maxSeq >= 0) return maxSeq;
-  return floorSeq ?? events[0]?.sequence_num;
+  return lastSeq ?? events[0]?.sequence_num;
+}
+
+function lastSequenceAtSourceTimestamp(
+  events: readonly EventEnvelope[],
+  sourceSequenceNum: number,
+): number {
+  const ordered = orderFrameEvents(events);
+  const source = ordered.find((event) => event.sequence_num === sourceSequenceNum);
+  const sourceRaw = source?.metadata?.runtime_timestamp_unix_nano;
+  if (typeof sourceRaw !== 'string') return sourceSequenceNum;
+  let last = sourceSequenceNum;
+  for (const event of ordered) {
+    const eventRaw = event.metadata?.runtime_timestamp_unix_nano;
+    if (typeof eventRaw !== 'string') continue;
+    if (BigInt(eventRaw) > BigInt(sourceRaw)) break;
+    last = event.sequence_num;
+  }
+  return last;
 }
 
 function sequenceNumThroughSnapshot(
@@ -142,7 +160,8 @@ function sequenceNumThroughSnapshot(
       ? snapshot.source_event_sequence_num
       : spanStartSeq;
 
-  return maxSequenceThroughTimestamp(events, snapshot.timestamp, linkedSeq);
+  if (linkedSeq !== undefined) return lastSequenceAtSourceTimestamp(events, linkedSeq);
+  return lastSequenceThroughTimestamp(events, snapshot.timestamp, linkedSeq);
 }
 
 function toCompatibilityActivity(
@@ -159,8 +178,9 @@ function toCompatibilityActivity(
       activity.status === 'failed' ? 'Failed'
         : activity.status === 'waiting' ? 'Waiting'
           : activity.status === 'completed' ? 'Completed'
+            : activity.status === 'unknown' ? 'Unknown'
             : 'Active',
-    status: activity.status === 'waiting' ? 'waiting' : activity.status,
+    status: activity.status,
     sequence_num: activity.sequence_num,
     timestamp: activity.started_at ?? activity.ended_at,
     duration_ms: activity.duration_ms,
@@ -175,7 +195,7 @@ function toCompatibilityActivity(
   };
 }
 
-function attachExplanationToNodes(
+export function attachExplanationToNodes(
   nodes: GraphSnapshot['nodes'],
   explanation: RuntimeExplanationProjection,
 ): GraphSnapshot['nodes'] {
@@ -198,6 +218,7 @@ function attachExplanationToNodes(
     }
     return {
       ...node,
+      status: activities[0].status,
       activity: toCompatibilityActivity(activities[0]),
     };
   });
@@ -207,6 +228,7 @@ function annotateReplayWithExplanation(
   replay: ReplayStateResponse,
 ): ReplayStateResponse {
   const events = replay.events as EventEnvelope[];
+  const frameExplanations: RuntimeExplanationProjection[] = [];
   const snapshots = replay.snapshots.map((snapshot, index) => {
     const cutoff = sequenceNumThroughSnapshot(replay.snapshots, events, index);
     const explanation = projectRuntimeExplanation({
@@ -215,6 +237,7 @@ function annotateReplayWithExplanation(
       events,
       as_of_sequence_num: cutoff,
     });
+    frameExplanations.push(explanation);
     return {
       ...snapshot,
       nodes: attachExplanationToNodes(snapshot.nodes, explanation),
@@ -222,6 +245,7 @@ function annotateReplayWithExplanation(
   });
 
   const lastSnapshot = snapshots[snapshots.length - 1] ?? null;
+  const lastExplanation = frameExplanations[frameExplanations.length - 1];
   return {
     ...replay,
     snapshots,
@@ -231,6 +255,8 @@ function annotateReplayWithExplanation(
           nodes: lastSnapshot?.nodes ?? replay.current_state.nodes,
           edges: lastSnapshot?.edges ?? replay.current_state.edges,
           sequence_num: lastSnapshot?.sequence_num ?? replay.current_state.sequence_num,
+          status: lastExplanation?.run_outcome ?? 'unknown',
+          phase: lastExplanation?.runtime_phase?.label ?? 'Unknown',
         }
       : null,
   };
@@ -658,7 +684,7 @@ class MissionStore {
   }
 
   async getAuditEvents(missionId: string, branchId = 'main', sequenceNum?: number): Promise<MissionAuditEventResponse> {
-    const replay = await this.getReplayFromTelemetry(missionId, branchId);
+    const replay = await this.getReplayEvidenceFromTelemetry(missionId, branchId);
     if (!replay) {
       return {
         events: [],
@@ -673,7 +699,7 @@ class MissionStore {
       };
     }
     const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId);
-    const events = sequenceNum !== undefined ? selectedEvents.filter((e) => e.sequence_num <= sequenceNum) : selectedEvents;
+    const events = eventsThroughCursor(selectedEvents, sequenceNum);
     return {
       events,
       integrity: {
@@ -948,7 +974,7 @@ class MissionStore {
       client.release();
     }
   }
-  async getReplayFromTelemetry(missionId: string, branchId = ROOT_BRANCH_ID, useCheckpoint = false): Promise<ReplayStateResponse | null> {
+  private async getReplayEvidenceFromTelemetry(missionId: string, branchId = ROOT_BRANCH_ID, useCheckpoint = false): Promise<ReplayStateResponse | null> {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
     const client = await pool.connect();
@@ -972,7 +998,7 @@ class MissionStore {
       const interrupts = interruptsRes.rows;
 
       // 3. Project in memory
-      const lineageReplay = projectReplay(missionId, branchId, spans, interrupts);
+      const lineageReplay = projectReplayEvidence(missionId, branchId, spans, interrupts);
       const selectedEvents = selectEventsForBranch(lineageReplay.events, safeBranches, branchId) as EventEnvelope[];
       const selectedSpanIds = new Set(
         selectedEvents
@@ -994,9 +1020,7 @@ class MissionStore {
         selectedInterruptIds.has(String(interrupt.interrupt_id))
         || (interrupt.span_id ? selectedSpanIds.has(String(interrupt.span_id)) : false),
       );
-      const replay = annotateReplayWithExplanation(
-        projectReplay(missionId, branchId, filteredSpans, filteredInterrupts),
-      );
+      const replay = projectReplayEvidence(missionId, branchId, filteredSpans, filteredInterrupts);
       return {
         ...replay,
         branches: safeBranches,
@@ -1004,6 +1028,11 @@ class MissionStore {
     } finally {
       client.release();
     }
+  }
+
+  async getReplayFromTelemetry(missionId: string, branchId = ROOT_BRANCH_ID, useCheckpoint = false): Promise<ReplayStateResponse | null> {
+    const replay = await this.getReplayEvidenceFromTelemetry(missionId, branchId, useCheckpoint);
+    return replay ? annotateReplayWithExplanation(replay) : null;
   }
 
   async getCurrentGraph(
@@ -1045,7 +1074,7 @@ class MissionStore {
   }
 
   async listMissionEvents(missionId: string, branchId = ROOT_BRANCH_ID): Promise<MissionEventRecord[] | null> {
-    const replay = await this.getReplayFromTelemetry(missionId, branchId);
+    const replay = await this.getReplayEvidenceFromTelemetry(missionId, branchId);
     if (!replay) return null;
     return selectEventsForBranch(replay.events, replay.branches, branchId);
   }
@@ -1055,7 +1084,7 @@ class MissionStore {
     if (!mission) return null;
 
     const sourceBranchId = input.source_branch_id ?? ROOT_BRANCH_ID;
-    const sourceReplay = await this.getReplayFromTelemetry(missionId, sourceBranchId);
+    const sourceReplay = await this.getReplayEvidenceFromTelemetry(missionId, sourceBranchId);
     if (!sourceReplay) return null;
 
     const branchId = `${sourceBranchId}-${randomUUID().slice(0, 8)}`;
@@ -1077,7 +1106,7 @@ class MissionStore {
       // Duplicate pending interrupts exactly as they were at the fork point
       if (sourceReplay.events) {
         // Re-run replay to the exact fork point to get accurate interrupt state
-        const eventsAtFork = sourceReplay.events.filter(e => e.sequence_num <= forkedFromSequenceNum);
+        const eventsAtFork = eventsThroughCursor(sourceReplay.events, forkedFromSequenceNum);
         const interruptsMap = new Map<string, any>();
         for (const e of eventsAtFork) {
           if (e.event_type === 'interrupt.requested') {
@@ -1166,7 +1195,7 @@ class MissionStore {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
 
-    const replay = await this.getReplayFromTelemetry(missionId, branchId);
+    const replay = await this.getReplayEvidenceFromTelemetry(missionId, branchId);
     if (!replay) return null;
     const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId) as EventEnvelope[];
     const explanation = projectRuntimeExplanation({
@@ -1181,7 +1210,7 @@ class MissionStore {
       branch_id: branchId,
       objective: mission.objective,
       status: explanation.run_outcome,
-      phase: replay.current_state?.phase ?? mission.phase,
+      phase: explanation.runtime_phase?.label ?? 'Unknown',
       events: selectedEvents,
       up_to_sequence_num: upToSequenceNum,
     };
@@ -1197,7 +1226,7 @@ class MissionStore {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
 
-    const replay = await this.getReplayFromTelemetry(missionId, branchId);
+    const replay = await this.getReplayEvidenceFromTelemetry(missionId, branchId);
     if (!replay) return null;
 
     const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId) as EventEnvelope[];
@@ -1218,7 +1247,7 @@ class MissionStore {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
 
-    const replay = await this.getReplayFromTelemetry(missionId, branchId);
+    const replay = await this.getReplayEvidenceFromTelemetry(missionId, branchId);
     if (!replay) return null;
     const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId);
 
@@ -1394,7 +1423,7 @@ class MissionStore {
       ?? replay.snapshots[replay.snapshots.length - 1];
     if (!snapshot) return null;
 
-    const eventsUpToSnapshot = replay.events.filter((e) => e.sequence_num <= sequenceNum);
+    const eventsUpToSnapshot = eventsThroughCursor(replay.events, sequenceNum);
 
     const ctx: WhyThisStateContext = {
       missionObjective: mission.objective,

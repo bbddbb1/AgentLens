@@ -210,6 +210,10 @@ describe('LangGraph native-fact conformance', async () => {
     expect(legacyReport.authoritative).toBe(false);
   });
 
+  it.each(fixtures)('$fixture.fixture_id does not promote an activity root to run completion', ({ fixture }) => {
+    expect(projectReplay('fixture-mission', 'main', fixture.spans).current_state?.status).toBe('unknown');
+  });
+
   it('is deterministic when equivalent spans are permuted', async () => {
     const [{ fixture }] = (await loadFixtures()).filter(({ fixture }) => fixture.fixture_id === 'tool_success');
     const forwardFacts = normalizeSpansToFacts(fixture.spans);

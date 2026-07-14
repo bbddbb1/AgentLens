@@ -34,6 +34,7 @@ const STATUS_TOKEN_COLORS: Record<string, string> = {
   failed: '#f87171',
   waiting: '#fbbf24',
   reviewing: '#a78bfa',
+  unknown: '#5d6180',
 };
 
 const INTERRUPT_STATUS_COLORS: Record<string, string> = {

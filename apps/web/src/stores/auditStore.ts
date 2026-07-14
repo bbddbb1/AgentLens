@@ -5,7 +5,7 @@
  * envelopes that share its `span_id` to surface runtime evidence (tool I/O,
  * search query, result count, retrieval backend, failure reason). Those
  * envelopes are produced by the existing `GET /audit/events` endpoint and
- * filtered server-side to `sequence_num <= frame`.
+ * filtered server-side through the exact stable frame cursor.
  *
  * This store exists so that graph node components rendered outside the right
  * sidebar (e.g. `ToolNode` / `TaskNode` / `AgentNode` hover popovers) can read
@@ -14,12 +14,11 @@
  */
 
 import { create } from 'zustand';
-import type { EventEnvelope, MissionAuditEventResponse } from '@agentlens/protocol';
+import type { EventEnvelope } from '@agentlens/protocol';
 import { api } from '@/lib/api';
 
 interface AuditStoreState {
   events: EventEnvelope[];
-  integrity: MissionAuditEventResponse['integrity'] | null;
   isLoading: boolean;
   /** The (missionId, branchId, sequenceNum) tuple the current events were loaded for. */
   loadedFor: { missionId: string; branchId: string; sequenceNum: number | undefined } | null;
@@ -40,12 +39,11 @@ interface AuditStoreState {
 
 export const useAuditStore = create<AuditStoreState>((set, get) => ({
   events: [],
-  integrity: null,
   isLoading: false,
   loadedFor: null,
 
   load: (missionId, branchId, sequenceNum) => {
-    if (!missionId || missionId === 'demo-mission') {
+    if (!missionId) {
       return;
     }
     const resolvedBranch = branchId ?? 'main';
@@ -68,7 +66,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => ({
   },
 
   clear: () =>
-    set({ events: [], integrity: null, isLoading: false, loadedFor: null }),
+    set({ events: [], isLoading: false, loadedFor: null }),
 }));
 
 function runLoad(
@@ -77,13 +75,12 @@ function runLoad(
   branchId: string,
   sequenceNum: number | undefined,
 ) {
-  set({ isLoading: true });
+  set({ events: [], isLoading: true, loadedFor: null });
   api
     .audit.events(missionId, branchId, sequenceNum)
     .then((res) => {
       set({
         events: res.events ?? [],
-        integrity: res.integrity ?? null,
         isLoading: false,
         loadedFor: { missionId, branchId, sequenceNum },
       });

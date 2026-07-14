@@ -4,6 +4,7 @@ import type {
   RuntimeActivity,
   RuntimeActivityKind,
 } from '../types.js';
+import { orderFrameEvents } from './runtimeProjection.js';
 
 export interface RuntimeActivityEvidence {
   id: string;
@@ -197,6 +198,7 @@ function outcomeLabel(status: NodeStatus, eventType?: string): string {
     failed: 'Failed',
     waiting: 'Waiting',
     reviewing: 'Reviewing',
+    unknown: 'Unknown',
   };
   return labels[status];
 }
@@ -242,7 +244,7 @@ export function projectRuntimeActivities(
   limit = 8,
 ): RuntimeActivity[] {
   const bySpanAndKind = new Map<string, RuntimeActivity>();
-  const sorted = [...events].sort((a, b) => a.sequence_num - b.sequence_num);
+  const sorted = orderFrameEvents(events);
 
   for (const event of sorted) {
     const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -277,8 +279,10 @@ export function projectRuntimeActivities(
     }
   }
 
-  const activities = [...bySpanAndKind.values()]
-    .sort((a, b) => (a.sequence_num ?? 0) - (b.sequence_num ?? 0));
+  const compareActivities = (a: RuntimeActivity, b: RuntimeActivity) =>
+    Date.parse(a.timestamp ?? '') - Date.parse(b.timestamp ?? '')
+    || (a.sequence_num ?? 0) - (b.sequence_num ?? 0);
+  const activities = [...bySpanAndKind.values()].sort(compareActivities);
   if (activities.length <= limit) return activities;
 
   const first = activities.slice(0, 2);
@@ -292,6 +296,6 @@ export function projectRuntimeActivities(
     selected.set(activity.id, activity);
   }
   return [...selected.values()]
-    .sort((a, b) => (a.sequence_num ?? 0) - (b.sequence_num ?? 0))
+    .sort(compareActivities)
     .slice(0, limit);
 }

@@ -1,5 +1,5 @@
 /**
- * Mission store 鈥?manages mission list and active mission state.
+ * Mission store manages mission list and active mission state.
  */
 
 import { create } from 'zustand';
