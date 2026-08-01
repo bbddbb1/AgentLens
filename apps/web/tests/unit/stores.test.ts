@@ -26,9 +26,9 @@ beforeEach(() => {
     baseNodes: [],
     baseEdges: [],
     snapshots: [],
-    currentSnapshotIndex: 0,
     selectedNodeId: null,
-    highlightedEdgeId: null,
+    highlightedNodeIds: [],
+    highlightedEdgeIds: [],
     zoomLevel: 1,
     zoomBand: 'standard',
     edgeVisibility: {
@@ -43,15 +43,18 @@ beforeEach(() => {
       member_of: true,
       produces: true,
     },
-    edgeLayerPreset: 'all',
-    tracePreset: 'none',
+    displayPreset: 'all',
+    showConnectedOnly: false,
     showActiveOnly: false,
-    focusModeEnabled: true,
+    focusModeEnabled: false,
     focusDepth: 1,
     bundleEdges: true,
+    showMinimap: false,
     visibleEdgeCount: 0,
+    renderedEdgeCount: 0,
     totalEdgeCount: 0,
-    satelliteCounts: {},
+    hiddenContext: null,
+    relationshipContext: null,
     layoutPositions: {},
   });
   useMissionStore.setState({ missions: [], activeMission: null, isLoading: false, error: null });
@@ -73,16 +76,8 @@ describe('graphStore', () => {
     expect(state.edges).toEqual([]);
     expect(state.zoomLevel).toBe(1);
     expect(state.selectedNodeId).toBeNull();
-  });
-
-  it('sets nodes', () => {
-    useGraphStore.getState().setNodes([{ id: 'n1', type: 'default', position: { x: 0, y: 0 }, data: {} }]);
-    expect(useGraphStore.getState().nodes).toHaveLength(1);
-  });
-
-  it('sets edges', () => {
-    useGraphStore.getState().setEdges([{ id: 'e1', source: 'a', target: 'b' }]);
-    expect(useGraphStore.getState().edges).toHaveLength(1);
+    expect(state.displayPreset).toBe('all');
+    expect(state.focusModeEnabled).toBe(false);
   });
 
   it('sets selected node', () => {
@@ -113,6 +108,45 @@ describe('graphStore', () => {
   it('sets zoom level', () => {
     useGraphStore.getState().setZoomLevel(2.5);
     expect(useGraphStore.getState().zoomLevel).toBe(2.5);
+  });
+
+  it('applies a primary display preset atomically', () => {
+    useGraphStore.getState().setDisplayPreset('orchestration');
+    const state = useGraphStore.getState();
+    expect(state.displayPreset).toBe('orchestration');
+    expect(state.edgeVisibility.delegation).toBe(true);
+    expect(state.edgeVisibility.member_of).toBe(true);
+    expect(state.edgeVisibility.uses).toBe(false);
+  });
+
+  it('marks manual edge configuration as custom', () => {
+    useGraphStore.getState().setEdgeTypeVisible('uses', false);
+    expect(useGraphStore.getState().displayPreset).toBe('custom');
+    expect(useGraphStore.getState().edgeVisibility.uses).toBe(false);
+  });
+
+  it('resets display filters without clearing runtime selection', () => {
+    useGraphStore.setState({ selectedNodeId: 'node-1' });
+    useGraphStore.getState().setDisplayPreset('data');
+    useGraphStore.getState().setShowConnectedOnly(true);
+    useGraphStore.getState().setShowActiveOnly(true);
+    useGraphStore.getState().setFocusModeEnabled(true);
+    useGraphStore.getState().setBundleEdges(false);
+    useGraphStore.getState().setShowMinimap(true);
+
+    useGraphStore.getState().resetDisplay();
+
+    expect(useGraphStore.getState()).toMatchObject({
+      selectedNodeId: 'node-1',
+      displayPreset: 'all',
+      showConnectedOnly: false,
+      showActiveOnly: false,
+      focusModeEnabled: false,
+      focusDepth: 1,
+      bundleEdges: true,
+      showMinimap: false,
+    });
+    expect(Object.values(useGraphStore.getState().edgeVisibility).every(Boolean)).toBe(true);
   });
 
   it('sets snapshots', () => {

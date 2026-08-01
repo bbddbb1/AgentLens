@@ -1,161 +1,102 @@
 'use client';
 
-/**
- * ReplayControls — Play/pause/seek/speed controls for mission replay.
- */
-
 import { useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
-import {
-  Play, Pause, SkipBack, SkipForward,
-  RotateCcw, GitBranch,
-} from 'lucide-react';
-import { useReplayStore } from '@/stores/replayStore';
+import { Pause, Play, RotateCcw, SkipBack, SkipForward } from 'lucide-react';
 import { useGraphStore } from '@/stores/graphStore';
+import { useReplayStore } from '@/stores/replayStore';
 
 const speedOptions = [0.5, 1, 2, 4];
 
+function formatDuration(secondsLike: number): string {
+  const safeSeconds = Number.isFinite(secondsLike) ? Math.max(0, secondsLike) : 0;
+  const mins = Math.floor(safeSeconds / 60);
+  const secs = Math.floor(safeSeconds % 60);
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+function timestampDeltaSeconds(start: string | undefined, end: string | undefined): number {
+  if (!start || !end) return 0;
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return 0;
+  return Math.max(0, (endMs - startMs) / 1000);
+}
+
+export function replayFramePresentation(totalFrames: number, currentFrame: number) {
+  const hasFrames = totalFrames > 0;
+  const canPlay = totalFrames > 1;
+  const safeFrame = hasFrames ? Math.min(Math.max(currentFrame, 0), totalFrames - 1) : 0;
+  return {
+    hasFrames,
+    canPlay,
+    progress: canPlay ? (safeFrame / (totalFrames - 1)) * 100 : 0,
+    frameLabel: hasFrames ? `${safeFrame + 1}/${totalFrames}` : '0/0',
+  };
+}
+
 export function ReplayControls() {
-  const {
-    isPlaying, currentFrame, totalFrames, playbackSpeed, currentBranchId,
-    setIsPlaying, setCurrentFrame, setPlaybackSpeed,
-    nextFrame, prevFrame, reset,
-  } = useReplayStore();
+  const { isPlaying, currentFrame, totalFrames, playbackSpeed, setIsPlaying, setCurrentFrame, setPlaybackSpeed, nextFrame, prevFrame, reset } = useReplayStore();
+  const snapshots = useGraphStore((state) => state.snapshots);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { hasFrames, canPlay, progress, frameLabel } = replayFramePresentation(totalFrames, currentFrame);
 
-  const { snapshots, applySnapshot } = useGraphStore();
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Auto-advance frames when playing
   useEffect(() => {
-    if (isPlaying && totalFrames > 0) {
-      intervalRef.current = setInterval(() => {
-        nextFrame();
-      }, 1000 / playbackSpeed);
+    if (isPlaying && canPlay) {
+      intervalRef.current = setInterval(nextFrame, 1000 / playbackSpeed);
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = null;
     };
-  }, [isPlaying, playbackSpeed, totalFrames, nextFrame]);
+  }, [canPlay, isPlaying, nextFrame, playbackSpeed]);
 
-  // Apply snapshot when frame changes
-  useEffect(() => {
-    if (snapshots.length > 0 && currentFrame < snapshots.length) {
-      applySnapshot(snapshots[currentFrame]);
-    }
-  }, [currentFrame, snapshots, applySnapshot]);
-
-  const progress = totalFrames > 0 ? (currentFrame / (totalFrames - 1)) * 100 : 0;
-
-  const formatTime = (secondsLike: number) => {
-    const mins = Math.floor(secondsLike / 60);
-    const secs = Math.floor(secondsLike % 60);
-    return `${mins}:${String(secs).padStart(2, '0')}`;
-  };
-
-  const frameTimestamp = snapshots[currentFrame]?.timestamp;
-  const elapsedSeconds =
-    snapshots.length > 1
-      ? (new Date(frameTimestamp ?? snapshots[0]?.timestamp ?? 0).getTime() - new Date(snapshots[0]?.timestamp ?? 0).getTime()) / 1000
-      : currentFrame;
-  const totalSeconds =
-    snapshots.length > 1
-      ? (new Date(snapshots[snapshots.length - 1]?.timestamp ?? 0).getTime() - new Date(snapshots[0]?.timestamp ?? 0).getTime()) / 1000
-      : totalFrames;
+  const firstTimestamp = snapshots[0]?.timestamp;
+  const currentTimestamp = snapshots[currentFrame]?.timestamp;
+  const lastTimestamp = snapshots[snapshots.length - 1]?.timestamp;
+  const elapsedSeconds = timestampDeltaSeconds(firstTimestamp, currentTimestamp);
+  const totalSeconds = timestampDeltaSeconds(firstTimestamp, lastTimestamp);
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5 glass rounded-xl">
-      {/* Transport controls */}
-      <div className="flex items-center gap-1">
-        <button
-          onClick={reset}
-          className="p-1.5 rounded-lg text-[#5d6180] hover:text-[#e8eaf0] hover:bg-[rgba(255,255,255,0.05)] transition-colors"
-          title="Reset"
-        >
+    <div className="flex w-full items-center gap-3" aria-label="Replay controls">
+      <div className="flex shrink-0 items-center gap-1">
+        <button type="button" onClick={reset} disabled={!hasFrames || currentFrame === 0} aria-label="Reset replay to first frame" className="rounded-sm p-1.5 text-text-muted hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35">
           <RotateCcw size={14} />
         </button>
-        <button
-          onClick={prevFrame}
-          disabled={currentFrame === 0}
-          className="p-1.5 rounded-lg text-[#9498b0] hover:text-[#e8eaf0] hover:bg-[rgba(255,255,255,0.05)] transition-colors disabled:opacity-30"
-          title="Previous frame"
-        >
+        <button type="button" onClick={prevFrame} disabled={!hasFrames || currentFrame === 0} aria-label="Previous replay frame" className="rounded-sm p-1.5 text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35">
           <SkipBack size={14} />
         </button>
-        <button
-          onClick={() => setIsPlaying(!isPlaying)}
-          className="p-2 rounded-xl bg-[#6366f1] text-white hover:bg-[#5558e6] transition-colors shadow-lg shadow-[#6366f1]/20"
-          title={isPlaying ? 'Pause' : 'Play'}
-        >
-          {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+        <button type="button" onClick={() => setIsPlaying(!isPlaying)} disabled={!canPlay} aria-label={isPlaying ? 'Pause replay' : 'Play replay'} className="rounded-sm border border-border-default bg-accent-soft p-2 text-accent-strong hover:border-border-strong hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-35">
+          {isPlaying ? <Pause size={15} /> : <Play size={15} />}
         </button>
-        <button
-          onClick={nextFrame}
-          disabled={currentFrame >= totalFrames - 1}
-          className="p-1.5 rounded-lg text-[#9498b0] hover:text-[#e8eaf0] hover:bg-[rgba(255,255,255,0.05)] transition-colors disabled:opacity-30"
-          title="Next frame"
-        >
+        <button type="button" onClick={nextFrame} disabled={!hasFrames || currentFrame >= totalFrames - 1} aria-label="Next replay frame" className="rounded-sm p-1.5 text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35">
           <SkipForward size={14} />
         </button>
       </div>
 
-      {/* Timeline scrubber */}
-      <div className="flex-1 flex items-center gap-3">
-        <span className="text-[11px] text-[#5d6180] font-mono tabular-nums w-10 text-right">
-          {formatTime(elapsedSeconds)}
-        </span>
-        <div className="flex-1 relative group">
-          <div className="h-1 rounded-full bg-[rgba(255,255,255,0.06)] overflow-hidden">
-            <motion.div
-              className="h-full rounded-full bg-gradient-to-r from-[#6366f1] to-[#8b5cf6]"
-              style={{ width: `${progress}%` }}
-              transition={{ duration: 0.1 }}
-            />
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={Math.max(totalFrames - 1, 0)}
-            value={currentFrame}
-            onChange={(e) => setCurrentFrame(parseInt(e.target.value))}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          />
-          {/* Thumb indicator */}
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-[#6366f1] border-2 border-[#1a1b25] shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-            style={{ left: `calc(${progress}% - 6px)` }}
-          />
-        </div>
-        <span className="text-[11px] text-[#5d6180] font-mono tabular-nums w-10">
-          {formatTime(totalSeconds)}
-        </span>
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="hidden w-10 text-right font-mono text-[10px] tabular-nums text-text-muted sm:block">{formatDuration(elapsedSeconds)}</span>
+        <label className="relative flex min-w-24 flex-1 items-center" title={`Replay position: ${progress.toFixed(0)}%`}>
+          <span className="sr-only">Replay frame</span>
+          <input type="range" min={0} max={Math.max(totalFrames - 1, 0)} value={hasFrames ? Math.min(currentFrame, totalFrames - 1) : 0} onChange={(event) => setCurrentFrame(Number(event.target.value))} disabled={!canPlay} aria-label="Replay frame" aria-valuetext={`Frame ${frameLabel}`} className="h-1.5 w-full cursor-pointer accent-accent disabled:cursor-not-allowed disabled:opacity-40" />
+        </label>
+        <span className="hidden w-10 font-mono text-[10px] tabular-nums text-text-muted md:block">{formatDuration(totalSeconds)}</span>
       </div>
 
-      {/* Speed controls */}
-      <div className="flex items-center gap-1 ml-2">
-        {speedOptions.map((speed) => (
-          <button
-            key={speed}
-            onClick={() => setPlaybackSpeed(speed)}
-            className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors ${
-              playbackSpeed === speed
-                ? 'bg-[#6366f1]/20 text-[#818cf8]'
-                : 'text-[#5d6180] hover:text-[#9498b0]'
-            }`}
-          >
-            {speed}x
-          </button>
-        ))}
+      <div className="shrink-0 font-mono text-[11px] tabular-nums text-text-secondary" aria-label={`Frame ${frameLabel}`}>
+        <span className="hidden text-text-muted sm:inline">Frame </span>
+        {frameLabel}
       </div>
 
-      {/* Frame counter */}
-      <div className="text-[10px] text-[#5d6180] font-mono ml-2">
-        {currentFrame + 1}/{totalFrames}
-      </div>
-
-      <div className="hidden md:flex items-center gap-1.5 rounded-lg bg-[rgba(255,255,255,0.03)] px-2.5 py-1 text-[10px] text-[#8f95b2]">
-        <GitBranch size={11} className="text-[#67e8f9]" />
-        <span>{currentBranchId ?? 'main'}</span>
-      </div>
+      <label className="hidden shrink-0 items-center gap-1.5 text-[11px] text-text-muted sm:flex">
+        Speed
+        <select aria-label="Replay speed" value={playbackSpeed} onChange={(event) => setPlaybackSpeed(Number(event.target.value))} disabled={!canPlay} className="rounded-sm border border-border-default bg-bg-secondary px-1.5 py-1 text-[11px] text-text-primary disabled:cursor-not-allowed disabled:opacity-40">
+          {speedOptions.map((speed) => (
+            <option key={speed} value={speed}>
+              {speed}x
+            </option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 }

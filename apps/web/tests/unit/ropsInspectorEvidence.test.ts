@@ -3,7 +3,6 @@ import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
 import type { GraphNode, RuntimeActivity, RuntimeOperatorActivityRecord } from '@agentlens/protocol';
 import { RopsInspector } from '@/components/rops/RopsInspector';
-import { formatTimelineOutputBadge } from '@/lib/rops/fieldCondition';
 import { TimelineEventCard } from '@/components/timeline/TimelineEventCard';
 
 function operatorRecord(
@@ -72,8 +71,8 @@ describe('ropsInspectorEvidence', () => {
     expect(html).toContain('no normalized output in activity record');
     const outputsRow = html.split('outputs</span>')[1]?.split('error_or_wait_reason')[0] ?? '';
     expect(outputsRow).not.toContain('secret-private-output');
-    expect(html).toContain('basestation.aiops.llm.output.summary');
-    expect(html).toContain('secret-private-output');
+    expect(html).not.toContain('basestation.aiops.llm.output.summary');
+    expect(html).not.toContain('secret-private-output');
     expect(html).toContain('story_sufficiency');
     expect(html).not.toContain('evidence_condition');
   });
@@ -112,25 +111,29 @@ describe('ropsInspectorEvidence', () => {
   });
 });
 
-describe('TimelineEventCard normalized output badge', () => {
-  it('uses the same normalized output label as inspector', () => {
+describe('TimelineEventCard concise topology card', () => {
+  it('keeps output details in the inspector and preserves recorded status vocabulary', () => {
     const record = operatorRecord();
-    const badge = formatTimelineOutputBadge(record.output);
     const html = renderToString(createElement(TimelineEventCard, {
       activity: {
         id: 'llm:req-1',
         kind: 'llm',
+        label: 'LLM | test',
         title: 'LLM | test',
         action: 'LLM generated',
-        status: 'completed',
+        outcome: 'Reviewing',
+        status: 'reviewing',
         actor: 'agent',
-        evidence_refs: [],
+        provenance: 'projection',
         operator_facing_record: record,
       },
       isCurrent: false,
       onSelect: () => {},
     }));
-    expect(badge).toBe('no normalized output in activity record');
-    expect(html).toContain('no normalized output in activity record');
+    expect(html).toContain('LLM | model');
+    expect(html).toContain('Reviewing');
+    expect(html).toContain('llm · agent');
+    expect(html).not.toContain('no normalized output in activity record');
+    expect(html).not.toContain('Activity Output');
   });
 });

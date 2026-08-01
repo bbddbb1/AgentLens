@@ -24,12 +24,10 @@ export interface RopsEvidenceProps {
 export function RopsEvidence({ envelope, onClose }: RopsEvidenceProps) {
   if (!envelope) {
     return (
-      <div className="rounded-xl border border-dashed border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.01)] p-6 text-center">
-        <FileText size={20} className="text-[#5d6180] mx-auto mb-2" />
-        <div className="text-[11px] text-[#9498b0]">No evidence selected.</div>
-        <div className="text-[10px] text-[#5d6180] mt-1">
-          Use the L4 action on an inspector field or event to open the recorded EventEnvelope.
-        </div>
+      <div className="rounded-sm border border-dashed border-border-default bg-bg-secondary p-6 text-center">
+        <FileText size={20} className="mx-auto mb-2 text-text-muted" />
+        <div className="text-[12px] text-text-secondary">No evidence selected.</div>
+        <div className="mt-1 text-[11px] text-text-muted">Use the L4 action on an inspector field or event to open the recorded EventEnvelope.</div>
       </div>
     );
   }
@@ -49,30 +47,21 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
   };
 
   return (
-    <div className="rounded-xl border border-[rgba(6,182,212,0.18)] bg-[rgba(6,182,212,0.02)] p-3.5 space-y-3 relative">
+    <div className="relative space-y-3 rounded-sm border border-border-default bg-bg-secondary p-3.5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-[#22d3ee]" />
-          <span className="text-[9px] uppercase tracking-[0.12em] text-[#06b6d4] font-bold">Recorded evidence</span>
+          <span className="h-1.5 w-1.5 rounded-full bg-text-muted" />
+          <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-text-secondary">Recorded evidence</span>
         </div>
-        <span className="text-[9px] bg-[rgba(6,182,212,0.1)] text-[#22d3ee] border border-[#06b6d4]/20 px-2 py-0.5 rounded-md font-mono">
-          seq #{envelope.sequence_num}
-        </span>
+        <span className="rounded-sm border border-border-subtle bg-bg-tertiary px-2 py-0.5 font-mono text-[10px] text-text-secondary">seq #{envelope.sequence_num}</span>
         {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1 rounded text-[#5d6180] hover:text-white hover:bg-[rgba(255,255,255,0.05)]"
-            title="Close recorded evidence"
-          >
+          <button type="button" onClick={onClose} className="rounded-sm p-1 text-text-muted hover:bg-bg-hover hover:text-text-primary" aria-label="Close recorded evidence">
             <X size={12} />
           </button>
         )}
       </div>
 
-      <div className="text-[13px] font-semibold text-white tracking-wide uppercase">
-        {envelope.event_type.replace(/[._]/g, ' ')}
-      </div>
+      <div className="text-[13px] font-semibold capitalize tracking-wide text-text-primary">{envelope.event_type.replace(/[._]/g, ' ')}</div>
 
       {/* Canonical MissionEventRecord fields (Evidence) */}
       <EvidenceSection title="Event Record">
@@ -90,6 +79,13 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
         {envelope.idempotency_key && <EvidenceRow label="idempotency_key" value={envelope.idempotency_key} onCopy={copy} copied={copied} />}
       </EvidenceSection>
 
+      {(envelope.content_hash || envelope.previous_hash) && (
+        <EvidenceSection title="Integrity linkage">
+          {envelope.content_hash && <EvidenceRow label="content_hash" value={envelope.content_hash} onCopy={copy} copied={copied} />}
+          {envelope.previous_hash && <EvidenceRow label="previous_hash" value={envelope.previous_hash} onCopy={copy} copied={copied} />}
+        </EvidenceSection>
+      )}
+
       {/* Recognized payload keys (typed extraction whitelist, spec 8.1) */}
       {recognized.length > 0 && (
         <EvidenceSection title="Payload (recognized)">
@@ -100,9 +96,7 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
       {/* Unrecognized payload keys — L4 only, verbatim (spec 8.2) */}
       {unrecognized.length > 0 && (
         <EvidenceSection title="Payload (verbatim / unrecognized)">
-          <div className="text-[9px] text-[#6b708a] mb-1">
-            Keys not in the ROPS whitelist. Shown verbatim; never interpreted.
-          </div>
+          <div className="mb-1 text-[10px] text-text-muted">Keys not in the ROPS whitelist. Shown verbatim; never interpreted.</div>
           <RawKeyValue entries={unrecognized} onCopy={copy} copied={copied} />
         </EvidenceSection>
       )}
@@ -121,7 +115,7 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
         <EvidenceRow label="origin_framework" value={envelope.origin_framework ?? '—'} onCopy={copy} copied={copied} />
         {envelope.model && (
           <div className="pt-1 space-y-1">
-            <div className="text-[9px] text-[#6b708a]">Model</div>
+            <div className="text-[10px] text-text-muted">Model</div>
             <EvidenceRow label="provider" value={envelope.model.provider ?? '—'} onCopy={copy} copied={copied} />
             <EvidenceRow label="model_name" value={envelope.model.model_name ?? '—'} onCopy={copy} copied={copied} />
             {envelope.model.model_version && <EvidenceRow label="model_version" value={envelope.model.model_version} onCopy={copy} copied={copied} />}
@@ -133,7 +127,7 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
         )}
         {envelope.policy && (
           <div className="pt-1 space-y-1">
-            <div className="text-[9px] text-[#6b708a]">Policy</div>
+            <div className="text-[10px] text-text-muted">Policy</div>
             {envelope.policy.rule_id && <EvidenceRow label="rule_id" value={envelope.policy.rule_id} onCopy={copy} copied={copied} />}
             {envelope.policy.decision && <EvidenceRow label="decision" value={envelope.policy.decision} onCopy={copy} copied={copied} />}
             {envelope.policy.reason && <EvidenceRow label="reason" value={envelope.policy.reason} onCopy={copy} copied={copied} />}
@@ -141,7 +135,7 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
         )}
         {envelope.error && (
           <div className="pt-1 space-y-1">
-            <div className="text-[9px] text-[#6b708a]">Error</div>
+            <div className="text-[10px] text-text-muted">Error</div>
             {envelope.error.source && <EvidenceRow label="source" value={envelope.error.source} onCopy={copy} copied={copied} />}
             {envelope.error.cause && <EvidenceRow label="cause" value={envelope.error.cause} onCopy={copy} copied={copied} />}
             {envelope.error.severity && <EvidenceRow label="severity" value={envelope.error.severity} onCopy={copy} copied={copied} />}
@@ -151,7 +145,7 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
         )}
         {envelope.causal && (
           <div className="pt-1 space-y-1">
-            <div className="text-[9px] text-[#6b708a]">Causal</div>
+            <div className="text-[10px] text-text-muted">Causal</div>
             {envelope.causal.parent_span_id && <EvidenceRow label="parent_span_id" value={envelope.causal.parent_span_id} onCopy={copy} copied={copied} />}
             {envelope.causal.tool_call_id && <EvidenceRow label="tool_call_id" value={envelope.causal.tool_call_id} onCopy={copy} copied={copied} />}
             {envelope.causal.decision_for_event_id && <EvidenceRow label="decision_for_event_id" value={envelope.causal.decision_for_event_id} onCopy={copy} copied={copied} />}
@@ -159,7 +153,6 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
           </div>
         )}
       </EvidenceSection>
-
     </div>
   );
 }
@@ -167,41 +160,24 @@ function EvidenceBody({ envelope, onClose }: { envelope: EventEnvelope; onClose?
 function EvidenceSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <div className="text-[9px] uppercase tracking-[0.12em] text-[#06b6d4] font-semibold">{title}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-text-muted">{title}</div>
       <div className="space-y-1">{children}</div>
     </div>
   );
 }
 
-function EvidenceRow({
-  label,
-  value,
-  sub,
-  onCopy,
-  copied,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  onCopy: (text: string, key: string) => void;
-  copied: string | null;
-}) {
+function EvidenceRow({ label, value, sub, onCopy, copied }: { label: string; value: string; sub?: string; onCopy: (text: string, key: string) => void; copied: string | null }) {
   return (
-    <div className="flex justify-between items-start gap-2 border-b border-[rgba(255,255,255,0.04)] pb-1">
-      <span className="text-[#8f95b2] text-[10px] font-mono shrink-0">{label}</span>
+    <div className="flex items-start justify-between gap-2 border-b border-border-subtle pb-1">
+      <span className="shrink-0 font-mono text-[10px] text-text-muted">{label}</span>
       <div className="flex items-center gap-1 min-w-0">
-        <span className="font-mono text-[10px] text-[#cfd3e6] break-all text-right" title={value}>
+        <span className="break-all text-right font-mono text-[10px] text-text-secondary" title={value}>
           {value}
-          {sub && <span className="block text-[9px] text-[#5d6180]">{sub}</span>}
+          {sub && <span className="block text-[10px] text-text-muted">{sub}</span>}
         </span>
         {value && value !== '—' && (
-          <button
-            type="button"
-            onClick={() => onCopy(value, label)}
-            className="p-0.5 rounded text-[#5d6180] hover:text-white hover:bg-[rgba(255,255,255,0.05)] shrink-0"
-            title={`Copy ${label}`}
-          >
-            {copied === label ? <CheckCircle2 size={10} className="text-[#34d399]" /> : <Copy size={10} />}
+          <button type="button" onClick={() => onCopy(value, label)} className="shrink-0 rounded-sm p-0.5 text-text-muted hover:bg-bg-hover hover:text-text-primary" aria-label={`Copy ${label}`}>
+            {copied === label ? <CheckCircle2 size={10} className="text-success" /> : <Copy size={10} />}
           </button>
         )}
       </div>
@@ -209,35 +185,20 @@ function EvidenceRow({
   );
 }
 
-function RawKeyValue({
-  entries,
-  onCopy,
-  copied,
-}: {
-  entries: ReadonlyArray<readonly [string, unknown]>;
-  onCopy: (text: string, key: string) => void;
-  copied: string | null;
-}) {
+function RawKeyValue({ entries, onCopy, copied }: { entries: ReadonlyArray<readonly [string, unknown]>; onCopy: (text: string, key: string) => void; copied: string | null }) {
   return (
     <ul className="space-y-1.5">
       {entries.map(([k, v]) => {
         const text = stringifyRaw(v);
         return (
           <li key={k} className="text-[10px]">
-            <div className="text-[#8f95b2] font-mono flex items-center gap-1">
+            <div className="flex items-center gap-1 font-mono text-text-muted">
               {k}
-              <button
-                type="button"
-                onClick={() => onCopy(text, k)}
-                className="p-0.5 rounded text-[#5d6180] hover:text-white hover:bg-[rgba(255,255,255,0.05)]"
-                title="Copy value"
-              >
-                {copied === k ? <CheckCircle2 size={9} className="text-[#34d399]" /> : <Copy size={9} />}
+              <button type="button" onClick={() => onCopy(text, k)} className="rounded-sm p-0.5 text-text-muted hover:bg-bg-hover hover:text-text-primary" aria-label={`Copy ${k}`}>
+                {copied === k ? <CheckCircle2 size={10} className="text-success" /> : <Copy size={10} />}
               </button>
             </div>
-            <pre className="mt-0.5 font-mono text-[9px] text-[#cfd3e6] bg-[rgba(0,0,0,0.18)] rounded p-1.5 whitespace-pre-wrap break-all max-h-48 overflow-auto">
-              {text}
-            </pre>
+            <pre className="mt-0.5 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-bg-primary p-1.5 font-mono text-[10px] text-text-secondary">{text}</pre>
           </li>
         );
       })}

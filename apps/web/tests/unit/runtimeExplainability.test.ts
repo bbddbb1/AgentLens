@@ -46,7 +46,6 @@ describe('progressive missing-field disclosure', () => {
     expect(html).toContain('not recorded');
   });
 });
-
 describe('readable causal relationships', () => {
   it('resolves raw ids to activity labels, types, and statuses', () => {
     const nodes: GraphNode[] = [
@@ -221,21 +220,19 @@ describe('graph hidden-context disclosure', () => {
         { id: 'e1', type: 'dependency', source: 'a1', target: 't1', status: 'completed' },
       ],
       edgeVisibility: defaultEdgeVisibility(),
-      tracePreset: 'none',
+      showConnectedOnly: false,
       showActiveOnly: false,
       zoomLevel: 0.3,
       focusModeEnabled: false,
       focusDepth: 1,
       selectedNodeId: null,
-      highlightedEdgeId: null,
       bundleEdges: true,
-      disableParticles: false,
     });
 
     expect(result.hiddenContext).toMatchObject({
       kind: 'hidden_recorded_context',
-      reason: 'overview_zoom',
     });
+    expect(result.hiddenContext?.reasons).toContain('overview_zoom');
 
     const missing = computeVisibleGraph({
       nodes: [
@@ -243,20 +240,17 @@ describe('graph hidden-context disclosure', () => {
       ],
       edges: [],
       edgeVisibility: defaultEdgeVisibility(),
-      tracePreset: 'none',
+      showConnectedOnly: false,
       showActiveOnly: false,
       zoomLevel: 1,
       focusModeEnabled: true,
       focusDepth: 1,
       selectedNodeId: 'solo',
-      highlightedEdgeId: null,
       bundleEdges: true,
-      disableParticles: false,
     });
 
-    expect(missing.hiddenContext).toMatchObject({
+    expect(missing.relationshipContext).toMatchObject({
       kind: 'missing_relationship_evidence',
-      reason: 'none',
     });
   });
 });

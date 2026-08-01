@@ -3,9 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { ArrowLeft, CheckCircle2, CircleHelp, GitBranch, Loader2, PauseCircle, Telescope, XCircle } from 'lucide-react';
+import { Activity, ArrowLeft, CheckCircle2, CircleHelp, GitBranch, PauseCircle, XCircle } from 'lucide-react';
 import type { ReplayStateResponse, RuntimeExplanationProjection, RuntimeSummary } from '@agentlens/protocol';
-import { CanvasToolbar } from '@/components/graph/CanvasToolbar';
 import { MissionGraph } from '@/components/graph/MissionGraph';
 import { RightSidebar } from '@/components/layout/RightSidebar';
 import { StatusBar } from '@/components/layout/StatusBar';
@@ -21,12 +20,36 @@ import type { Mission } from '@/stores/missionStore';
 import { useReplayStore } from '@/stores/replayStore';
 
 const statusConfig = {
-  active: { icon: <Loader2 size={12} className="animate-spin" />, color: '#818cf8', label: 'Active' },
-  completed: { icon: <CheckCircle2 size={12} />, color: '#34d399', label: 'Completed' },
-  failed: { icon: <XCircle size={12} />, color: '#f87171', label: 'Failed' },
-  paused: { icon: <PauseCircle size={12} />, color: '#fbbf24', label: 'Paused' },
-  waiting: { icon: <PauseCircle size={12} />, color: '#fbbf24', label: 'Waiting' },
-  unknown: { icon: <CircleHelp size={12} />, color: '#5d6180', label: 'Unknown' },
+  active: {
+    icon: <Activity size={13} />,
+    className: 'text-status-active',
+    label: 'Active',
+  },
+  completed: {
+    icon: <CheckCircle2 size={13} />,
+    className: 'text-status-completed',
+    label: 'Completed',
+  },
+  failed: {
+    icon: <XCircle size={13} />,
+    className: 'text-status-failed',
+    label: 'Failed',
+  },
+  paused: {
+    icon: <PauseCircle size={13} />,
+    className: 'text-status-waiting',
+    label: 'Paused',
+  },
+  waiting: {
+    icon: <PauseCircle size={13} />,
+    className: 'text-status-waiting',
+    label: 'Waiting',
+  },
+  unknown: {
+    icon: <CircleHelp size={13} />,
+    className: 'text-text-muted',
+    label: 'Unknown',
+  },
 };
 
 function websocketBaseUrl(): string {
@@ -35,21 +58,10 @@ function websocketBaseUrl(): string {
 }
 
 export default function MissionWorkspacePage() {
-  const {
-    setSnapshots,
-    applySnapshot,
-    clearWorkspace: clearGraphWorkspace,
-    snapshots,
-    visibleEdgeCount,
-    totalEdgeCount,
-    zoomBand,
-    selectedNodeId,
-    setSelectedNodeId,
-  } = useGraphStore();
+  const { setSnapshots, applySnapshot, clearWorkspace: clearGraphWorkspace, snapshots, selectedNodeId, setSelectedNodeId } = useGraphStore();
   const currentFrame = useReplayStore((state) => state.currentFrame);
   const branches = useReplayStore((state) => state.branches);
   const currentBranchId = useReplayStore((state) => state.currentBranchId);
-  const currentState = useReplayStore((state) => state.currentState);
   const events = useReplayStore((state) => state.events);
   const setReplayData = useReplayStore((state) => state.setReplayData);
   const clearReplayWorkspace = useReplayStore((state) => state.clearWorkspace);
@@ -59,32 +71,18 @@ export default function MissionWorkspacePage() {
   const setSelectedEventId = useReplayStore((state) => state.setSelectedEventId);
   const setActivityContextState = useReplayStore((state) => state.setActivityContextState);
   const params = useParams<{ id?: string }>();
-  const missionId = Array.isArray(params?.id) ? params.id[0] ?? '' : params?.id ?? '';
+  const missionId = Array.isArray(params?.id) ? (params.id[0] ?? '') : (params?.id ?? '');
   const requestVersion = useRef(0);
   const [mission, setMission] = useState<Mission | null>(null);
   const [missionLoadError, setMissionLoadError] = useState<string | null>(null);
+  const [isMissionLoading, setIsMissionLoading] = useState(true);
   const [runtimeSummary, setRuntimeSummary] = useState<RuntimeSummary | null>(null);
   const [runtimeExplanation, setRuntimeExplanation] = useState<RuntimeExplanationProjection | null>(null);
 
-  const frameSequenceNum = useMemo(
-    () => sequenceNumThroughFrame(snapshots, events, currentFrame),
-    [snapshots, events, currentFrame],
-  );
+  const frameSequenceNum = useMemo(() => sequenceNumThroughFrame(snapshots, events, currentFrame), [snapshots, events, currentFrame]);
   const runtimeContextReady = Boolean(missionId && currentBranchId && frameSequenceNum !== undefined);
-  const activeRuntimeSummary = runtimeContextReady
-    && runtimeSummary !== null
-    && runtimeSummary.mission_id === missionId
-    && runtimeSummary.branch_id === currentBranchId
-    && runtimeSummary.sequence_num === frameSequenceNum
-    ? runtimeSummary
-    : null;
-  const activeRuntimeExplanation = runtimeContextReady
-    && runtimeExplanation !== null
-    && runtimeExplanation.mission_id === missionId
-    && runtimeExplanation.branch_id === currentBranchId
-    && runtimeExplanation.as_of_sequence_num === frameSequenceNum
-    ? runtimeExplanation
-    : null;
+  const activeRuntimeSummary = runtimeContextReady && runtimeSummary !== null && runtimeSummary.mission_id === missionId && runtimeSummary.branch_id === currentBranchId && runtimeSummary.sequence_num === frameSequenceNum ? runtimeSummary : null;
+  const activeRuntimeExplanation = runtimeContextReady && runtimeExplanation !== null && runtimeExplanation.mission_id === missionId && runtimeExplanation.branch_id === currentBranchId && runtimeExplanation.as_of_sequence_num === frameSequenceNum ? runtimeExplanation : null;
 
   const clearWorkspaceContext = useCallback(() => {
     clearGraphWorkspace();
@@ -94,51 +92,65 @@ export default function MissionWorkspacePage() {
     setActivityContextState(null);
   }, [clearGraphWorkspace, clearReplayWorkspace, setActivityContextState]);
 
-  const syncReplayToGraph = useCallback((replay: ReplayStateResponse) => {
-    const interruptsByAgent = new Map(
-      Object.values(replay.current_state?.interrupts ?? {})
-        .filter((interrupt) => interrupt.status === 'pending' && interrupt.agent_id)
-        .map((interrupt) => [interrupt.agent_id, true]),
-    );
-    const snapshotsWithInterrupts = replay.snapshots.map((snapshot) => ({
-      ...snapshot,
-      nodes: snapshot.nodes.map((node) => ({
-        ...node,
-        metadata: { ...node.metadata, hasPendingInterrupt: node.agent_id ? interruptsByAgent.has(node.agent_id) : false },
-      })),
-    }));
-    setSnapshots(snapshotsWithInterrupts);
-    setReplayData(replay);
-    if (snapshotsWithInterrupts[0]) applySnapshot(snapshotsWithInterrupts[0]);
-  }, [applySnapshot, setReplayData, setSnapshots]);
+  const syncReplayToGraph = useCallback(
+    (replay: ReplayStateResponse) => {
+      const interruptsByAgent = new Map(
+        Object.values(replay.current_state?.interrupts ?? {})
+          .filter((interrupt) => interrupt.status === 'pending' && interrupt.agent_id)
+          .map((interrupt) => [interrupt.agent_id, true]),
+      );
+      setSnapshots(
+        replay.snapshots.map((snapshot) => ({
+          ...snapshot,
+          nodes: snapshot.nodes.map((node) => ({
+            ...node,
+            metadata: {
+              ...node.metadata,
+              hasPendingInterrupt: node.agent_id ? interruptsByAgent.has(node.agent_id) : false,
+            },
+          })),
+        })),
+      );
+      setReplayData(replay);
+    },
+    [setReplayData, setSnapshots],
+  );
 
-  const loadReplay = useCallback(async (branchId?: string) => {
-    const version = ++requestVersion.current;
-    clearWorkspaceContext();
-    if (!missionId) {
-      setMission(null);
-      setMissionLoadError('Mission identifier is required.');
-      return;
-    }
-    try {
-      const [missionData, replay] = await Promise.all([
-        api.missions.get(missionId),
-        api.replay.get(missionId, branchId),
-      ]);
-      if (version !== requestVersion.current) return;
-      setMission(missionData);
-      setMissionLoadError(null);
-      syncReplayToGraph(replay);
-    } catch (cause) {
-      if (version !== requestVersion.current) return;
-      setMission(null);
-      setMissionLoadError(cause instanceof Error ? cause.message : 'Failed to load mission.');
-    }
-  }, [clearWorkspaceContext, missionId, syncReplayToGraph]);
+  const loadReplay = useCallback(
+    async (branchId?: string) => {
+      const version = ++requestVersion.current;
+      clearWorkspaceContext();
+      setIsMissionLoading(true);
+      if (!missionId) {
+        setMission(null);
+        setMissionLoadError('Mission identifier is required.');
+        setIsMissionLoading(false);
+        return;
+      }
+      try {
+        const [missionData, replay] = await Promise.all([api.missions.get(missionId), api.replay.get(missionId, branchId)]);
+        if (version !== requestVersion.current) return;
+        setMission(missionData);
+        setMissionLoadError(null);
+        syncReplayToGraph(replay);
+      } catch (cause) {
+        if (version !== requestVersion.current) return;
+        setMission(null);
+        setMissionLoadError(cause instanceof Error ? cause.message : 'Failed to load mission.');
+      } finally {
+        if (version === requestVersion.current) setIsMissionLoading(false);
+      }
+    },
+    [clearWorkspaceContext, missionId, syncReplayToGraph],
+  );
 
   useEffect(() => {
-    queueMicrotask(() => { void loadReplay(); });
-    return () => { requestVersion.current += 1; };
+    queueMicrotask(() => {
+      void loadReplay();
+    });
+    return () => {
+      requestVersion.current += 1;
+    };
   }, [loadReplay]);
 
   useEffect(() => {
@@ -155,18 +167,28 @@ export default function MissionWorkspacePage() {
     if (!runtimeContextReady || !currentBranchId || frameSequenceNum === undefined) return;
     let active = true;
     void Promise.all([
-      api.runtimeSummary.get(missionId, { branchId: currentBranchId, sequenceNum: frameSequenceNum }),
-      api.runtimeExplanation.get(missionId, { branchId: currentBranchId, sequenceNum: frameSequenceNum }),
-    ]).then(([summary, explanation]) => {
-      if (!active) return;
-      setRuntimeSummary(summary);
-      setRuntimeExplanation(explanation);
-    }).catch(() => {
-      if (!active) return;
-      setRuntimeSummary(null);
-      setRuntimeExplanation(null);
-    });
-    return () => { active = false; };
+      api.runtimeSummary.get(missionId, {
+        branchId: currentBranchId,
+        sequenceNum: frameSequenceNum,
+      }),
+      api.runtimeExplanation.get(missionId, {
+        branchId: currentBranchId,
+        sequenceNum: frameSequenceNum,
+      }),
+    ])
+      .then(([summary, explanation]) => {
+        if (!active) return;
+        setRuntimeSummary(summary);
+        setRuntimeExplanation(explanation);
+      })
+      .catch(() => {
+        if (!active) return;
+        setRuntimeSummary(null);
+        setRuntimeExplanation(null);
+      });
+    return () => {
+      active = false;
+    };
   }, [currentBranchId, frameSequenceNum, missionId, runtimeContextReady, setActivityContextState]);
 
   useEffect(() => {
@@ -195,7 +217,17 @@ export default function MissionWorkspacePage() {
     const ws = new WebSocket(`${websocketBaseUrl()}/ws/missions/${missionId}`);
     ws.onmessage = (event: MessageEvent<string>) => {
       try {
-        const message = JSON.parse(event.data) as { type: string; mission?: Mission; runtime_summary?: unknown; runtime_explanation?: unknown; branch_id?: string; branch?: { id: string }; snapshot?: { branch_id: string }; interrupt?: { branch_id: string }; job?: { branch_id: string } };
+        const message = JSON.parse(event.data) as {
+          type: string;
+          mission?: Mission;
+          runtime_summary?: unknown;
+          runtime_explanation?: unknown;
+          branch_id?: string;
+          branch?: { id: string };
+          snapshot?: { branch_id: string };
+          interrupt?: { branch_id: string };
+          job?: { branch_id: string };
+        };
         if (message.type === 'mission.updated' && message.mission) setMission(message.mission);
         if (message.type === 'runtime.summary.updated' && (message.runtime_summary as RuntimeSummary | undefined)?.sequence_num === frameSequenceNum) setRuntimeSummary(message.runtime_summary as RuntimeSummary);
         if (message.type === 'runtime.explanation.updated' && (message.runtime_explanation as RuntimeExplanationProjection | undefined)?.as_of_sequence_num === frameSequenceNum) setRuntimeExplanation(message.runtime_explanation as RuntimeExplanationProjection);
@@ -210,39 +242,58 @@ export default function MissionWorkspacePage() {
   const authority = selectedFrameAuthority(activeRuntimeSummary);
   const runtimeStatus = authority.status?.toLowerCase() ?? 'unknown';
   const statusBadge = statusConfig[runtimeStatus as keyof typeof statusConfig] ?? statusConfig.unknown;
-  const frameTimestamp = activeRuntimeExplanation?.as_of_timestamp
-    ?? snapshots[currentFrame]?.timestamp
-    ?? null;
   return (
-    <div className="h-screen flex flex-col bg-[#0a0b10] overflow-hidden">
-      <header className="flex items-center justify-between px-4 py-2 border-b border-[rgba(255,255,255,0.05)] bg-[rgba(10,11,16,0.9)] backdrop-blur-xl z-40">
-        <div className="flex items-center gap-4 min-w-0">
-          <Link href="/" aria-label="Back to missions" className="flex items-center gap-2 text-[#5d6180] hover:text-[#9498b0] transition-colors"><ArrowLeft size={16} /></Link>
-          <div className="flex items-center gap-2"><Telescope size={18} className="text-[#818cf8]" /><span className="text-[14px] font-bold gradient-text">AgentLens</span></div>
-          <div className="h-4 w-px bg-[rgba(255,255,255,0.08)]" />
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: `${statusBadge.color}15`, color: statusBadge.color }}>{statusBadge.icon}{statusBadge.label}</div>
-            <h1 className="text-[13px] font-medium text-[#e8eaf0] max-w-md truncate">{mission?.objective ?? 'Mission workspace'}</h1>
+    <div className="flex h-screen flex-col overflow-hidden bg-bg-primary">
+      <header className="z-40 flex min-h-12 items-center justify-between gap-4 border-b border-border-subtle bg-bg-primary px-4 py-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <Link href="/" aria-label="Back to runs" className="rounded-sm p-1 text-text-muted transition-colors hover:text-text-primary">
+            <ArrowLeft size={16} />
+          </Link>
+          <div className="min-w-0">
+            <p className="text-[11px] text-text-muted">Mission</p>
+            <h1 className="max-w-xl truncate text-[13px] font-medium text-text-primary">{mission?.objective ?? (isMissionLoading ? 'Loading mission…' : 'Mission workspace')}</h1>
           </div>
-          <div aria-label="Workspace context" className="flex items-center gap-2 text-[10px] text-[#8f95b2]">
-            <label className="flex items-center gap-1.5">
-            <GitBranch size={12} className="text-[#67e8f9]" />
-            <span className="sr-only">Workspace branch</span>
-            <select aria-label="Workspace branch" value={currentBranchId ?? ''} onChange={(event) => void loadReplay(event.target.value)} disabled={!currentBranchId} className="max-w-40 rounded border border-[rgba(255,255,255,0.08)] bg-[#12131a] px-2 py-1 text-[10px] text-[#d8dbef] disabled:opacity-50">
-              {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-            </select>
-            </label>
-            {snapshots.length > 0 && <span>frame {Math.min(currentFrame + 1, snapshots.length)}/{snapshots.length}</span>}
-            {frameSequenceNum !== undefined && <span className="font-mono text-[#7c83a3]">seq #{frameSequenceNum}</span>}
-            {frameTimestamp && <time className="font-mono text-[#5d6180]" dateTime={frameTimestamp}>{new Date(frameTimestamp).toISOString()}</time>}
+          <div className={`flex items-center gap-1.5 rounded-sm border border-border-subtle px-2 py-1 text-[11px] font-medium ${statusBadge.className}`}>
+            {statusBadge.icon}
+            <span>{statusBadge.label}</span>
           </div>
+        </div>
+        <div aria-label="Workspace context" className="flex shrink-0 items-center gap-2 text-[11px] text-text-secondary">
+          <GitBranch size={13} aria-hidden="true" />
+          <label htmlFor="workspace-branch" className="text-text-muted">
+            Branch
+          </label>
+          <select id="workspace-branch" aria-label="Workspace branch" value={currentBranchId ?? ''} onChange={(event) => void loadReplay(event.target.value)} disabled={branches.length === 0 || isMissionLoading} className="max-w-44 rounded-sm border border-border-default bg-bg-secondary px-2 py-1.5 text-[11px] text-text-primary disabled:cursor-not-allowed disabled:opacity-50">
+            {branches.map((branch) => (
+              <option key={branch.id} value={branch.id}>
+                {branch.name}
+              </option>
+            ))}
+          </select>
         </div>
       </header>
       <WorkspaceShell
         leftPanel={<MissionTimeline explanation={activeRuntimeExplanation} summary={activeRuntimeSummary} />}
-        centerPanel={<section aria-label="Graph" className="relative flex-1 overflow-hidden"><CanvasToolbar agentCount={Object.keys(currentState?.agents ?? {}).length} /><MissionGraph />{missionLoadError && <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(10,11,16,0.72)] backdrop-blur-sm p-6"><div className="max-w-md rounded-2xl border border-[rgba(248,113,113,0.18)] bg-[rgba(36,17,20,0.92)] px-5 py-4 text-center shadow-[0_24px_64px_rgba(0,0,0,0.4)]"><div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[rgba(248,113,113,0.12)] text-[#f87171]"><XCircle size={18} /></div><h2 className="text-[14px] font-semibold text-[#f3d0d0]">Mission unavailable</h2><p className="mt-2 text-[12px] leading-relaxed text-[#d8b4b4]">{missionLoadError}</p></div></div>}</section>}
+        centerPanel={
+          <section aria-label="Runtime graph" className="relative flex-1 overflow-hidden">
+            <MissionGraph />
+            {isMissionLoading && snapshots.length === 0 && <div className="absolute inset-0 z-20 flex items-center justify-center bg-bg-primary/80 text-[12px] text-text-muted">Loading runtime…</div>}
+            {missionLoadError && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-bg-primary/90 p-6">
+                <div className="max-w-md rounded-md border border-error/30 bg-bg-secondary px-5 py-4 text-center">
+                  <XCircle size={18} className="mx-auto text-error" />
+                  <h2 className="mt-3 text-[14px] font-semibold text-text-primary">Mission unavailable</h2>
+                  <p className="mt-2 text-[12px] leading-relaxed text-text-secondary">{missionLoadError}</p>
+                  <button type="button" onClick={() => void loadReplay(currentBranchId ?? undefined)} className="mt-4 rounded-sm border border-border-default bg-bg-tertiary px-3 py-1.5 text-[11px] font-medium text-text-primary hover:bg-bg-hover">
+                    Retry
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        }
         rightPanel={<RightSidebar missionId={missionId} onBranchChange={loadReplay} runtimeSummary={activeRuntimeSummary} />}
-        bottomPanel={<StatusBar metrics={<div className="flex items-center gap-3 text-[10px]"><span className="text-[#5d6180] capitalize">{zoomBand} view</span><span className={totalEdgeCount > 0 && visibleEdgeCount / totalEdgeCount < 0.3 ? 'text-[#fbbf24]' : 'text-[#9498b0]'}>{visibleEdgeCount} / {totalEdgeCount} edges visible</span>{authority.incompatibilities.length > 0 && <span className="text-[#fbbf24]">frame authority mismatch</span>}</div>} />}
+        bottomPanel={<StatusBar />}
       />
     </div>
   );

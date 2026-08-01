@@ -6,30 +6,15 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import {
-  ReactFlow,
-  Background,
-  Controls,
-  MiniMap,
-  BackgroundVariant,
-  useNodesState,
-  useEdgesState,
-  type NodeMouseHandler,
-  type Node,
-  type OnNodeDrag,
-  ReactFlowProvider,
-  useOnViewportChange,
-} from '@xyflow/react';
+import { ReactFlow, Background, Controls, MiniMap, BackgroundVariant, useNodesState, useEdgesState, type NodeMouseHandler, type Node, type OnNodeDrag, ReactFlowProvider, useOnViewportChange } from '@xyflow/react';
 import { useGraphStore } from '@/stores/graphStore';
 import { useReplayStore } from '@/stores/replayStore';
 import { AgentNode } from './AgentNode';
 import { TaskNode } from './TaskNode';
 import { ToolNode } from './ToolNode';
 import { BundledEdge } from './BundledEdge';
-import { AnimatedEdge } from './AnimatedEdge';
-import { GraphLegend } from './GraphLegend';
-import { DensityHeatmap } from './DensityHeatmap';
 import { GraphViewportController } from './GraphViewportController';
+import { CanvasToolbar, MINIMAP_NODE_THRESHOLD } from './CanvasToolbar';
 
 const nodeTypes = {
   agentNode: AgentNode,
@@ -39,16 +24,20 @@ const nodeTypes = {
 
 const edgeTypes = {
   bundledEdge: BundledEdge,
-  animatedEdge: AnimatedEdge,
 };
 
-const minimapNodeColor = (node: { type?: string }) => {
+const minimapNodeColor = (node: Node) => {
   const typeColors: Record<string, string> = {
-    agentNode: '#818cf8',
-    taskNode: '#67e8f9',
-    toolNode: '#fbbf24',
+    agent: 'var(--color-node-agent)',
+    human: 'var(--color-node-human)',
+    team: 'var(--color-node-team)',
+    task: 'var(--color-node-task)',
+    tool: 'var(--color-node-tool)',
+    memory: 'var(--color-node-memory)',
+    artifact: 'var(--color-node-artifact)',
   };
-  return typeColors[node.type || ''] || '#5d6180';
+  const nodeType = typeof node.data?.nodeType === 'string' ? node.data.nodeType : '';
+  return typeColors[nodeType] ?? 'var(--color-text-muted)';
 };
 
 function mergeStoreNodesWithLocalPositions(storeNodes: Node[], currentNodes: Node[]): Node[] {
@@ -70,11 +59,14 @@ function MissionGraphInner() {
   const setZoomLevel = useGraphStore((state) => state.setZoomLevel);
   const setNodeLayoutPosition = useGraphStore((state) => state.setNodeLayoutPosition);
   const toggleFocusMode = useGraphStore((state) => state.toggleFocusMode);
+  const showMinimap = useGraphStore((state) => state.showMinimap);
+  const baseNodeCount = useGraphStore((state) => state.baseNodes.length);
   const setSelectedActivityId = useReplayStore((state) => state.setSelectedActivityId);
+  const setSelectedEventId = useReplayStore((state) => state.setSelectedEventId);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(storeEdges);
-  const lastZoomRef = useRef(storeNodes.length > 0 ? 1 : 1);
+  const lastZoomRef = useRef(1);
 
   useEffect(() => {
     setNodes((current) => mergeStoreNodesWithLocalPositions(storeNodes, current));
@@ -96,7 +88,7 @@ function MissionGraphInner() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || (event.target instanceof HTMLElement && event.target.isContentEditable)) {
         return;
       }
       if (event.key === 'f' || event.key === 'F') {
@@ -119,11 +111,7 @@ function MissionGraphInner() {
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
       setSelectedNodeId(node.id);
-      const activityId =
-        typeof (node.data as Record<string, unknown>).activity === 'object' &&
-        (node.data as { activity?: { id?: string } }).activity?.id
-          ? (node.data as { activity?: { id?: string } }).activity?.id ?? null
-          : null;
+      const activityId = typeof (node.data as Record<string, unknown>).activity === 'object' && (node.data as { activity?: { id?: string } }).activity?.id ? ((node.data as { activity?: { id?: string } }).activity?.id ?? null) : null;
       setSelectedActivityId(activityId);
     },
     [setSelectedActivityId, setSelectedNodeId],
@@ -132,11 +120,11 @@ function MissionGraphInner() {
   const onPaneClick = useCallback(() => {
     setSelectedNodeId(null);
     setSelectedActivityId(null);
-    useGraphStore.getState().setHighlightedEdgeId(null);
-  }, [setSelectedActivityId, setSelectedNodeId]);
+    setSelectedEventId(null);
+  }, [setSelectedActivityId, setSelectedEventId, setSelectedNodeId]);
 
   return (
-    <div className="relative h-full w-full pt-[52px]">
+    <div className="relative h-full w-full">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -148,6 +136,9 @@ function MissionGraphInner() {
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         nodesDraggable
+        nodesConnectable={false}
+        edgesReconnectable={false}
+        deleteKeyCode={null}
         defaultViewport={{ x: 0, y: 0, zoom: 1 }}
         minZoom={0.35}
         maxZoom={2.5}
@@ -159,27 +150,11 @@ function MissionGraphInner() {
         }}
         proOptions={{ hideAttribution: true }}
       >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1}
-          color="rgba(255,255,255,0.03)"
-        />
-        <Controls
-          showInteractive={false}
-          position="bottom-left"
-        />
-        <MiniMap
-          nodeColor={minimapNodeColor}
-          maskColor="rgba(10, 11, 16, 0.85)"
-          position="bottom-right"
-          style={{ width: 140, height: 90 }}
-          pannable
-          zoomable
-        />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-border-subtle)" />
+        <Controls showInteractive={false} position="bottom-left" orientation="horizontal" className="opacity-60 !shadow-none transition-opacity hover:opacity-100 focus-within:opacity-100" />
+        {showMinimap && baseNodeCount >= MINIMAP_NODE_THRESHOLD && <MiniMap nodeColor={minimapNodeColor} maskColor="color-mix(in srgb, var(--color-bg-primary) 82%, transparent)" position="bottom-right" style={{ width: 132, height: 84 }} pannable zoomable />}
         <GraphViewportController />
-        <GraphLegend />
-        <DensityHeatmap />
+        <CanvasToolbar />
       </ReactFlow>
     </div>
   );

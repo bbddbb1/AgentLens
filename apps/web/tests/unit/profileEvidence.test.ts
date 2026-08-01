@@ -9,22 +9,22 @@ import type { NodeCorrelatedEvidence } from '@/lib/rops/nodeEvidence';
 /** Build a minimal `EnvelopeProvenance` with only the model block populated. */
 function mkProv(model?: EnvelopeProvenance['model']): EnvelopeProvenance {
   return {
-    actorType: packEvidence('actor_type', undefined),
-    actorId: packEvidence('actor_id', undefined),
-    originFramework: packEvidence('origin_framework', undefined),
+    actorType: packEvidence<string>('actor_type', undefined),
+    actorId: packEvidence<string>('actor_id', undefined),
+    originFramework: packEvidence<string>('origin_framework', undefined),
     model: model ?? null,
     policy: null,
     error: null,
     causal: null,
-    contentHash: packEvidence('content_hash', undefined),
-    previousHash: packEvidence('previous_hash', undefined),
+    contentHash: packEvidence<string>('content_hash', undefined),
+    previousHash: packEvidence<string>('previous_hash', undefined),
   };
 }
 
 const MODEL = {
   provider: packEvidence('model.provider', 'openai'),
   modelName: packEvidence('model.model_name', 'gpt-4o'),
-  modelVersion: packEvidence('model.model_version', undefined),
+  modelVersion: packEvidence<string>('model.model_version', undefined),
   tokensInput: packEvidence('model.tokens_input', 100),
   tokensOutput: packEvidence('model.tokens_output', 50),
   temperature: packEvidence('model.temperature', 0.2),
@@ -94,7 +94,6 @@ describe('buildProfileEvidenceRows — llm profile', () => {
     expect(leftoverPayload).toHaveProperty('basestation.aiops.workflow.step_name', 'diagnose');
   });
 });
-
 describe('buildProfileEvidenceRows — tool profile', () => {
   it('surfaces tool I/O + failure from correlated evidence', () => {
     const ev = mkEvidence({

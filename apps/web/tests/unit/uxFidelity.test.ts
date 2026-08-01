@@ -11,7 +11,6 @@ describe('Runtime UX Fidelity Refinement', () => {
       baseNodes: [],
       baseEdges: [],
       snapshots: [],
-      currentSnapshotIndex: 0,
       selectedNodeId: null,
       zoomLevel: 1,
       highlightedNodeIds: [],

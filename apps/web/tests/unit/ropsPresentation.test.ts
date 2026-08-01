@@ -5,7 +5,7 @@ import {
   formatDurationMs,
   nodeStatusLabel,
 } from '../../src/lib/rops/provenance.js';
-import type { RuntimeNodeProjection, NodeProjectionFacts } from '@agentlens/protocol';
+import type { RuntimeNodeProjection, NodeProjectionFacts, NodeStatus } from '@agentlens/protocol';
 
 /**
  * ROPS presentation-layer compliance checks. These verify the invariants the
@@ -54,9 +54,8 @@ describe('ROPS L1 confidence integrity (spec 10.3 / P0)', () => {
     expect(f.provenance === 'heuristic').toBe(false);
   });
 });
-
 describe('ROPS L1 headline metric (spec R-4)', () => {
-  function agentView(status: string, durationMs?: number, errorCount?: number) {
+  function agentView(status: NodeStatus, durationMs?: number, errorCount?: number) {
     const proj = {
       projection_version: 1,
       mission_id: 'm1',

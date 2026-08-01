@@ -1,32 +1,13 @@
-/**
- * Graph store — manages the organizational graph state for React Flow.
- */
+/** Display state for the selected runtime graph projection. */
 
 import { create } from 'zustand';
-import type { Node, Edge } from '@xyflow/react';
-
-import type {
-  EdgeType,
-  GraphEdge,
-  GraphNode,
-  GraphSnapshot,
-} from '@agentlens/protocol';
+import { MarkerType, type Edge, type Node } from '@xyflow/react';
+import type { EdgeType, GraphEdge, GraphNode, GraphSnapshot } from '@agentlens/protocol';
 export type { GraphEdge, GraphNode, GraphSnapshot } from '@agentlens/protocol';
 
-import {
-  applyFocusStyling,
-  computeVisibleGraph,
-  defaultEdgeVisibility,
-  edgeVisibilityFromPreset,
-  getZoomBand,
-  type HiddenGraphContext,
-  type EdgeLayerPreset,
-  type FocusDepth,
-  type TracePreset,
-} from '@/lib/graphVisibility';
+import { computeVisibleGraph, defaultEdgeVisibility, edgeVisibilityFromPreset, getZoomBand, type FocusDepth, type GraphDisplayPreset, type HiddenRecordedGraphContext, type MissingRelationshipContext } from '@/lib/graphVisibility';
 import { applyClientLayout } from '@/lib/graphLayout';
-
-const PARTICLE_EDGE_THRESHOLD = 40;
+import { EDGE_PRESENTATION } from '@/lib/graphPresentation';
 
 interface GraphStore {
   nodes: Node[];
@@ -34,48 +15,41 @@ interface GraphStore {
   baseNodes: GraphNode[];
   baseEdges: GraphEdge[];
   snapshots: GraphSnapshot[];
-  currentSnapshotIndex: number;
   selectedNodeId: string | null;
-  activeNodeId: string | null;
-  hoveredNodeId: string | null;
-  highlightedEdgeId: string | null;
   highlightedNodeIds: string[];
   highlightedEdgeIds: string[];
   zoomLevel: number;
   zoomBand: 'overview' | 'standard' | 'detail';
+  displayPreset: GraphDisplayPreset;
   edgeVisibility: Record<EdgeType, boolean>;
-  edgeLayerPreset: EdgeLayerPreset;
-  tracePreset: TracePreset;
+  showConnectedOnly: boolean;
   showActiveOnly: boolean;
   focusModeEnabled: boolean;
   focusDepth: FocusDepth;
   bundleEdges: boolean;
+  showMinimap: boolean;
   visibleEdgeCount: number;
+  renderedEdgeCount: number;
   totalEdgeCount: number;
-  satelliteCounts: Record<string, { tools: number; memory: number; artifacts: number }>;
-  hiddenContext: HiddenGraphContext | null;
+  hiddenContext: HiddenRecordedGraphContext | null;
+  relationshipContext: MissingRelationshipContext | null;
   layoutPositions: Record<string, { x: number; y: number }>;
 
-  setNodes: (nodes: Node[]) => void;
-  setEdges: (edges: Edge[]) => void;
   setSnapshots: (snapshots: GraphSnapshot[]) => void;
-  setCurrentSnapshotIndex: (index: number) => void;
   setSelectedNodeId: (id: string | null) => void;
-  setActiveNodeId: (id: string | null) => void;
-  setHoveredNodeId: (id: string | null) => void;
-  setHighlightedEdgeId: (id: string | null) => void;
   setZoomLevel: (level: number) => void;
-  setEdgeLayerPreset: (preset: EdgeLayerPreset) => void;
+  setDisplayPreset: (preset: GraphDisplayPreset) => void;
   setEdgeTypeVisible: (type: EdgeType, visible: boolean) => void;
-  setTracePreset: (preset: TracePreset) => void;
+  setShowConnectedOnly: (value: boolean) => void;
   setShowActiveOnly: (value: boolean) => void;
   setFocusModeEnabled: (value: boolean) => void;
   setFocusDepth: (depth: FocusDepth) => void;
   setBundleEdges: (value: boolean) => void;
+  setShowMinimap: (value: boolean) => void;
   toggleFocusMode: () => void;
+  resetDisplay: () => void;
   setNodeLayoutPosition: (nodeId: string, position: { x: number; y: number }) => void;
   clearWorkspace: () => void;
-
   applySnapshot: (snapshot: GraphSnapshot) => void;
   recomputeDisplayGraph: () => void;
 }
@@ -84,184 +58,105 @@ function mapNodeType(type: string): string {
   const mapping: Record<string, string> = {
     agent: 'agentNode',
     human: 'agentNode',
+    team: 'agentNode',
     task: 'taskNode',
     tool: 'toolNode',
     memory: 'toolNode',
-    team: 'agentNode',
     artifact: 'toolNode',
   };
-  return mapping[type] || 'default';
+  return mapping[type] ?? 'default';
 }
 
-function mapEdgeStyle(type: string): Partial<Edge> {
-  const styles: Record<string, Partial<Edge>> = {
-    delegation: { type: 'bundledEdge', style: { stroke: '#818cf8', strokeWidth: 2 } },
-    critique: { type: 'bundledEdge', style: { stroke: '#f87171', strokeWidth: 2, strokeDasharray: '5,5' } },
-    review: { type: 'bundledEdge', style: { stroke: '#34d399', strokeWidth: 2 } },
-    escalation: { type: 'bundledEdge', style: { stroke: '#fbbf24', strokeWidth: 2.5 }, animated: true },
-    dependency: { type: 'bundledEdge', style: { stroke: '#5d6180', strokeWidth: 1.5 } },
-    data_flow: { type: 'bundledEdge', style: { stroke: '#60a5fa', strokeWidth: 1.5, strokeDasharray: '3,3' } },
-    uses: { type: 'bundledEdge', style: { stroke: '#fbbf24', strokeWidth: 1.5 } },
-    approval: { type: 'bundledEdge', style: { stroke: '#34d399', strokeWidth: 2 } },
-    produces: { type: 'bundledEdge', style: { stroke: '#fb923c', strokeWidth: 1.75 } },
-    member_of: { type: 'bundledEdge', style: { stroke: '#a78bfa', strokeWidth: 1.5, strokeDasharray: '4,4' } },
-  };
-  return styles[type] || { type: 'bundledEdge', style: { stroke: '#5d6180', strokeWidth: 1 } };
-}
-
-function graphNodesToFlowNodes(
-  graphNodes: GraphNode[],
-  satelliteCounts: Record<string, { tools: number; memory: number; artifacts: number }>,
-  layoutPositions: Record<string, { x: number; y: number }>,
-  highlightedNodeIds: string[] = [],
-): Node[] {
-  return graphNodes.map((gn) => ({
-    id: gn.id,
-    type: mapNodeType(gn.type),
-    position: layoutPositions[gn.id] ?? gn.position,
+function graphNodesToFlowNodes(graphNodes: GraphNode[], layoutPositions: Record<string, { x: number; y: number }>, highlightedNodeIds: string[]): Node[] {
+  return graphNodes.map((node) => ({
+    id: node.id,
+    type: mapNodeType(node.type),
+    position: layoutPositions[node.id] ?? node.position,
     data: {
-      label: gn.label,
-      nodeType: gn.type,
-      status: gn.status,
-      role: gn.agent_role,
-      team: gn.agent_team,
-      confidence: gn.confidence,
-      // ROPS: confidence on GraphNode is Evidence only when the emitter set it.
-      // The graph layer does not run the scratchToFacts inferred formula, so no
-      // heuristic flag is needed here. The inferred fallback only appears on the
-      // RuntimeNodeProjection path, handled in the inspector (L3), not the card.
-      confidenceIsEvidence: gn.confidence !== undefined,
-      summary: gn.summary,
-      metadata: gn.metadata,
-      agentId: gn.agent_id,
-      agentType: gn.agent_type,
-      framework: gn.framework,
-      iteration: gn.iteration,
-      startTime: gn.start_time,
-      endTime: gn.end_time,
-      durationMs: gn.duration_ms,
-      errorCount: gn.error_count,
-      sourceSpanId: gn.source_span_id,
-      sourceEventId: gn.source_event_id,
-      spanId: gn.span_id,
-      projectionProfile: gn.projection_profile,
-      activity: gn.activity,
-      hasPendingInterrupt: false,
-      satelliteCounts: satelliteCounts[gn.id],
-      highlighted: highlightedNodeIds.includes(gn.id),
+      label: node.label,
+      nodeType: node.type,
+      status: node.status,
+      role: node.agent_role,
+      metadata: node.metadata,
+      durationMs: node.duration_ms,
+      errorCount: node.error_count,
+      activity: node.activity,
+      highlighted: highlightedNodeIds.includes(node.id),
     },
   }));
 }
 
-function graphEdgesToFlowEdges(
-  graphEdges: GraphEdge[],
-  pathOffsetById: Map<string, number>,
-  highlightedEdgeIds: string[] = [],
-): Edge[] {
+function graphEdgesToFlowEdges(graphEdges: GraphEdge[], highlightedEdgeIds: string[]): Edge[] {
   const pairCounts = new Map<string, number>();
 
-  return graphEdges.map((ge) => {
-    const pairKey = `${ge.source}:${ge.target}`;
+  return graphEdges.map((edge) => {
+    const pairKey = JSON.stringify([edge.source, edge.target]);
     const offsetIndex = pairCounts.get(pairKey) ?? 0;
     pairCounts.set(pairKey, offsetIndex + 1);
+    const presentation = EDGE_PRESENTATION[edge.type];
+    const bundledEdgeIds = Array.isArray(edge.metadata?.bundledEdgeIds) ? edge.metadata.bundledEdgeIds.filter((id): id is string => typeof id === 'string') : [];
+    const highlighted = highlightedEdgeIds.includes(edge.id) || bundledEdgeIds.some((id) => highlightedEdgeIds.includes(id));
 
     return {
-      id: ge.id,
-      source: ge.source,
-      target: ge.target,
-      label: ge.label,
-      animated: ge.animated,
-      ...mapEdgeStyle(ge.type),
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      label: edge.label,
+      type: 'bundledEdge',
+      animated: false,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: presentation.stroke,
+        width: 14,
+        height: 14,
+      },
+      style: {
+        stroke: presentation.stroke,
+        strokeWidth: presentation.strokeWidth,
+        strokeDasharray: presentation.strokeDasharray,
+      },
       data: {
-        edgeType: ge.type,
-        status: ge.status,
-        metadata: ge.metadata,
-        bundled: ge.metadata?.bundled === true,
-        bundleCount: ge.metadata?.bundleCount as number | undefined,
-        bundledEdgeIds: ge.metadata?.bundledEdgeIds as string[] | undefined,
-        pathOffset: pathOffsetById.get(ge.id) ?? offsetIndex * 12,
-        highlighted: highlightedEdgeIds.includes(ge.id),
+        edgeType: edge.type,
+        status: edge.status,
+        bundled: edge.metadata?.bundled === true,
+        bundleCount: edge.metadata?.bundleCount as number | undefined,
+        bundledEdgeIds,
+        pathOffset: offsetIndex * 12,
+        highlighted,
       },
     };
   });
 }
 
-function buildDisplayGraph(state: GraphStore): Pick<
-  GraphStore,
-  | 'nodes'
-  | 'edges'
-  | 'visibleEdgeCount'
-  | 'totalEdgeCount'
-  | 'zoomBand'
-  | 'satelliteCounts'
-  | 'hiddenContext'
-> {
+function buildDisplayGraph(state: GraphStore): Pick<GraphStore, 'nodes' | 'edges' | 'visibleEdgeCount' | 'renderedEdgeCount' | 'totalEdgeCount' | 'zoomBand' | 'hiddenContext' | 'relationshipContext'> {
   const visibility = computeVisibleGraph({
     nodes: state.baseNodes,
     edges: state.baseEdges,
     edgeVisibility: state.edgeVisibility,
-    tracePreset: state.tracePreset,
+    showConnectedOnly: state.showConnectedOnly,
     showActiveOnly: state.showActiveOnly,
     zoomLevel: state.zoomLevel,
     focusModeEnabled: state.focusModeEnabled,
     focusDepth: state.focusDepth,
     selectedNodeId: state.selectedNodeId,
-    highlightedEdgeId: state.highlightedEdgeId,
     bundleEdges: state.bundleEdges,
-    disableParticles: false,
   });
 
-  const pathOffsetById = new Map<string, number>();
-  const pairCounts = new Map<string, number>();
-  for (const edge of visibility.edges) {
-    const pairKey = `${edge.source}:${edge.target}`;
-    const offsetIndex = pairCounts.get(pairKey) ?? 0;
-    pairCounts.set(pairKey, offsetIndex + 1);
-    pathOffsetById.set(edge.id, offsetIndex * 12);
-  }
-
-  const disableParticles = visibility.visibleEdgeCount > PARTICLE_EDGE_THRESHOLD;
-  let flowNodes = graphNodesToFlowNodes(
-    visibility.nodes,
-    visibility.satelliteCounts,
-    state.layoutPositions,
-    state.highlightedNodeIds,
-  );
-  let flowEdges: Edge[] = graphEdgesToFlowEdges(
-    visibility.edges,
-    pathOffsetById,
-    state.highlightedEdgeIds,
-  ).map((edge) => ({
-    ...edge,
-    data: {
-      ...edge.data,
-      disableParticles,
-    },
-  }));
-
-  const styled = applyFocusStyling(
-    flowNodes,
-    flowEdges,
-    state.selectedNodeId,
-    state.focusModeEnabled,
-    state.focusDepth,
-    state.highlightedEdgeId,
-  );
-
-  flowNodes = styled.nodes.map((node) => ({
+  const flowNodes = graphNodesToFlowNodes(visibility.nodes, state.layoutPositions, state.highlightedNodeIds).map((node) => ({
     ...node,
     selected: node.id === state.selectedNodeId,
   }));
-  flowEdges = styled.edges as Edge[];
+  const flowEdges = graphEdgesToFlowEdges(visibility.edges, state.highlightedEdgeIds);
 
   return {
     nodes: flowNodes,
     edges: flowEdges,
     visibleEdgeCount: visibility.visibleEdgeCount,
+    renderedEdgeCount: visibility.renderedEdgeCount,
     totalEdgeCount: visibility.totalEdgeCount,
     zoomBand: visibility.zoomBand,
-    satelliteCounts: visibility.satelliteCounts,
     hiddenContext: visibility.hiddenContext,
+    relationshipContext: visibility.relationshipContext,
   };
 }
 
@@ -273,101 +168,100 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   baseNodes: [],
   baseEdges: [],
   snapshots: [],
-  currentSnapshotIndex: 0,
   selectedNodeId: null,
-  activeNodeId: null,
-  hoveredNodeId: null,
-  highlightedEdgeId: null,
   highlightedNodeIds: [],
   highlightedEdgeIds: [],
   zoomLevel: 1,
   zoomBand: 'standard',
+  displayPreset: 'all',
   edgeVisibility: defaultEdgeVisibility(),
-  edgeLayerPreset: 'all',
-  tracePreset: 'none',
+  showConnectedOnly: false,
   showActiveOnly: false,
-  focusModeEnabled: true,
+  focusModeEnabled: false,
   focusDepth: 1,
   bundleEdges: true,
+  showMinimap: false,
   visibleEdgeCount: 0,
+  renderedEdgeCount: 0,
   totalEdgeCount: 0,
-  satelliteCounts: {},
   hiddenContext: null,
+  relationshipContext: null,
   layoutPositions: {},
 
-  setNodes: (nodes) => set({ nodes }),
-  setEdges: (edges) => set({ edges }),
   setSnapshots: (snapshots) => set({ snapshots }),
-  setCurrentSnapshotIndex: (index) => {
-    set({ currentSnapshotIndex: index });
+  setSelectedNodeId: (selectedNodeId) => {
+    set({ selectedNodeId });
     get().recomputeDisplayGraph();
   },
-  setSelectedNodeId: (id) => {
-    set({ selectedNodeId: id });
-    get().recomputeDisplayGraph();
+  setZoomLevel: (zoomLevel) => {
+    const previous = get().zoomLevel;
+    const previousBand = getZoomBand(previous);
+    const nextBand = getZoomBand(zoomLevel);
+    if (Math.abs(previous - zoomLevel) < 0.001) return;
+    set({ zoomLevel });
+    if (previousBand !== nextBand) get().recomputeDisplayGraph();
   },
-  setActiveNodeId: (id) => set({ activeNodeId: id }),
-  setHoveredNodeId: (id) => set({ hoveredNodeId: id }),
-  setHighlightedEdgeId: (id) => {
-    set({ highlightedEdgeId: id });
-    get().recomputeDisplayGraph();
-  },
-  setZoomLevel: (level) => {
-    const state = get();
-    const prevBand = getZoomBand(state.zoomLevel);
-    const nextBand = getZoomBand(level);
-    if (prevBand === nextBand && Math.abs(state.zoomLevel - level) < 0.001) {
-      return;
+  setDisplayPreset: (displayPreset) => {
+    if (displayPreset === 'custom') {
+      set({ displayPreset });
+    } else {
+      set({
+        displayPreset,
+        edgeVisibility: edgeVisibilityFromPreset(displayPreset),
+      });
     }
-    set({ zoomLevel: level });
-    if (prevBand !== nextBand) {
-      get().recomputeDisplayGraph();
-    }
-  },
-  setEdgeLayerPreset: (preset) => {
-    set({
-      edgeLayerPreset: preset,
-      edgeVisibility: edgeVisibilityFromPreset(preset),
-    });
     get().recomputeDisplayGraph();
   },
   setEdgeTypeVisible: (type, visible) => {
-    const next = { ...get().edgeVisibility, [type]: visible };
-    set({ edgeVisibility: next, edgeLayerPreset: 'all' });
+    set({
+      edgeVisibility: { ...get().edgeVisibility, [type]: visible },
+      displayPreset: 'custom',
+    });
     get().recomputeDisplayGraph();
   },
-  setTracePreset: (preset) => {
-    set({ tracePreset: preset });
+  setShowConnectedOnly: (showConnectedOnly) => {
+    set({ showConnectedOnly });
     get().recomputeDisplayGraph();
   },
-  setShowActiveOnly: (value) => {
-    set({ showActiveOnly: value });
+  setShowActiveOnly: (showActiveOnly) => {
+    set({ showActiveOnly });
     get().recomputeDisplayGraph();
   },
-  setFocusModeEnabled: (value) => {
-    set({ focusModeEnabled: value });
+  setFocusModeEnabled: (focusModeEnabled) => {
+    set({ focusModeEnabled });
     get().recomputeDisplayGraph();
   },
-  setFocusDepth: (depth) => {
-    set({ focusDepth: depth });
+  setFocusDepth: (focusDepth) => {
+    set({ focusDepth });
     get().recomputeDisplayGraph();
   },
-  setBundleEdges: (value) => {
-    set({ bundleEdges: value });
+  setBundleEdges: (bundleEdges) => {
+    set({ bundleEdges });
     get().recomputeDisplayGraph();
   },
+  setShowMinimap: (showMinimap) => set({ showMinimap }),
   toggleFocusMode: () => {
     set({ focusModeEnabled: !get().focusModeEnabled });
     get().recomputeDisplayGraph();
   },
+  resetDisplay: () => {
+    set({
+      displayPreset: 'all',
+      edgeVisibility: defaultEdgeVisibility(),
+      showConnectedOnly: false,
+      showActiveOnly: false,
+      focusModeEnabled: false,
+      focusDepth: 1,
+      bundleEdges: true,
+      showMinimap: false,
+    });
+    get().recomputeDisplayGraph();
+  },
 
   setNodeLayoutPosition: (nodeId, position) => {
-    const layoutPositions = { ...get().layoutPositions, [nodeId]: position };
-    set({ layoutPositions });
     set({
-      nodes: get().nodes.map((node) =>
-        node.id === nodeId ? { ...node, position } : node,
-      ),
+      layoutPositions: { ...get().layoutPositions, [nodeId]: position },
+      nodes: get().nodes.map((node) => (node.id === nodeId ? { ...node, position } : node)),
     });
   },
 
@@ -382,17 +276,14 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
       baseNodes: [],
       baseEdges: [],
       snapshots: [],
-      currentSnapshotIndex: 0,
       selectedNodeId: null,
-      activeNodeId: null,
-      hoveredNodeId: null,
-      highlightedEdgeId: null,
       highlightedNodeIds: [],
       highlightedEdgeIds: [],
       visibleEdgeCount: 0,
+      renderedEdgeCount: 0,
       totalEdgeCount: 0,
-      satelliteCounts: {},
       hiddenContext: null,
+      relationshipContext: null,
       layoutPositions: {},
     });
   },
@@ -400,43 +291,29 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   applySnapshot: (snapshot) => {
     const laidOutNodes = applyClientLayout(snapshot.nodes, snapshot.edges);
     const nodeIds = new Set(laidOutNodes.map((node) => node.id));
-    const layoutPositions = Object.fromEntries(
-      Object.entries(get().layoutPositions).filter(([id]) => nodeIds.has(id)),
-    );
-
+    const layoutPositions = Object.fromEntries(Object.entries(get().layoutPositions).filter(([id]) => nodeIds.has(id)));
     const highlightedNodeIds: string[] = [];
     const highlightedEdgeIds: string[] = [];
+    const currentIndex = get().snapshots.findIndex((entry) => entry.id === snapshot.id);
+    const previousSnapshot = currentIndex > 0 ? get().snapshots[currentIndex - 1] : null;
 
-    const currentIdx = get().snapshots.findIndex(s => s.id === snapshot.id);
-    const prevSnapshot = currentIdx > 0 ? get().snapshots[currentIdx - 1] : null;
-
-    if (prevSnapshot) {
-      // Compare nodes
-      const prevNodesMap = new Map(prevSnapshot.nodes.map(n => [n.id, n.status]));
+    if (previousSnapshot) {
+      const previousNodeStatus = new Map(previousSnapshot.nodes.map((node) => [node.id, node.status]));
       for (const node of snapshot.nodes) {
-        if (!prevNodesMap.has(node.id)) {
-          highlightedNodeIds.push(node.id);
-        } else if (prevNodesMap.get(node.id) !== node.status) {
+        if (!previousNodeStatus.has(node.id) || previousNodeStatus.get(node.id) !== node.status) {
           highlightedNodeIds.push(node.id);
         }
       }
-
-      // Compare edges
-      const prevEdgesMap = new Map(prevSnapshot.edges.map(e => [e.id, e.status]));
+      const previousEdgeStatus = new Map(previousSnapshot.edges.map((edge) => [edge.id, edge.status]));
       for (const edge of snapshot.edges) {
-        if (!prevEdgesMap.has(edge.id)) {
-          highlightedEdgeIds.push(edge.id);
-        } else if (prevEdgesMap.get(edge.id) !== edge.status) {
+        if (!previousEdgeStatus.has(edge.id) || previousEdgeStatus.get(edge.id) !== edge.status) {
           highlightedEdgeIds.push(edge.id);
         }
       }
     }
 
-    if (highlightTimeout) {
-      clearTimeout(highlightTimeout);
-      highlightTimeout = null;
-    }
-
+    if (highlightTimeout) clearTimeout(highlightTimeout);
+    highlightTimeout = null;
     set({
       baseNodes: laidOutNodes,
       baseEdges: snapshot.edges,
@@ -446,13 +323,13 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     });
     get().recomputeDisplayGraph();
 
-    highlightTimeout = setTimeout(() => {
-      set({
-        highlightedNodeIds: [],
-        highlightedEdgeIds: [],
-      });
-      get().recomputeDisplayGraph();
-    }, 2000);
+    if (highlightedNodeIds.length > 0 || highlightedEdgeIds.length > 0) {
+      highlightTimeout = setTimeout(() => {
+        set({ highlightedNodeIds: [], highlightedEdgeIds: [] });
+        get().recomputeDisplayGraph();
+        highlightTimeout = null;
+      }, 2000);
+    }
   },
 
   recomputeDisplayGraph: () => {
@@ -462,19 +339,14 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
         nodes: [],
         edges: [],
         visibleEdgeCount: 0,
+        renderedEdgeCount: 0,
         totalEdgeCount: 0,
-        zoomBand: getZoomBandFromLevel(state.zoomLevel),
-        satelliteCounts: {},
+        zoomBand: getZoomBand(state.zoomLevel),
         hiddenContext: null,
+        relationshipContext: null,
       });
       return;
     }
-
-    const display = buildDisplayGraph(state);
-    set(display);
+    set(buildDisplayGraph(state));
   },
 }));
-
-function getZoomBandFromLevel(zoomLevel: number): 'overview' | 'standard' | 'detail' {
-  return getZoomBand(zoomLevel);
-}
