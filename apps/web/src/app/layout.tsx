@@ -1,25 +1,16 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import "./globals.css";
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import './globals.css';
 
 const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
+  subsets: ['latin'],
+  variable: '--font-inter',
 });
 
 export const metadata: Metadata = {
-  title: "AgentLens — Multi-Agent Review Platform",
-  description:
-    "Review, visualize, replay, and collaboratively govern multi-agent systems. GitHub PR + Datadog + Figma for AI agents.",
-  keywords: [
-    "multi-agent",
-    "AI",
-    "observability",
-    "review",
-    "OpenTelemetry",
-    "LangGraph",
-    "CrewAI",
-  ],
+  title: 'AgentLens — Runtime Debugger',
+  description: 'Inspect, replay, and govern autonomous agent execution from recorded runtime evidence.',
+  keywords: ['agent runtime', 'runtime debugger', 'observability', 'replay', 'governance', 'provenance', 'OpenTelemetry'],
 };
 
 export default function RootLayout({
@@ -29,9 +20,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.variable} font-sans antialiased`}>
-        {children}
-      </body>
+      <body className={`${inter.variable} font-sans antialiased`}>{children}</body>
     </html>
   );
 }
