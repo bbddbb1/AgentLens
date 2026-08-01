@@ -21,7 +21,11 @@ describe('runtime workspace cleanup', () => {
     expect(page).toContain('aria-label="Workspace branch"');
     expect(page).toContain('aria-label="Workspace context"');
     expect(page).toContain('const runtimeStatus = authority.status?.toLowerCase()');
+    expect(page).toContain('Frame authority mismatch:');
     expect(page).not.toContain('const missionStatus = mission?.status');
+    expect(page).not.toContain('CanvasToolbar');
+    expect(page).not.toContain('hasPendingInterrupt');
+    expect(page).not.toContain('currentState');
     expect(dashboard).not.toContain('DEMO_MISSIONS');
     expect(dashboard).not.toContain("id: 'demo-");
     expect(dashboard).not.toContain('E2E');
@@ -32,44 +36,68 @@ describe('runtime workspace cleanup', () => {
     const timeline = workspaceFile('components/timeline/MissionTimeline.tsx');
     expect(timeline).toContain('summary?.story_activities');
     expect(timeline).toContain('summary?.background_work?.collapsed');
-    expect(timeline).not.toContain("explanation?.activities ?? []");
+    expect(timeline).not.toContain('explanation?.activities ?? []');
     expect(timeline).not.toContain('recorded snapshot metadata');
   });
 
-  it('keeps selected span evidence while omitting cryptographic-chain presentation', () => {
+  it('keeps selected span evidence and optional integrity linkage in L4', () => {
     const evidence = {
-      id: 'event-1', mission_id: 'mission-1', branch_id: 'main', sequence_num: 4,
-      branch_sequence_num: 4, event_type: 'tool.completed', timestamp: '2026-07-13T00:00:00.000Z',
-      span_id: 'span-1', trace_id: 'trace-1', origin_framework: 'langgraph', payload: {}, metadata: {},
-      content_hash: 'hash-value', previous_hash: 'previous-hash',
+      id: 'event-1',
+      mission_id: 'mission-1',
+      branch_id: 'main',
+      sequence_num: 4,
+      branch_sequence_num: 4,
+      event_type: 'tool.completed',
+      timestamp: '2026-07-13T00:00:00.000Z',
+      span_id: 'span-1',
+      trace_id: 'trace-1',
+      origin_framework: 'langgraph',
+      payload: { 'basestation.aiops.private': 'verbatim-l4-only' },
+      metadata: {},
+      content_hash: 'hash-value',
+      previous_hash: 'previous-hash',
     } as EventEnvelope;
     const html = renderToStaticMarkup(createElement(RopsEvidence, { envelope: evidence }));
     expect(html).toContain('span_id');
     expect(html).toContain('origin_framework');
-    expect(html).not.toContain('Cryptographic Linkage');
-    expect(html).not.toContain('content_hash');
-    expect(html).not.toContain('previous_hash');
+    expect(html).toContain('Integrity linkage');
+    expect(html).toContain('content_hash');
+    expect(html).toContain('hash-value');
+    expect(html).toContain('previous_hash');
+    expect(html).toContain('previous-hash');
+    expect(html).toContain('Payload (verbatim / unrecognized)');
+    expect(html).toContain('basestation.aiops.private');
+    expect(html).toContain('verbatim-l4-only');
   });
 
   it('constrains the sidebar to Inspect and Govern', () => {
     const sidebar = workspaceFile('components/layout/RightSidebar.tsx');
-    expect(sidebar).toContain("'inspect' | 'govern'");
-    expect(sidebar).not.toContain("'audit'");
+    expect(sidebar).toMatch(/useState<["']inspect["'] \| ["']govern["']>/);
+    expect(sidebar).not.toMatch(/["']audit["']/);
     expect(sidebar).not.toContain('Verifying ledger hash integrity');
     expect(sidebar).not.toContain('Timeline Event Context');
-    expect(sidebar).toContain('actionableInterrupts.length > 0 ? <><textarea');
+    expect(sidebar).toContain('hasFrameScopedCurrentState');
+    expect(sidebar).toContain('Historical replay never exposes later actionable requests');
     expect(sidebar).toContain('No actionable interaction');
   });
 
+  it('gives replay and responsive panels one accessible owner', () => {
+    const replay = workspaceFile('components/replay/ReplayControls.tsx');
+    const shell = workspaceFile('components/layout/WorkspaceShell.tsx');
+    expect(replay).not.toContain('applySnapshot');
+    expect(replay).not.toContain('currentBranchId');
+    expect(replay).not.toContain('framer-motion');
+    expect(replay).toContain('const canPlay = totalFrames > 1');
+    expect(replay).toContain('frameLabel: hasFrames ?');
+    expect(shell).toMatch(/matchMedia\(["']\(max-width: 1279px\)["']\)/);
+    expect(shell).toContain('HTMLSelectElement');
+    expect(shell).toContain('isContentEditable');
+    expect(shell).toContain('aria-expanded={!isLeftCollapsed}');
+    expect(shell).toContain('aria-expanded={!isRightCollapsed}');
+  });
+
   it('removes abandoned workspace implementations and state', () => {
-    const removed = [
-      'components/review/ReviewPanel.tsx',
-      'components/runtime/RuntimeSummaryPanel.tsx',
-      'stores/reviewStore.ts',
-      'lib/ai.ts',
-      'lib/crypto.ts',
-      'app/api/why-this-state/route.ts',
-    ];
+    const removed = ['components/review/ReviewPanel.tsx', 'components/runtime/RuntimeSummaryPanel.tsx', 'components/runtime/AgentNodeProjectionPanel.tsx', 'components/layout/PanelHeader.tsx', 'components/state/AgentStateCard.tsx', 'components/state/InterruptBadge.tsx', 'components/ui/CollapsibleSection.tsx', 'components/ui/GlassPanel.tsx', 'hooks/useRuntimeExplanation.ts', 'hooks/useRuntimeSummary.ts', 'stores/reviewStore.ts', 'lib/ai.ts', 'lib/crypto.ts', 'app/api/why-this-state/route.ts'];
     for (const path of removed) expect(existsSync(resolve(process.cwd(), 'src', path))).toBe(false);
     const layoutStore = workspaceFile('stores/layoutStore.ts');
     expect(layoutStore).not.toContain('activeRightTab');

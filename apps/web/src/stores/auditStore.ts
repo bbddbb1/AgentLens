@@ -7,10 +7,10 @@
  * envelopes are produced by the existing `GET /audit/events` endpoint and
  * filtered server-side through the exact stable frame cursor.
  *
- * This store exists so that graph node components rendered outside the right
- * sidebar (e.g. `ToolNode` / `TaskNode` / `AgentNode` hover popovers) can read
- * the same already-fetched envelopes without re-fetching. It performs no
- * interpretation: the `events` array is the verbatim `MissionAuditEventResponse`.
+ * This store gives the authoritative inspector and L4 evidence surface one
+ * branch/frame-scoped EventEnvelope stream without duplicate requests. It
+ * performs no interpretation: the `events` array is the verbatim
+ * `MissionAuditEventResponse`.
  */
 
 import { create } from 'zustand';
@@ -20,8 +20,19 @@ import { api } from '@/lib/api';
 interface AuditStoreState {
   events: EventEnvelope[];
   isLoading: boolean;
+  error: string | null;
   /** The (missionId, branchId, sequenceNum) tuple the current events were loaded for. */
-  loadedFor: { missionId: string; branchId: string; sequenceNum: number | undefined } | null;
+  loadedFor: {
+    missionId: string;
+    branchId: string;
+    sequenceNum: number | undefined;
+  } | null;
+  /** The tuple currently in flight. Kept separate so `loadedFor` remains truthful. */
+  requestedFor: {
+    missionId: string;
+    branchId: string;
+    sequenceNum: number | undefined;
+  } | null;
 
   /**
    * Load audit events for the given tuple. Skips the network when the tuple
@@ -40,53 +51,79 @@ interface AuditStoreState {
 export const useAuditStore = create<AuditStoreState>((set, get) => ({
   events: [],
   isLoading: false,
+  error: null,
   loadedFor: null,
+  requestedFor: null,
 
   load: (missionId, branchId, sequenceNum) => {
     if (!missionId) {
       return;
     }
     const resolvedBranch = branchId ?? 'main';
-    const current = get().loadedFor;
-    if (
-      current &&
-      current.missionId === missionId &&
-      current.branchId === resolvedBranch &&
-      current.sequenceNum === sequenceNum
-    ) {
+    const key = { missionId, branchId: resolvedBranch, sequenceNum };
+    if (sameTuple(get().loadedFor, key) || sameTuple(get().requestedFor, key)) {
       return;
     }
-    runLoad(set, missionId, resolvedBranch, sequenceNum);
+    runLoad(set, get, key);
   },
 
   refresh: () => {
-    const current = get().loadedFor;
+    const current = get().requestedFor ?? get().loadedFor;
     if (!current) return;
-    runLoad(set, current.missionId, current.branchId, current.sequenceNum);
+    runLoad(set, get, current);
   },
 
-  clear: () =>
-    set({ events: [], isLoading: false, loadedFor: null }),
+  clear: () => {
+    auditRequestVersion += 1;
+    set({
+      events: [],
+      isLoading: false,
+      error: null,
+      loadedFor: null,
+      requestedFor: null,
+    });
+  },
 }));
 
-function runLoad(
-  set: (partial: Partial<AuditStoreState>) => void,
-  missionId: string,
-  branchId: string,
-  sequenceNum: number | undefined,
-) {
-  set({ events: [], isLoading: true, loadedFor: null });
-  api
-    .audit.events(missionId, branchId, sequenceNum)
+type AuditTuple = NonNullable<AuditStoreState['loadedFor']>;
+type AuditSet = (partial: Partial<AuditStoreState>) => void;
+type AuditGet = () => AuditStoreState;
+
+let auditRequestVersion = 0;
+
+function sameTuple(left: AuditTuple | null, right: AuditTuple): boolean {
+  return Boolean(left && left.missionId === right.missionId && left.branchId === right.branchId && left.sequenceNum === right.sequenceNum);
+}
+
+function runLoad(set: AuditSet, get: AuditGet, tuple: AuditTuple) {
+  const version = ++auditRequestVersion;
+  const preserveEvents = sameTuple(get().loadedFor, tuple);
+  set({
+    events: preserveEvents ? get().events : [],
+    isLoading: true,
+    error: null,
+    loadedFor: preserveEvents ? get().loadedFor : null,
+    requestedFor: tuple,
+  });
+  api.audit
+    .events(tuple.missionId, tuple.branchId, tuple.sequenceNum)
     .then((res) => {
+      if (version !== auditRequestVersion) return;
       set({
         events: res.events ?? [],
         isLoading: false,
-        loadedFor: { missionId, branchId, sequenceNum },
+        error: null,
+        loadedFor: tuple,
+        requestedFor: null,
       });
     })
     .catch((err) => {
-      console.error('auditStore.load failed', err);
-      set({ isLoading: false });
+      if (version !== auditRequestVersion) return;
+      set({
+        events: preserveEvents ? get().events : [],
+        isLoading: false,
+        error: err instanceof Error ? err.message : 'Failed to load recorded evidence.',
+        requestedFor: null,
+      });
     });
 }

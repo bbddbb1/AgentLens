@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { Activity, ArrowLeft, CheckCircle2, CircleHelp, GitBranch, PauseCircle, XCircle } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, CircleHelp, GitBranch, PauseCircle, XCircle } from 'lucide-react';
 import type { ReplayStateResponse, RuntimeExplanationProjection, RuntimeSummary } from '@agentlens/protocol';
 import { MissionGraph } from '@/components/graph/MissionGraph';
 import { RightSidebar } from '@/components/layout/RightSidebar';
@@ -94,23 +94,9 @@ export default function MissionWorkspacePage() {
 
   const syncReplayToGraph = useCallback(
     (replay: ReplayStateResponse) => {
-      const interruptsByAgent = new Map(
-        Object.values(replay.current_state?.interrupts ?? {})
-          .filter((interrupt) => interrupt.status === 'pending' && interrupt.agent_id)
-          .map((interrupt) => [interrupt.agent_id, true]),
-      );
-      setSnapshots(
-        replay.snapshots.map((snapshot) => ({
-          ...snapshot,
-          nodes: snapshot.nodes.map((node) => ({
-            ...node,
-            metadata: {
-              ...node.metadata,
-              hasPendingInterrupt: node.agent_id ? interruptsByAgent.has(node.agent_id) : false,
-            },
-          })),
-        })),
-      );
+      // Replay snapshots are canonical frame projections. `current_state` is the
+      // latest branch state and must never annotate historical frames.
+      setSnapshots(replay.snapshots);
       setReplayData(replay);
     },
     [setReplayData, setSnapshots],
@@ -272,6 +258,14 @@ export default function MissionWorkspacePage() {
           </select>
         </div>
       </header>
+      {authority.incompatibilities.length > 0 && (
+        <div role="alert" className="flex items-start gap-2 border-b border-warning/30 bg-bg-secondary px-4 py-2 text-[11px] leading-4 text-text-secondary">
+          <AlertTriangle size={14} className="mt-px shrink-0 text-warning" aria-hidden="true" />
+          <span>
+            <strong className="font-semibold text-warning">Frame authority mismatch:</strong> {authority.incompatibilities.join('; ')}.
+          </span>
+        </div>
+      )}
       <WorkspaceShell
         leftPanel={<MissionTimeline explanation={activeRuntimeExplanation} summary={activeRuntimeSummary} />}
         centerPanel={
