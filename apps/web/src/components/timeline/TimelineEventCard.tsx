@@ -38,6 +38,10 @@ function activityTime(activity: RuntimeActivity): string {
   });
 }
 
+function outcomeLabel(outcome: string): string {
+  return outcome === 'Unknown' ? 'Unknown outcome' : outcome;
+}
+
 interface TimelineEventCardProps {
   activity: RuntimeActivity;
   isCurrent: boolean;
@@ -62,6 +66,7 @@ export function TimelineEventCard({ activity, isCurrent, onSelect }: TimelineEve
         </span>
         <span className="shrink-0 text-right">
           <span className={`block text-[10px] font-medium ${statusTone(activity.status)}`}>{statusLabel(activity.status)}</span>
+          <span className="mt-0.5 block text-[10px] text-text-muted">{outcomeLabel(activity.outcome)}</span>
           <time dateTime={activity.timestamp} className="mt-1 block text-[10px] tabular-nums text-text-muted">
             {activityTime(activity)}
           </time>

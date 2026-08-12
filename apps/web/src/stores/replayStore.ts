@@ -59,12 +59,22 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
   setIsPlaying: (isPlaying) => set({ isPlaying }),
   setCurrentFrame: (currentFrame) => {
     const safeFrame = Math.max(0, Math.min(currentFrame, Math.max(get().totalFrames - 1, 0)));
-    set({ currentFrame: safeFrame });
+    set({
+      currentFrame: safeFrame,
+      selectedEventId: null,
+      selectedActivityId: null,
+      activityContextState: null,
+    });
   },
   setTotalFrames: (totalFrames) => set({ totalFrames }),
   setPlaybackSpeed: (playbackSpeed) => set({ playbackSpeed }),
   setDuration: (durationSeconds) => set({ durationSeconds }),
-  setCurrentBranchId: (currentBranchId) => set({ currentBranchId }),
+  setCurrentBranchId: (currentBranchId) => set({
+    currentBranchId,
+    selectedEventId: null,
+    selectedActivityId: null,
+    activityContextState: null,
+  }),
   setSelectedEventId: (selectedEventId) => set({ selectedEventId }),
   setSelectedActivityId: (selectedActivityId) => set({ selectedActivityId }),
   setActivityContextState: (activityContextState) => set({ activityContextState }),
@@ -88,7 +98,12 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
   nextFrame: () => {
     const { currentFrame, totalFrames } = get();
     if (currentFrame < totalFrames - 1) {
-      set({ currentFrame: currentFrame + 1 });
+      set({
+        currentFrame: currentFrame + 1,
+        selectedEventId: null,
+        selectedActivityId: null,
+        activityContextState: null,
+      });
     } else {
       set({ isPlaying: false });
     }
@@ -97,7 +112,12 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
   prevFrame: () => {
     const { currentFrame } = get();
     if (currentFrame > 0) {
-      set({ currentFrame: currentFrame - 1 });
+      set({
+        currentFrame: currentFrame - 1,
+        selectedEventId: null,
+        selectedActivityId: null,
+        activityContextState: null,
+      });
     }
   },
 

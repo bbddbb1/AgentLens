@@ -360,17 +360,6 @@ function buildHeadline(scratch: MissionProjectionScratch, status: string, requir
 }
 
 function toCompatibilityActivity(activity: import('../types.js').RuntimeExplanationActivity): RuntimeActivity {
-  const outcome =
-    activity.status === 'failed'
-      ? 'Failed'
-      : activity.status === 'waiting'
-        ? 'Waiting'
-        : activity.status === 'completed'
-          ? 'Completed'
-          : activity.status === 'unknown'
-            ? 'Unknown'
-            : 'Active';
-
   return {
     id: activity.id,
     kind: activity.kind,
@@ -378,7 +367,13 @@ function toCompatibilityActivity(activity: import('../types.js').RuntimeExplanat
     title: activity.title,
     subtitle: activity.subtitle,
     action: activity.action,
-    outcome,
+    outcome:
+      activity.outcome
+      ?? (activity.status === 'failed' ? 'Failed'
+        : activity.status === 'waiting' ? 'Waiting'
+          : activity.status === 'completed' ? 'Completed'
+            : activity.status === 'unknown' ? 'Unknown'
+              : 'Active'),
     status: activity.status === 'waiting' ? 'waiting' : activity.status,
     sequence_num: activity.sequence_num,
     timestamp: activity.started_at ?? activity.ended_at,

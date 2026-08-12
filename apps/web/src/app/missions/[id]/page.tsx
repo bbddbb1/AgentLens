@@ -191,11 +191,16 @@ export default function MissionWorkspacePage() {
       return;
     }
     const selectedActivity = resolveSelectedActivity(activeRuntimeExplanation, snapshot, selectedActivityId, selectedNodeId, selectedEventId);
-    if (!selectedActivity) return;
+    if (!selectedActivity) {
+      if (selectedActivityId) setSelectedActivityId(null);
+      return;
+    }
     const selectedNode = matchNodeToActivity(snapshot, selectedActivity);
+    const nextEventId = selectedActivity.evidence_refs[0]?.event_id ?? null;
+    const nextNodeId = selectedNode?.id ?? null;
     if (selectedActivityId !== selectedActivity.id) setSelectedActivityId(selectedActivity.id);
-    if (selectedActivity.evidence_refs[0]?.event_id && selectedEventId !== selectedActivity.evidence_refs[0].event_id) setSelectedEventId(selectedActivity.evidence_refs[0].event_id);
-    if (selectedNode?.id && selectedNodeId !== selectedNode.id) setSelectedNodeId(selectedNode.id);
+    if (selectedEventId !== nextEventId) setSelectedEventId(nextEventId);
+    if (selectedNodeId !== nextNodeId) setSelectedNodeId(nextNodeId);
   }, [activeRuntimeExplanation, currentFrame, selectedActivityId, selectedEventId, selectedNodeId, setActivityContextState, setSelectedActivityId, setSelectedEventId, setSelectedNodeId, snapshots]);
 
   useEffect(() => {
@@ -286,7 +291,7 @@ export default function MissionWorkspacePage() {
             )}
           </section>
         }
-        rightPanel={<RightSidebar missionId={missionId} onBranchChange={loadReplay} runtimeSummary={activeRuntimeSummary} />}
+        rightPanel={<RightSidebar missionId={missionId} onBranchChange={loadReplay} runtimeSummary={activeRuntimeSummary} runtimeExplanation={activeRuntimeExplanation} />}
         bottomPanel={<StatusBar />}
       />
     </div>

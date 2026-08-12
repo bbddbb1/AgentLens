@@ -113,8 +113,9 @@ function MissionGraphInner() {
       setSelectedNodeId(node.id);
       const activityId = typeof (node.data as Record<string, unknown>).activity === 'object' && (node.data as { activity?: { id?: string } }).activity?.id ? ((node.data as { activity?: { id?: string } }).activity?.id ?? null) : null;
       setSelectedActivityId(activityId);
+      setSelectedEventId(null);
     },
-    [setSelectedActivityId, setSelectedNodeId],
+    [setSelectedActivityId, setSelectedEventId, setSelectedNodeId],
   );
 
   const onPaneClick = useCallback(() => {

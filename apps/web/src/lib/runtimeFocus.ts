@@ -22,16 +22,7 @@ export function matchNodeToActivity(
   activity: FocusableRuntimeActivity,
 ): GraphNode | null {
   if (!snapshot) return null;
-  const byActivityId = snapshot.nodes.find((node) => node.activity?.id === activity.id);
-  if (byActivityId) return byActivityId;
-  const spanId = activity.source_span_id ?? activity.parent_span_id;
-  if (!spanId) return null;
-  return snapshot.nodes.find(
-    (node) =>
-      node.source_span_id === spanId ||
-      node.evidence_span_id === spanId ||
-      node.span_id === spanId,
-  ) ?? null;
+  return snapshot.nodes.find((node) => node.activity?.id === activity.id) ?? null;
 }
 
 export function resolveSelectedActivity(
@@ -55,11 +46,6 @@ export function resolveSelectedActivity(
     if (selectedNode?.activity?.id) {
       const byNodeActivity = activities.find((activity) => activity.id === selectedNode.activity?.id);
       if (byNodeActivity) return byNodeActivity;
-    }
-    const spanId = selectedNode?.source_span_id ?? selectedNode?.evidence_span_id ?? selectedNode?.span_id ?? null;
-    if (spanId) {
-      const bySpan = activities.find((activity) => activity.source_span_id === spanId || activity.parent_span_id === spanId);
-      if (bySpan) return bySpan;
     }
   }
 
@@ -93,10 +79,10 @@ export function focusRuntimeActivity(
       : snapshots[snapshots.length - 1] ?? null;
   const node = matchNodeToActivity(snapshot, activity);
 
-  if (eventId) target.setSelectedEventId(eventId);
-  target.setSelectedActivityId(activity.id);
-  target.setSelectedNodeId(node?.id ?? null);
   if (selectedFrame !== null) {
     target.setCurrentFrame(selectedFrame);
   }
+  target.setSelectedEventId(eventId);
+  target.setSelectedActivityId(activity.id);
+  target.setSelectedNodeId(node?.id ?? null);
 }

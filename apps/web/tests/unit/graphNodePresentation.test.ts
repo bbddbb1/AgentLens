@@ -61,6 +61,32 @@ describe('graph node card presentation', () => {
     expect(view.statusLabel).toBe('Active');
   });
 
+  it('shows canonical outcome separately from lifecycle', () => {
+    const canonical = runtimeActivity();
+    canonical.status = 'completed';
+    canonical.outcome = 'Unknown';
+    const view = buildNodeCardView('tool', {
+      label: 'span.execute',
+      status: 'failed',
+      activity: canonical,
+    });
+    expect(view.statusLabel).toBe('Completed');
+    expect(view.outcomeLabel).toBe('Unknown outcome');
+  });
+
+  it('discloses graph degradation when one span contains multiple activities', () => {
+    const view = buildNodeCardView('agent', {
+      label: 'Shared invocation span',
+      status: 'unknown',
+      metadata: {
+        runtime_activity_representation: 'multiple_activities_not_representable',
+        runtime_activity_count: 2,
+      },
+    });
+    expect(view.statusLabel).toBe('Unknown');
+    expect(view.limitation).toBe('2 canonical activities share this span; inspect them individually.');
+  });
+
   it('selects exactly one deterministic agent headline metric', () => {
     const completed = buildNodeCardView('agent', {
       label: 'Agent',

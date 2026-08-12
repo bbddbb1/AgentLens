@@ -32,6 +32,7 @@ export function NodeCard({ view, icon, selected, highlighted, size }: NodeCardPr
         <div className="min-w-0 flex-1">
           <div className="truncate text-[12px] font-semibold leading-5 text-text-primary">{view.label}</div>
           {view.secondary && <div className="mt-0.5 truncate text-[11px] leading-4 text-text-muted">{view.secondary}</div>}
+          {view.limitation && <div className="mt-1 text-[10px] leading-4 text-warning">{view.limitation}</div>}
         </div>
       </div>
 
@@ -39,6 +40,7 @@ export function NodeCard({ view, icon, selected, highlighted, size }: NodeCardPr
         <span className="flex items-center gap-1.5 text-[11px] text-text-secondary">
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: STATUS_COLORS[view.status] }} aria-hidden="true" />
           {view.statusLabel}
+          {view.outcomeLabel && <span className="text-text-muted">· {view.outcomeLabel}</span>}
         </span>
         {view.metric && (
           <span className="text-[11px] tabular-nums text-text-muted" title={view.metric.provenance === 'projection' ? 'Deterministic runtime projection' : 'Recorded runtime evidence'}>

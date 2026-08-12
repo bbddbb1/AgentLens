@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, Check, CheckCircle2, PanelRightClose, Play, Shield, X, XCircle } from 'lucide-react';
-import type { RuntimeInterruptState, RuntimeState, RuntimeSummary } from '@agentlens/protocol';
+import type { RuntimeExplanationActivity, RuntimeExplanationProjection, RuntimeInterruptState, RuntimeState, RuntimeSummary } from '@agentlens/protocol';
 import { RopsEvidence } from '@/components/rops/RopsEvidence';
 import { RopsInspector } from '@/components/rops/RopsInspector';
 import { useNodeProjection } from '@/hooks/useNodeProjection';
 import { api } from '@/lib/api';
 import { findFrameForEvent, selectEnvelopeForNode, sequenceNumThroughFrame } from '@/lib/replayFrame';
+import { runtimeActivityInspectorView } from '@/lib/runtimeActivityPresentation';
 import { useAuditStore } from '@/stores/auditStore';
 import { useGraphStore } from '@/stores/graphStore';
 import { useLayoutStore } from '@/stores/layoutStore';
@@ -17,6 +18,7 @@ interface RightSidebarProps {
   missionId: string;
   onBranchChange?: (branchId: string) => Promise<void>;
   runtimeSummary?: RuntimeSummary | null;
+  runtimeExplanation?: RuntimeExplanationProjection | null;
 }
 
 interface EvidenceTarget {
@@ -46,7 +48,7 @@ export function isCurrentStateForSelectedFrame(currentState: RuntimeState | null
   return Boolean(isLatestFramePosition && currentState && sequenceNum !== undefined && currentState.mission_id === missionId && currentState.branch_id === branchId && currentState.sequence_num === sequenceNum);
 }
 
-export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null }: RightSidebarProps) {
+export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null, runtimeExplanation = null }: RightSidebarProps) {
   const setIsRightCollapsed = useLayoutStore((state) => state.setIsRightCollapsed);
   const { snapshots, selectedNodeId, setSelectedNodeId } = useGraphStore();
   const { currentState, selectedEventId, selectedActivityId, activityContextState, currentBranchId, currentFrame, events, setSelectedEventId, setSelectedActivityId, setCurrentFrame, setIsPlaying } = useReplayStore();
@@ -79,6 +81,10 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null 
   const frameCurrentState = hasFrameScopedCurrentState ? currentState : null;
 
   const selectedNode = useMemo(() => currentSnapshot?.nodes.find((node) => node.id === selectedNodeId) ?? null, [currentSnapshot, selectedNodeId]);
+  const selectedActivity = useMemo(
+    () => runtimeExplanation?.activities.find((activity) => activity.id === selectedActivityId) ?? null,
+    [runtimeExplanation, selectedActivityId],
+  );
   const selectedEventEnvelope = useMemo(() => {
     if (selectedNode) {
       const envelope = selectEnvelopeForNode(selectedNode, auditEvents);
@@ -138,12 +144,12 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null 
       const event = events.find((entry) => entry.sequence_num === sequenceNum);
       if (!event) return;
       setIsPlaying(false);
+      const frame = findFrameForEvent(snapshots, events, event.id);
+      if (frame !== null) setCurrentFrame(frame);
       setSelectedActivityId(null);
       setSelectedNodeId(null);
       setSelectedEventId(event.id);
       setEvidenceTarget(null);
-      const frame = findFrameForEvent(snapshots, events, event.id);
-      if (frame !== null) setCurrentFrame(frame);
     },
     onSelectNode: (nodeId: string) => {
       setSelectedActivityId(null);
@@ -232,8 +238,17 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null 
                   </button>
                 </div>
               )
+            ) : selectedActivity ? (
+              <RuntimeActivityInspector activity={selectedActivity} onViewEvidence={openEvidence} />
             ) : selectedNode ? (
-              <RopsInspector {...inspectorInput} />
+              <div className="space-y-3">
+                {selectedNode.metadata?.runtime_activity_representation === 'multiple_activities_not_representable' && (
+                  <div className="rounded-sm border border-warning/25 bg-bg-tertiary p-3 text-[11px] text-text-secondary">
+                    This graph node is a recorded span containing {String(selectedNode.metadata.runtime_activity_count ?? 'multiple')} canonical activities. No single activity identity, lifecycle, or outcome is assigned to the node.
+                  </div>
+                )}
+                <RopsInspector {...inspectorInput} />
+              </div>
             ) : selectedEventEnvelope ? (
               <div className="space-y-2 rounded-sm border border-border-subtle bg-bg-tertiary p-3">
                 <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">Selected event</p>
@@ -279,6 +294,35 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null 
         )}
       </div>
     </aside>
+  );
+}
+
+function RuntimeActivityInspector({ activity, onViewEvidence }: { activity: RuntimeExplanationActivity; onViewEvidence: (sequenceNum: number) => void }) {
+  const view = runtimeActivityInspectorView(activity);
+  return (
+    <div className="space-y-4 rounded-sm border border-border-subtle bg-bg-tertiary p-4">
+      <div>
+        <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">Canonical runtime activity</p>
+        <h2 className="mt-2 text-[14px] font-semibold text-text-primary">{view.title}</h2>
+        <p className="mt-1 text-[11px] capitalize text-text-muted">{view.kind}</p>
+      </div>
+      <dl className="grid grid-cols-[90px_1fr] gap-x-3 gap-y-2 text-[11px]">
+        <dt className="text-text-muted">Lifecycle</dt><dd className="text-text-primary">{view.lifecycle}</dd>
+        <dt className="text-text-muted">Outcome</dt><dd className="text-text-primary">{view.outcome}</dd>
+        <dt className="text-text-muted">Activity ID</dt><dd className="break-all font-mono text-text-secondary">{view.id}</dd>
+        {view.invocationId && <><dt className="text-text-muted">Invocation ID</dt><dd className="break-all font-mono text-text-secondary">{view.invocationId}</dd></>}
+        {view.sourceSpanId && <><dt className="text-text-muted">Source span</dt><dd className="break-all font-mono text-text-secondary">{view.sourceSpanId}</dd></>}
+      </dl>
+      {view.limitation && <p className="rounded-sm border border-warning/25 p-2 text-[11px] text-text-secondary">{view.limitation}</p>}
+      <div className="space-y-1.5">
+        <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">Recorded evidence</p>
+        {view.evidenceSequences.map((sequenceNum, index) => (
+          <button key={`${sequenceNum}:${index}`} type="button" onClick={() => onViewEvidence(sequenceNum)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
+            View sequence #{sequenceNum}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

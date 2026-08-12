@@ -22,6 +22,7 @@ export function MissionTimeline({ explanation = null, summary = null }: MissionT
 
   const handleFrameSelect = (index: number) => {
     setCurrentFrame(index);
+    setSelectedNodeId(null);
     setIsPlaying(false);
   };
 

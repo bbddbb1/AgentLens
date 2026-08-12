@@ -154,8 +154,10 @@ describe('graphStore', () => {
       id: 'snap-1', mission_id: 'm1', sequence_num: 0,
       timestamp: '2026-01-01T00:00:00.000Z', nodes: [], edges: [],
     }];
+    useGraphStore.setState({ selectedNodeId: 'stale-node' });
     useGraphStore.getState().setSnapshots(snapshots);
     expect(useGraphStore.getState().snapshots).toHaveLength(1);
+    expect(useGraphStore.getState().selectedNodeId).toBeNull();
   });
 
   it('applies a snapshot, converting graph nodes to flow nodes', () => {
@@ -174,11 +176,13 @@ describe('graphStore', () => {
     };
 
     useGraphStore.getState().setZoomLevel(1.5);
+    useGraphStore.getState().setSelectedNodeId('stale-frame-node');
     useGraphStore.getState().applySnapshot(snapshot);
 
     const state = useGraphStore.getState();
     expect(state.nodes).toHaveLength(3);
     expect(state.edges).toHaveLength(2);
+    expect(state.selectedNodeId).toBeNull();
 
     // Agent maps to 'agentNode' type
     expect(state.nodes[0].type).toBe('agentNode');
@@ -293,6 +297,22 @@ describe('replayStore', () => {
     expect(useReplayStore.getState().isPlaying).toBe(true);
   });
 
+  it('clears replay focus when the branch identity changes', () => {
+    useReplayStore.setState({
+      currentBranchId: 'main',
+      selectedEventId: 'event-main',
+      selectedActivityId: 'activity-main',
+      activityContextState: { kind: 'selected', activity_id: 'activity-main' },
+    });
+    useReplayStore.getState().setCurrentBranchId('branch-b');
+    expect(useReplayStore.getState()).toMatchObject({
+      currentBranchId: 'branch-b',
+      selectedEventId: null,
+      selectedActivityId: null,
+      activityContextState: null,
+    });
+  });
+
   it('clears branch, frame, selection, and runtime state together', () => {
     useReplayStore.setState({
       isPlaying: true,
@@ -335,18 +355,18 @@ describe('replayStore', () => {
 
   it('sets current frame without coupling to the events array index', () => {
     const events = [replayEvent('e0', 0), replayEvent('e1', 1), replayEvent('e2', 2)];
-    useReplayStore.setState({ totalFrames: 3, events });
+    useReplayStore.setState({ totalFrames: 3, events, selectedEventId: 'e0', selectedActivityId: 'activity-0', activityContextState: { kind: 'selected', activity_id: 'activity-0', selection_basis: 'explicit' } });
     useReplayStore.getState().setCurrentFrame(1);
     expect(useReplayStore.getState().currentFrame).toBe(1);
-    expect(useReplayStore.getState().selectedEventId).toBeNull();
+    expect(useReplayStore.getState()).toMatchObject({ selectedEventId: null, selectedActivityId: null, activityContextState: null });
   });
 
   it('nextFrame advances the frame', () => {
     const events = [replayEvent('e0', 0), replayEvent('e1', 1), replayEvent('e2', 2)];
-    useReplayStore.setState({ totalFrames: 3, events });
+    useReplayStore.setState({ totalFrames: 3, events, selectedEventId: 'e0', selectedActivityId: 'activity-0' });
     useReplayStore.getState().nextFrame();
     expect(useReplayStore.getState().currentFrame).toBe(1);
-    expect(useReplayStore.getState().selectedEventId).toBeNull();
+    expect(useReplayStore.getState()).toMatchObject({ selectedEventId: null, selectedActivityId: null });
   });
 
   it('stops playing when nextFrame reaches end', () => {
@@ -358,10 +378,10 @@ describe('replayStore', () => {
 
   it('prevFrame goes back one frame', () => {
     const events = [replayEvent('e0', 0), replayEvent('e1', 1), replayEvent('e2', 2)];
-    useReplayStore.setState({ totalFrames: 3, currentFrame: 2, events });
+    useReplayStore.setState({ totalFrames: 3, currentFrame: 2, events, selectedEventId: 'e2', selectedActivityId: 'activity-2' });
     useReplayStore.getState().prevFrame();
     expect(useReplayStore.getState().currentFrame).toBe(1);
-    expect(useReplayStore.getState().selectedEventId).toBeNull();
+    expect(useReplayStore.getState()).toMatchObject({ selectedEventId: null, selectedActivityId: null });
   });
 
   it('prevFrame stays at 0 when already at start', () => {

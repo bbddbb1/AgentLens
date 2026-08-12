@@ -188,7 +188,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   relationshipContext: null,
   layoutPositions: {},
 
-  setSnapshots: (snapshots) => set({ snapshots }),
+  setSnapshots: (snapshots) => set({ snapshots, selectedNodeId: null }),
   setSelectedNodeId: (selectedNodeId) => {
     set({ selectedNodeId });
     get().recomputeDisplayGraph();
@@ -317,6 +317,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     set({
       baseNodes: laidOutNodes,
       baseEdges: snapshot.edges,
+      selectedNodeId: null,
       layoutPositions,
       highlightedNodeIds,
       highlightedEdgeIds,

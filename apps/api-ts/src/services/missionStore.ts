@@ -198,10 +198,23 @@ export function attachExplanationToNodes(
   return nodes.map((node) => {
     const spanId = node.source_span_id ?? node.span_id;
     const activities = spanId ? activitiesBySpanId.get(spanId) ?? [] : [];
-    if (activities.length !== 1) {
+    if (activities.length === 0) {
       return {
         ...node,
         activity: undefined,
+      };
+    }
+    if (activities.length > 1) {
+      return {
+        ...node,
+        status: 'unknown',
+        activity: undefined,
+        metadata: {
+          ...(node.metadata ?? {}),
+          runtime_activity_representation: 'multiple_activities_not_representable',
+          runtime_activity_count: activities.length,
+          runtime_activity_ids: activities.map((activity) => activity.id),
+        },
       };
     }
     return {

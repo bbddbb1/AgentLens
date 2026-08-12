@@ -11,6 +11,8 @@ export interface NodeCardView {
   secondary?: string;
   status: NodeStatus;
   statusLabel: string;
+  outcomeLabel?: string;
+  limitation?: string;
   metric: NodeHeadlineMetric | null;
 }
 
@@ -44,6 +46,19 @@ function statusFrom(value: unknown): NodeStatus {
 
 function activityFrom(data: Record<string, unknown>): RuntimeActivity | undefined {
   return typeof data.activity === 'object' && data.activity !== null ? (data.activity as RuntimeActivity) : undefined;
+}
+
+function graphLimitation(data: Record<string, unknown>): string | undefined {
+  const metadata = typeof data.metadata === 'object' && data.metadata !== null
+    ? data.metadata as Record<string, unknown>
+    : {};
+  if (metadata.runtime_activity_representation !== 'multiple_activities_not_representable') {
+    return undefined;
+  }
+  const count = typeof metadata.runtime_activity_count === 'number'
+    ? metadata.runtime_activity_count
+    : undefined;
+  return `${count ?? 'Multiple'} canonical activities share this span; inspect them individually.`;
 }
 
 function metricFor(kind: 'agent' | 'task' | 'tool', status: NodeStatus, data: Record<string, unknown>): NodeHeadlineMetric | null {
@@ -83,13 +98,16 @@ export function buildNodeCardView(kind: 'agent' | 'task' | 'tool', data: Record<
   const target = nonEmptyString(record?.target.value);
   const actionWithTarget = action && target ? `${action} · ${target}` : action;
   const secondary = kind === 'agent' ? (role ?? actionWithTarget) : actionWithTarget;
-  const status = statusFrom(data.status ?? activity?.status);
+  const status = statusFrom(activity?.status ?? data.status);
+  const outcome = nonEmptyString(activity?.outcome);
 
   return {
     label,
     secondary,
     status,
     statusLabel: STATUS_LABELS[status],
+    outcomeLabel: outcome === 'Unknown' ? 'Unknown outcome' : outcome,
+    limitation: graphLimitation(data),
     metric: metricFor(kind, status, data),
   };
 }
