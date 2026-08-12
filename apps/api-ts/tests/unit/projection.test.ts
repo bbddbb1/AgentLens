@@ -267,7 +267,10 @@ describe('projectReplay', () => {
     expect(replay.events[1].event_type).toBe('interrupt.requested');
     expect(replay.events[2].event_type).toBe('span.completed');
 
-    expect(replay.snapshots).toHaveLength(1); // One start timestamp for spans
+    // Frames now follow immutable evidence admissions, not distinct source-time
+    // span starts: the span revision and interrupt request are separate admissions.
+    expect(replay.snapshots).toHaveLength(2);
+    expect(replay.snapshots.map((snapshot) => snapshot.sequence_num)).toEqual([1, 2]);
     expect(replay.projection_version).toBe('span_projection.v1');
   });
 

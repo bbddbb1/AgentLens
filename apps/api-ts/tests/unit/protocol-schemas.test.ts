@@ -58,16 +58,26 @@ describe('OtlpSpanSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('accepts string timestamps and converts to numbers', () => {
+  it('keeps OTLP nanosecond timestamps as exact decimal strings', () => {
     const result = OtlpSpanSchema.safeParse({
       ...validSpan,
-      start_time_unix_nano: '1000000000',
-      end_time_unix_nano: '2000000000',
+      start_time_unix_nano: '1783949765222001500',
+      end_time_unix_nano: '1783949765222001501',
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(typeof result.data.start_time_unix_nano).toBe('number');
+      expect(result.data.start_time_unix_nano).toBe('1783949765222001500');
+      expect(result.data.end_time_unix_nano).toBe('1783949765222001501');
     }
+  });
+
+  it('rejects unsafe numeric nanoseconds that were already rounded by JSON', () => {
+    const result = OtlpSpanSchema.safeParse({
+      ...validSpan,
+      start_time_unix_nano: 1_783_949_765_222_001_500,
+      end_time_unix_nano: 1_783_949_765_222_001_501,
+    });
+    expect(result.success).toBe(false);
   });
 
   it('defaults status_code to OK', () => {

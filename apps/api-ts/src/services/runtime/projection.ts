@@ -1,4 +1,4 @@
-import { SPAN_PROJECTION_VERSION } from '@agentlens/protocol';
+import { eventsThroughCursor, SPAN_PROJECTION_VERSION } from '@agentlens/protocol';
 import type {
   GraphSnapshot,
   GraphNode,
@@ -23,7 +23,6 @@ type RunLifecycleState = 'started' | 'completed' | 'failed';
 
 const FNV_64_OFFSET = 0xcbf29ce484222325n;
 const FNV_64_PRIME = 0x100000001b3n;
-const SAFE_SEQUENCE_MASK = (1n << 53n) - 1n;
 
 function stableHash64(value: string): bigint {
   let hash = FNV_64_OFFSET;
@@ -32,11 +31,6 @@ function stableHash64(value: string): bigint {
     hash = BigInt.asUintN(64, hash * FNV_64_PRIME);
   }
   return hash;
-}
-
-function stableSequenceNum(eventId: string): number {
-  const value = Number(stableHash64(eventId) & SAFE_SEQUENCE_MASK);
-  return value === 0 ? 1 : value;
 }
 
 function canonicalValue(value: unknown): string {
@@ -50,29 +44,62 @@ function canonicalValue(value: unknown): string {
   return JSON.stringify(value) ?? String(value);
 }
 
-function stableSpanEventId(spanId: string, event: any, occurrence: number): string {
+function stableSpanEventId(spanId: string, event: any, occurrence: number, revision = 1): string {
   const identity = canonicalValue({
     name: event?.name ?? '',
     timestamp: event?.timestamp ?? event?.time ?? '',
     attributes: event?.attributes ?? {},
   });
-  return `${spanId}-event-${stableHash64(identity).toString(16)}-${occurrence}`;
+  const revisionSuffix = revision > 1 ? `@r${revision}` : '';
+  return `${spanId}${revisionSuffix}-event-${stableHash64(identity).toString(16)}-${occurrence}`;
+}
+
+function nanoBigInt(value: unknown, fallback: unknown = 0): bigint {
+  const selected = value ?? fallback;
+  if (typeof selected === 'bigint') return selected;
+  if (typeof selected === 'number') {
+    if (!Number.isSafeInteger(selected) || selected < 0) {
+      throw new Error(`Unsafe nanosecond number: ${selected}`);
+    }
+    return BigInt(selected);
+  }
+  if (typeof selected === 'string' && /^\d+$/.test(selected)) return BigInt(selected);
+  const millis = Date.parse(String(selected));
+  return BigInt(Number.isNaN(millis) ? 0 : millis) * 1_000_000n;
+}
+
+function compareNanos(left: unknown, right: unknown): number {
+  const leftNano = nanoBigInt(left);
+  const rightNano = nanoBigInt(right);
+  return leftNano < rightNano ? -1 : leftNano > rightNano ? 1 : 0;
+}
+
+function nanoToIso(value: unknown): string {
+  const millis = nanoBigInt(value) / 1_000_000n;
+  return new Date(Number(millis)).toISOString();
+}
+
+function nanoDurationMs(start: unknown, end: unknown): number | undefined {
+  const endNano = nanoBigInt(end);
+  if (endNano === 0n) return undefined;
+  return Number(endNano - nanoBigInt(start)) / 1e6;
+}
+
+function hasRecordedEnd(value: unknown): boolean {
+  return nanoBigInt(value) > 0n;
 }
 
 function runtimeTimestampNanos(value: unknown, fallback: unknown): string {
-  const selected = value ?? fallback;
-  if (typeof selected === 'bigint') return selected.toString();
-  if (typeof selected === 'number' && Number.isFinite(selected)) return Math.trunc(selected).toString();
-  if (typeof selected === 'string' && /^\d+$/.test(selected)) return selected;
-  const millis = Date.parse(String(selected));
-  return String(BigInt(Number.isNaN(millis) ? 0 : millis) * 1_000_000n);
+  return nanoBigInt(value, fallback).toString();
 }
 
 function eventTimestampIso(event: any, fallback: string): string {
   const persisted = event?.timestamp;
   if (persisted !== undefined && persisted !== null && persisted !== '') {
-    const numeric = Number(persisted);
-    if (Number.isFinite(numeric)) return new Date(numeric / 1e6).toISOString();
+    if ((typeof persisted === 'string' && /^\d+$/.test(persisted)) || typeof persisted === 'bigint') {
+      return nanoToIso(persisted);
+    }
+    if (typeof persisted === 'number' && Number.isSafeInteger(persisted)) return nanoToIso(persisted);
     const parsed = new Date(String(persisted));
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
@@ -273,18 +300,17 @@ function assembleErrorProvenance(attrs: Record<string, any>, span: any): any {
 }
 
 
-function findAgentSpanId(agentId: string, spans: any[], currentSpanStartTime?: number): string | undefined {
+function findAgentSpanId(agentId: string, spans: any[], currentSpanStartTime?: unknown): string | undefined {
   let bestSpan: any = undefined;
-  let minDiff = Infinity;
+  let minDiff: bigint | undefined;
 
   for (const span of spans) {
     const attrs = span.attributes ?? {};
     const sAgentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
     if (sAgentId === agentId) {
       if (currentSpanStartTime !== undefined) {
-        const start = Number(span.start_time_unix_nano);
-        const diff = start - currentSpanStartTime;
-        if (diff >= 0 && diff < minDiff) {
+        const diff = nanoBigInt(span.start_time_unix_nano) - nanoBigInt(currentSpanStartTime);
+        if (diff >= 0n && (minDiff === undefined || diff < minDiff)) {
           minDiff = diff;
           bestSpan = span;
         }
@@ -306,7 +332,7 @@ function findAgentSpanId(agentId: string, spans: any[], currentSpanStartTime?: n
   return bestSpan.span_id;
 }
 
-function resolveNodeId(id: string, spans: any[], currentSpanStartTime?: number): string | undefined {
+function resolveNodeId(id: string, spans: any[], currentSpanStartTime?: unknown): string | undefined {
   if (spans.some((s) => s.span_id === id)) {
     return id;
   }
@@ -462,23 +488,33 @@ export function projectTraceSnapshot(
   missionId: string,
   branchId: string,
   spans: any[],
-  maxTimeNs?: number
+  maxTimeNs?: string | number | bigint,
 ): GraphSnapshot {
   // 1. Filter visible spans based on maxTimeNs
   let visibleSpans = spans;
   if (maxTimeNs !== undefined) {
-    visibleSpans = spans.filter((s) => Number(s.start_time_unix_nano) <= maxTimeNs);
+    const cutoff = nanoBigInt(maxTimeNs);
+    visibleSpans = spans
+      .filter((span) => nanoBigInt(span.start_time_unix_nano) <= cutoff)
+      .map((span) => ({
+        ...span,
+        events: Array.isArray(span.events)
+          ? span.events.filter((event: any) =>
+              nanoBigInt(event?.timestamp ?? event?.time, span.start_time_unix_nano) <= cutoff)
+          : [],
+      }));
   }
 
   // 2. Adjust active spans (started but not finished at maxTimeNs)
   if (maxTimeNs !== undefined) {
+    const cutoff = nanoBigInt(maxTimeNs);
     visibleSpans = visibleSpans.map((s) => {
-      const start = Number(s.start_time_unix_nano);
-      const end = Number(s.end_time_unix_nano);
-      if ((end > maxTimeNs || !s.end_time_unix_nano) && start <= maxTimeNs) {
+      const start = nanoBigInt(s.start_time_unix_nano);
+      const end = nanoBigInt(s.end_time_unix_nano);
+      if ((end > cutoff || end === 0n) && start <= cutoff) {
         return {
           ...s,
-          end_time_unix_nano: 0, // In progress
+          end_time_unix_nano: '0', // In progress
           status_code: 'UNSET',
         };
       }
@@ -518,7 +554,7 @@ export function projectTraceSnapshot(
           // STRICT RULE: If target is missing, do NOT create the edge (no fallback)
           if (source && target) {
             const resolvedSource = span.span_id;
-            const resolvedTarget = resolveNodeId(String(target), visibleSpans, Number(span.start_time_unix_nano));
+            const resolvedTarget = resolveNodeId(String(target), visibleSpans, span.start_time_unix_nano);
             if (!resolvedTarget) continue;
             edges.push({
               id: `edge-${span.span_id}-review-${eventIdx++}`,
@@ -548,8 +584,8 @@ export function projectTraceSnapshot(
       const hasValidTarget = !isReviewSpan || !!attrs['gen_ai.agent.review.target'];
 
       if (source && target && hasValidTarget) {
-        const resolvedSource = resolveNodeId(String(source), visibleSpans, Number(span.start_time_unix_nano));
-        const resolvedTarget = resolveNodeId(String(target), visibleSpans, Number(span.start_time_unix_nano));
+        const resolvedSource = resolveNodeId(String(source), visibleSpans, span.start_time_unix_nano);
+        const resolvedTarget = resolveNodeId(String(target), visibleSpans, span.start_time_unix_nano);
         if (!resolvedSource || !resolvedTarget) continue;
         edges.push({
           id: `edge-${span.span_id}`,
@@ -645,9 +681,9 @@ export function projectTraceSnapshot(
         summary: summary ? String(summary) : undefined,
         span_id: span.span_id,
         trace_id: span.trace_id,
-        start_time: new Date(Number(span.start_time_unix_nano) / 1e6).toISOString(),
-        end_time: span.end_time_unix_nano ? new Date(Number(span.end_time_unix_nano) / 1e6).toISOString() : undefined,
-        duration_ms: span.end_time_unix_nano ? (Number(span.end_time_unix_nano) - Number(span.start_time_unix_nano)) / 1e6 : undefined,
+        start_time: nanoToIso(span.start_time_unix_nano),
+        end_time: hasRecordedEnd(span.end_time_unix_nano) ? nanoToIso(span.end_time_unix_nano) : undefined,
+        duration_ms: nanoDurationMs(span.start_time_unix_nano, span.end_time_unix_nano),
         error_count: span.status_code === 'ERROR' ? 1 : 0,
         metadata: {
           ...publicTelemetryAttributes(attrs),
@@ -655,9 +691,9 @@ export function projectTraceSnapshot(
         },
         maturityTier: tier,
         maturity_tier: tier,
-        evidenceSpanId: span.span_id,
-        evidence_span_id: span.span_id,
-        source_span_id: span.span_id,
+        evidenceSpanId: span.source_span_id ?? span.span_id,
+        evidence_span_id: span.source_span_id ?? span.span_id,
+        source_span_id: span.source_span_id ?? span.span_id,
         source_event_id: undefined,
         projection_profile: projectionProfile,
       });
@@ -707,10 +743,10 @@ export function projectTraceSnapshot(
   }
 
   const snapshot: GraphSnapshot = {
-    id: `snap-${maxTimeNs ?? 'latest'}`,
+    id: `snap-${maxTimeNs?.toString() ?? 'latest'}`,
     mission_id: missionId,
-    sequence_num: maxTimeNs ?? 0,
-    timestamp: maxTimeNs ? new Date(maxTimeNs / 1e6).toISOString() : new Date().toISOString(),
+    sequence_num: 0,
+    timestamp: maxTimeNs !== undefined ? nanoToIso(maxTimeNs) : '1970-01-01T00:00:00.000Z',
     nodes,
     edges,
     branch_id: branchId,
@@ -724,13 +760,173 @@ export function projectTraceSnapshot(
  * Ephemeral Time-Sliced Projection for Replay/Time-Travel.
  * Stateless, pure function.
  */
+type AdmittedSpan = Record<string, any> & {
+  branch_id: string;
+  source_span_id: string;
+  admission_seq: number;
+  revision_num: number;
+  admitted_at: string;
+};
+
+function logicalSpanId(span: Pick<AdmittedSpan, 'branch_id' | 'source_span_id'>): string {
+  return `${span.branch_id}:${span.source_span_id}`;
+}
+
+function normalizeAdmittedSpans(spans: any[], defaultBranchId: string): AdmittedSpan[] {
+  const revisionByLogicalId = new Map<string, number>();
+  let maxAdmission = spans.reduce((maximum, span) => {
+    const value = span?.admission_seq;
+    return Number.isSafeInteger(value) && value > maximum ? value : maximum;
+  }, 0);
+
+  return spans.map((span) => {
+    const branchId = String(span.branch_id ?? defaultBranchId);
+    const sourceSpanId = String(span.source_span_id ?? span.span_id);
+    const logicalId = `${branchId}:${sourceSpanId}`;
+    const inferredRevision = (revisionByLogicalId.get(logicalId) ?? 0) + 1;
+    const revisionNum = Number.isSafeInteger(span.revision_num) && span.revision_num > 0
+      ? span.revision_num
+      : inferredRevision;
+    revisionByLogicalId.set(logicalId, Math.max(inferredRevision, revisionNum));
+    const admissionSeq = Number.isSafeInteger(span.admission_seq) && span.admission_seq > 0
+      ? span.admission_seq
+      : ++maxAdmission;
+    const admittedAt = span.admitted_at ?? span.created_at ?? new Date(admissionSeq).toISOString();
+    return {
+      ...span,
+      branch_id: branchId,
+      span_id: sourceSpanId,
+      source_span_id: sourceSpanId,
+      start_time_unix_nano: runtimeTimestampNanos(span.start_time_unix_nano, 0),
+      end_time_unix_nano: runtimeTimestampNanos(span.end_time_unix_nano, 0),
+      admission_seq: admissionSeq,
+      revision_num: revisionNum,
+      admitted_at: new Date(admittedAt).toISOString(),
+    };
+  }).sort((left, right) => left.admission_seq - right.admission_seq);
+}
+
+function materializeSpanRevisions(spans: readonly AdmittedSpan[], cutoff: number): AdmittedSpan[] {
+  const latest = new Map<string, AdmittedSpan>();
+  for (const span of spans) {
+    if (span.admission_seq > cutoff) continue;
+    const logicalId = logicalSpanId(span);
+    const current = latest.get(logicalId);
+    if (!current || span.admission_seq > current.admission_seq) latest.set(logicalId, span);
+  }
+  return [...latest.values()].sort((left, right) =>
+    compareNanos(left.start_time_unix_nano, right.start_time_unix_nano)
+    || left.admission_seq - right.admission_seq
+    || logicalSpanId(left).localeCompare(logicalSpanId(right)),
+  );
+}
+
+function scopeSpanIdsForBranchView(
+  spans: readonly AdmittedSpan[],
+  projectionBranchId: string,
+): AdmittedSpan[] {
+  const branchesBySourceId = new Map<string, Set<string>>();
+  for (const span of spans) {
+    const branches = branchesBySourceId.get(span.source_span_id) ?? new Set<string>();
+    branches.add(span.branch_id);
+    branchesBySourceId.set(span.source_span_id, branches);
+  }
+  const runtimeId = (branchId: string, sourceSpanId: string): string =>
+    projectionBranchId !== 'main' || (branchesBySourceId.get(sourceSpanId)?.size ?? 0) > 1
+      ? `${branchId}::${sourceSpanId}`
+      : sourceSpanId;
+  const candidatesBySourceId = new Map<string, AdmittedSpan[]>();
+  for (const span of spans) {
+    const candidates = candidatesBySourceId.get(span.source_span_id) ?? [];
+    candidates.push(span);
+    candidatesBySourceId.set(span.source_span_id, candidates);
+  }
+
+  return spans.map((span) => {
+    const parentSourceId = span.parent_span_id ? String(span.parent_span_id) : undefined;
+    let parentRuntimeId: string | undefined;
+    if (parentSourceId) {
+      const candidates = candidatesBySourceId.get(parentSourceId) ?? [];
+      const sameBranch = candidates.find((candidate) => candidate.branch_id === span.branch_id);
+      const ancestor = [...candidates]
+        .filter((candidate) => candidate.admission_seq <= span.admission_seq)
+        .sort((left, right) => right.admission_seq - left.admission_seq)[0];
+      const parent = sameBranch ?? ancestor ?? candidates[0];
+      parentRuntimeId = parent ? runtimeId(parent.branch_id, parentSourceId) : parentSourceId;
+    }
+    return {
+      ...span,
+      span_id: runtimeId(span.branch_id, span.source_span_id),
+      parent_span_id: parentRuntimeId,
+    };
+  });
+}
+
+function spanRevisionEventId(span: AdmittedSpan, suffix = ''): string {
+  const revisionSuffix = span.revision_num > 1 ? `@r${span.revision_num}` : '';
+  return `${span.span_id}${revisionSuffix}${suffix}`;
+}
+
+export function projectRuntimeStateAtFrame(
+  missionId: string,
+  branchId: string,
+  events: readonly MissionEventRecord[],
+  snapshot: GraphSnapshot,
+): NonNullable<ReplayStateResponse['current_state']> {
+  const frameEvents = eventsThroughCursor(events, snapshot.sequence_num);
+  const runtimeAgents = buildRuntimeAgentsFromEvents(frameEvents, 'Unknown');
+  const interruptsRecord: Record<string, any> = {};
+
+  for (const event of frameEvents) {
+    if (!event.event_type.startsWith('interrupt.')) continue;
+    const interruptId = String(event.payload?.interrupt_id ?? '');
+    if (!interruptId) continue;
+    const current = interruptsRecord[interruptId] ?? {
+      interrupt_id: interruptId,
+      status: 'pending',
+      reason: String(event.payload?.reason ?? ''),
+      agent_id: event.agent_id,
+      span_id: (event as EventEnvelope).source_span_id,
+      payload: {},
+      updated_at: event.timestamp,
+    };
+    if (event.event_type === 'interrupt.decision') {
+      current.status = event.payload?.decision === 'approve' ? 'approved' : event.payload?.decision === 'reject' ? 'rejected' : 'pending';
+      current.decision = event.payload?.decision;
+      current.decision_comment = event.payload?.comment;
+    } else if (event.event_type === 'interrupt.resumed') {
+      current.status = 'resumed';
+      current.decision = 'resume';
+    }
+    current.updated_at = event.timestamp;
+    interruptsRecord[interruptId] = current;
+  }
+
+  return {
+    mission_id: missionId,
+    branch_id: branchId,
+    sequence_num: snapshot.sequence_num,
+    agents: runtimeAgents,
+    interrupts: interruptsRecord,
+    status: 'unknown',
+    phase: 'Unknown',
+    nodes: snapshot.nodes,
+    edges: snapshot.edges,
+  };
+}
+
 export function projectReplayEvidence(
   missionId: string,
   branchId: string,
   spans: any[],
   interrupts: any[] = []
 ): ReplayStateResponse {
-  const sortedSpans = [...spans].sort((a, b) => Number(a.start_time_unix_nano) - Number(b.start_time_unix_nano));
+  const admittedSpans = normalizeAdmittedSpans(spans, branchId);
+  const sortedSpans = scopeSpanIdsForBranchView(admittedSpans, branchId).sort((left, right) =>
+    compareNanos(left.start_time_unix_nano, right.start_time_unix_nano)
+    || left.admission_seq - right.admission_seq
+    || String(left.span_id).localeCompare(String(right.span_id)),
+  );
   const normalizedFacts = normalizeSpansToFacts(sortedSpans);
   const normalizedActivityIndex = indexNormalizedActivities(normalizedFacts);
   const executionRootCandidates = sortedSpans.filter(isExecutionRootCandidate);
@@ -738,40 +934,24 @@ export function projectReplayEvidence(
   const {
     bySpanId: normalizedActivityBySpanId,
   } = normalizedActivityIndex;
-  const timestamps = Array.from(new Set(sortedSpans.map((s) => Number(s.start_time_unix_nano)))).sort((a, b) => a - b);
-
-  const snapshots = timestamps.map((ts) => {
-    const snap = projectTraceSnapshot(missionId, branchId, sortedSpans, ts);
-    const currentSpan = sortedSpans.find((s) => Number(s.start_time_unix_nano) === ts);
-    if (currentSpan) {
-      snap.event_description = `Span started: ${publicTelemetryName(currentSpan.attributes, currentSpan.operation_name ?? currentSpan.name ?? 'span')}`;
-      snap.source_event_id = currentSpan.span_id;
-    }
-    return snap;
-  });
-
-  if (snapshots.length === 0) {
-    const emptySnap = projectTraceSnapshot(missionId, branchId, []);
-    emptySnap.sequence_num = 0;
-    snapshots.push(emptySnap);
-  }
 
   // Pre-build a map from span_id to trace_id (PR-4, G14)
   const spanTraceMap = new Map<string, string>();
+  const runtimeSpanIdByLogicalId = new Map<string, string>();
   for (const s of sortedSpans) {
     if (s.span_id && s.trace_id) {
       spanTraceMap.set(s.span_id, s.trace_id);
+      runtimeSpanIdByLogicalId.set(logicalSpanId(s), s.span_id);
     }
   }
 
   // Generate compatible events for the timeline
   const events: MissionEventRecord[] = [];
-  let seq = 0;
 
   // Add span-based events
   for (const span of sortedSpans) {
     const tier = classifySpan(span);
-    const startIso = new Date(Number(span.start_time_unix_nano) / 1e6).toISOString();
+    const startIso = nanoToIso(span.start_time_unix_nano);
     const attrs = span.attributes ?? {};
     const operationName = publicTelemetryName(attrs, span.operation_name ?? span.name ?? 'span');
     const agentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
@@ -780,11 +960,11 @@ export function projectReplayEvidence(
     const nativeRuntimeMetadata = publicRuntimeIdentity(normalizedActivity?.native_runtime_identity);
 
     events.push({
-      id: span.span_id,
+      id: spanRevisionEventId(span),
       mission_id: missionId,
       branch_id: eventBranchId,
-      sequence_num: seq++,
-      branch_sequence_num: seq,
+      sequence_num: span.admission_seq,
+      branch_sequence_num: span.admission_seq,
       event_type: resolveSpanStartEventType(tier, attrs, operationName),
       timestamp: startIso,
       agent_id: agentId,
@@ -798,6 +978,11 @@ export function projectReplayEvidence(
       metadata: {
         maturity_tier: tier,
         runtime_timestamp_unix_nano: String(span.start_time_unix_nano),
+        evidence_admission_seq: span.admission_seq,
+        evidence_admitted_at: span.admitted_at,
+        evidence_revision: span.revision_num,
+        evidence_logical_id: logicalSpanId(span),
+        evidence_branch_id: span.branch_id,
         ...nativeRuntimeMetadata,
         ...(executionRootCandidateIds.has(String(span.span_id)) ? {
           runtime_root_candidate: true,
@@ -812,7 +997,7 @@ export function projectReplayEvidence(
       model: assembleModelProvenance(attrs),
       error: assembleErrorProvenance(attrs, span),
       policy: parseAttrJson(attrs['agentlens.policy'] ?? attrs['policy'] ?? attrs['policy_decision']) ?? undefined,
-      source_span_id: span.span_id,
+      source_span_id: span.source_span_id,
       source_event_id: undefined,
     } as any);
 
@@ -848,11 +1033,11 @@ export function projectReplayEvidence(
         const occurrence = eventIdentityOccurrences.get(eventIdentity) ?? 0;
         eventIdentityOccurrences.set(eventIdentity, occurrence + 1);
         events.push({
-          id: stableSpanEventId(span.span_id, otelEvent, occurrence),
+          id: stableSpanEventId(span.span_id, otelEvent, occurrence, span.revision_num),
           mission_id: missionId,
           branch_id: eventBranchId,
-          sequence_num: seq++,
-          branch_sequence_num: seq,
+          sequence_num: span.admission_seq,
+          branch_sequence_num: span.admission_seq,
           event_type: normalizedType,
           timestamp: eventTimeIso,
           agent_id: agentId,
@@ -866,6 +1051,11 @@ export function projectReplayEvidence(
               otelEvent?.timestamp ?? otelEvent?.time,
               span.start_time_unix_nano,
             ),
+            evidence_admission_seq: span.admission_seq,
+            evidence_admitted_at: span.admitted_at,
+            evidence_revision: span.revision_num,
+            evidence_logical_id: logicalSpanId(span),
+            evidence_branch_id: span.branch_id,
             ...eventNativeRuntimeMetadata,
             ...(runLifecycle ? {
               runtime_lifecycle: runLifecycle,
@@ -879,21 +1069,21 @@ export function projectReplayEvidence(
           model: assembleModelProvenance(mergedAttrs),
           error: assembleErrorProvenance(mergedAttrs, span),
           policy: parseAttrJson(mergedAttrs['agentlens.policy'] ?? mergedAttrs['policy'] ?? mergedAttrs['policy_decision']) ?? undefined,
-          source_span_id: span.span_id,
+          source_span_id: span.source_span_id,
           source_event_id: normalizedType,
         } as any);
         eventIdx += 1;
       }
     }
 
-    if (span.end_time_unix_nano) {
-      const endIso = new Date(Number(span.end_time_unix_nano) / 1e6).toISOString();
+    if (hasRecordedEnd(span.end_time_unix_nano)) {
+      const endIso = nanoToIso(span.end_time_unix_nano);
       events.push({
-        id: `${span.span_id}-end`,
+        id: spanRevisionEventId(span, '-end'),
         mission_id: missionId,
         branch_id: eventBranchId,
-        sequence_num: seq++,
-        branch_sequence_num: seq,
+        sequence_num: span.admission_seq,
+        branch_sequence_num: span.admission_seq,
         event_type: span.status_code === 'ERROR' ? 'span.failed' : 'span.completed',
         timestamp: endIso,
         agent_id: agentId,
@@ -908,6 +1098,11 @@ export function projectReplayEvidence(
         metadata: {
           maturity_tier: tier,
           runtime_timestamp_unix_nano: String(span.end_time_unix_nano),
+          evidence_admission_seq: span.admission_seq,
+          evidence_admitted_at: span.admitted_at,
+          evidence_revision: span.revision_num,
+          evidence_logical_id: logicalSpanId(span),
+          evidence_branch_id: span.branch_id,
           ...nativeRuntimeMetadata,
           ...(executionRootCandidateIds.has(String(span.span_id)) ? {
             runtime_root_candidate: true,
@@ -922,66 +1117,83 @@ export function projectReplayEvidence(
       model: assembleModelProvenance(attrs),
       error: assembleErrorProvenance(attrs, span),
       policy: parseAttrJson(attrs['agentlens.policy'] ?? attrs['policy'] ?? attrs['policy_decision']) ?? undefined,
-        source_span_id: span.span_id,
+        source_span_id: span.source_span_id,
         source_event_id: undefined,
       } as any);
     }
   }
 
   // Add interrupt-based events
+  let nextAdmission = admittedSpans.reduce((maximum, span) => Math.max(maximum, span.admission_seq), 0);
+  const interruptAdmission = (value: unknown): number =>
+    Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : ++nextAdmission;
   for (const intr of interrupts) {
     const createdIso = new Date(intr.created_at).toISOString();
-    const traceId = intr.span_id ? spanTraceMap.get(intr.span_id) : undefined;
+    const requestedEvidence = intr.requested_evidence && typeof intr.requested_evidence === 'object'
+      ? intr.requested_evidence as Record<string, any>
+      : {};
     const interruptBranchId = intr.branch_id ?? branchId;
+    const runtimeSpanId = intr.span_id
+      ? runtimeSpanIdByLogicalId.get(`${interruptBranchId}:${intr.span_id}`) ?? String(intr.span_id)
+      : undefined;
+    const traceId = runtimeSpanId ? spanTraceMap.get(runtimeSpanId) : undefined;
+    const requestedAdmission = interruptAdmission(intr.requested_admission_seq ?? intr.admission_seq);
 
     events.push({
       id: `interrupt-${intr.interrupt_id}-requested`,
       mission_id: missionId,
       branch_id: interruptBranchId,
-      sequence_num: seq++,
-      branch_sequence_num: seq,
+      sequence_num: requestedAdmission,
+      branch_sequence_num: requestedAdmission,
       event_type: 'interrupt.requested',
       timestamp: createdIso,
       agent_id: intr.agent_id ?? undefined,
-      span_id: intr.span_id ?? undefined,
+      span_id: runtimeSpanId,
       trace_id: traceId,
       payload: {
-        agent_id: intr.agent_id,
-        interrupt_id: intr.interrupt_id,
-        reason: intr.reason,
-        resume_url: intr.resume_url,
-        ...(intr.payload ?? {}),
+        agent_id: requestedEvidence.agent_id ?? intr.agent_id,
+        interrupt_id: requestedEvidence.interrupt_id ?? intr.interrupt_id,
+        reason: requestedEvidence.reason ?? intr.reason,
+        resume_url: requestedEvidence.resume_url ?? intr.resume_url,
+        ...(requestedEvidence.payload ?? intr.payload ?? {}),
       },
-      metadata: { runtime_timestamp_unix_nano: String(BigInt(new Date(intr.created_at).getTime()) * 1_000_000n) },
-      causal: intr.span_id ? { parent_span_id: intr.span_id } : undefined,
+      metadata: {
+        runtime_timestamp_unix_nano: String(BigInt(new Date(intr.created_at).getTime()) * 1_000_000n),
+        evidence_admission_seq: requestedAdmission,
+        evidence_admitted_at: intr.requested_admitted_at ?? createdIso,
+      },
+      causal: runtimeSpanId ? { parent_span_id: runtimeSpanId } : undefined,
       source_span_id: intr.span_id ?? undefined,
       source_event_id: 'interrupt.requested',
     } as any);
 
     if (intr.decided_at && intr.decision && intr.decision !== 'resume') {
       const decidedIso = new Date(intr.decided_at).toISOString();
+      const decidedAdmission = interruptAdmission(intr.decided_admission_seq);
       events.push({
         id: `interrupt-${intr.interrupt_id}-decision`,
         mission_id: missionId,
         branch_id: interruptBranchId,
-        sequence_num: seq++,
-        branch_sequence_num: seq,
+        sequence_num: decidedAdmission,
+        branch_sequence_num: decidedAdmission,
         event_type: 'interrupt.decision',
         timestamp: decidedIso,
         agent_id: intr.agent_id ?? undefined,
-        span_id: intr.span_id ?? undefined,
+        span_id: runtimeSpanId,
         trace_id: traceId,
         payload: {
           agent_id: intr.agent_id,
           interrupt_id: intr.interrupt_id,
           decision: intr.decision,
           comment: intr.decision_comment,
-          delivery_state: intr.delivery_state,
-          runtime_outcome: intr.runtime_outcome,
         },
-        metadata: { runtime_timestamp_unix_nano: String(BigInt(new Date(intr.decided_at).getTime()) * 1_000_000n) },
+        metadata: {
+          runtime_timestamp_unix_nano: String(BigInt(new Date(intr.decided_at).getTime()) * 1_000_000n),
+          evidence_admission_seq: decidedAdmission,
+          evidence_admitted_at: intr.decided_admitted_at ?? decidedIso,
+        },
         causal: {
-          parent_span_id: intr.span_id ?? undefined,
+          parent_span_id: runtimeSpanId,
           decision_for_event_id: `interrupt-${intr.interrupt_id}-requested`,
         },
         source_span_id: intr.span_id ?? undefined,
@@ -991,25 +1203,30 @@ export function projectReplayEvidence(
 
     if (intr.status === 'resumed' && intr.resumed_at) {
       const resumedIso = new Date(intr.resumed_at).toISOString();
+      const resumedAdmission = interruptAdmission(intr.resumed_admission_seq);
       events.push({
         id: `interrupt-${intr.interrupt_id}-resumed`,
         mission_id: missionId,
         branch_id: interruptBranchId,
-        sequence_num: seq++,
-        branch_sequence_num: seq,
+        sequence_num: resumedAdmission,
+        branch_sequence_num: resumedAdmission,
         event_type: 'interrupt.resumed',
         timestamp: resumedIso,
         agent_id: intr.agent_id ?? undefined,
-        span_id: intr.span_id ?? undefined,
+        span_id: runtimeSpanId,
         trace_id: traceId,
         payload: {
           agent_id: intr.agent_id,
           interrupt_id: intr.interrupt_id,
           ...(intr.decision_payload ?? {}),
         },
-        metadata: { runtime_timestamp_unix_nano: String(BigInt(new Date(intr.resumed_at).getTime()) * 1_000_000n) },
+        metadata: {
+          runtime_timestamp_unix_nano: String(BigInt(new Date(intr.resumed_at).getTime()) * 1_000_000n),
+          evidence_admission_seq: resumedAdmission,
+          evidence_admitted_at: intr.resumed_admitted_at ?? resumedIso,
+        },
         causal: {
-          parent_span_id: intr.span_id ?? undefined,
+          parent_span_id: runtimeSpanId,
           triggered_by_event_id: `interrupt-${intr.interrupt_id}-decision`,
         },
         source_span_id: intr.span_id ?? undefined,
@@ -1018,75 +1235,61 @@ export function projectReplayEvidence(
     }
   }
 
-  // A sequence number is a stable evidence cursor derived from the stable event
-  // identity. The array is the chronological presentation order. This permits
-  // late telemetry to be inserted without renumbering previously published
-  // event or frame references.
-  const cursorOwners = new Map<number, string>();
-  for (const event of events) {
-    const cursor = stableSequenceNum(event.id);
-    const owner = cursorOwners.get(cursor);
-    if (owner && owner !== event.id) {
-      throw new Error(`Stable replay cursor collision between ${owner} and ${event.id}`);
-    }
-    cursorOwners.set(cursor, event.id);
-    event.sequence_num = cursor;
-    event.branch_sequence_num = cursor;
-  }
+  // Admission controls membership; source nanoseconds control presentation.
   events.sort((a, b) => {
-    const leftRaw = BigInt(runtimeTimestampNanos(a.metadata?.runtime_timestamp_unix_nano, a.timestamp));
-    const rightRaw = BigInt(runtimeTimestampNanos(b.metadata?.runtime_timestamp_unix_nano, b.timestamp));
-    if (leftRaw !== rightRaw) return leftRaw < rightRaw ? -1 : 1;
+    const timeOrder = compareNanos(
+      a.metadata?.runtime_timestamp_unix_nano ?? a.timestamp,
+      b.metadata?.runtime_timestamp_unix_nano ?? b.timestamp,
+    );
+    if (timeOrder !== 0) return timeOrder;
     return a.id.localeCompare(b.id);
   });
 
-  const spanStartSeqBySpanId = new Map<string, number>();
-  for (const event of events) {
-    if (event.span_id && event.id === event.span_id) {
-      spanStartSeqBySpanId.set(event.span_id, event.sequence_num);
-    }
-  }
-  for (const snap of snapshots) {
-    if (!snap.source_event_id) continue;
-    const seq = spanStartSeqBySpanId.get(snap.source_event_id);
-    if (seq !== undefined) {
-      snap.sequence_num = seq;
-      snap.source_event_sequence_num = seq;
-    }
+  const admissionCursors = [...new Set(events.map((event) => event.sequence_num))].sort((a, b) => a - b);
+  const snapshots = admissionCursors.map((cursor) => {
+    const frameSpans = scopeSpanIdsForBranchView(materializeSpanRevisions(admittedSpans, cursor), branchId);
+    const snapshot = projectTraceSnapshot(missionId, branchId, frameSpans);
+    const admittedEvents = events
+      .filter((event) => event.sequence_num === cursor)
+      .sort((left, right) => compareNanos(
+        left.metadata?.runtime_timestamp_unix_nano ?? left.timestamp,
+        right.metadata?.runtime_timestamp_unix_nano ?? right.timestamp,
+      ) || left.id.localeCompare(right.id));
+    const representative = admittedEvents[0];
+    snapshot.id = `snap-${cursor}`;
+    snapshot.sequence_num = cursor;
+    snapshot.source_event_sequence_num = cursor;
+    snapshot.timestamp = representative?.timestamp ?? '1970-01-01T00:00:00.000Z';
+    snapshot.source_event_id = representative?.id;
+    snapshot.event_type = representative?.event_type;
+    snapshot.event_description = representative
+      ? `Evidence admitted: ${representative.event_type}`
+      : 'Evidence admitted';
+    return snapshot;
+  });
+  if (snapshots.length === 0) {
+    snapshots.push({
+      ...projectTraceSnapshot(missionId, branchId, []),
+      id: 'snap-0',
+      sequence_num: 0,
+      source_event_sequence_num: 0,
+    });
   }
 
   const lastSnapshot = snapshots[snapshots.length - 1];
-  const durationSeconds = timestamps.length >= 2
-    ? (timestamps[timestamps.length - 1] - timestamps[0]) / 1e9
+  const finalEvents = eventsThroughCursor(events, lastSnapshot.sequence_num);
+  const firstSourceNano = finalEvents[0]?.metadata?.runtime_timestamp_unix_nano;
+  const lastSourceNano = finalEvents.at(-1)?.metadata?.runtime_timestamp_unix_nano;
+  const durationSeconds = firstSourceNano !== undefined && lastSourceNano !== undefined && finalEvents.length >= 2
+    ? Number(nanoBigInt(lastSourceNano) - nanoBigInt(firstSourceNano)) / 1e9
     : null;
 
-  const runtimeAgents = buildRuntimeAgentsFromEvents(events, 'Unknown');
-
-  const interruptsRecord: Record<string, any> = {};
-  for (const intr of interrupts) {
-    interruptsRecord[intr.interrupt_id] = {
-      interrupt_id: intr.interrupt_id,
-      status: intr.status,
-      reason: intr.reason,
-      agent_id: intr.agent_id ?? undefined,
-      span_id: intr.span_id ?? undefined,
-      decision: intr.decision ?? undefined,
-      decision_comment: intr.decision_comment ?? undefined,
-      resume_url: intr.resume_url ?? undefined,
-      payload: {},
-      decision_payload: intr.decision_value_summary ?? undefined,
-      updated_at: intr.updated_at ? new Date(intr.updated_at).toISOString() : new Date().toISOString(),
-      request_lifecycle: intr.request_lifecycle ?? undefined,
-      actionability: intr.actionability ?? undefined,
-      supported_decision_types: intr.supported_decision_types ?? undefined,
-      decision_state: intr.decision_state ?? undefined,
-      delivery_state: intr.delivery_state ?? undefined,
-      runtime_outcome: intr.runtime_outcome ?? undefined,
-      governance_available: intr.governance_available === true,
-      framework: intr.framework ?? undefined,
-      safe_prompt: intr.safe_prompt ?? undefined,
-    };
-  }
+  const projectionTimestamp = String(
+    finalEvents.reduce((latest, event) => {
+      const admittedAt = event.metadata?.evidence_admitted_at;
+      return typeof admittedAt === 'string' && admittedAt > latest ? admittedAt : latest;
+    }, '1970-01-01T00:00:00.000Z'),
+  );
 
   return {
     mission_id: missionId,
@@ -1101,23 +1304,13 @@ export function projectReplayEvidence(
         mission_id: missionId,
         status: 'active',
         metadata: {},
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: projectionTimestamp,
+        updated_at: projectionTimestamp,
       },
     ],
     events,
     snapshots,
-    current_state: {
-      mission_id: missionId,
-      branch_id: branchId,
-      sequence_num: lastSnapshot?.sequence_num ?? 0,
-      agents: runtimeAgents,
-      interrupts: interruptsRecord,
-      status: 'unknown',
-      phase: 'Unknown',
-      nodes: lastSnapshot?.nodes ?? [],
-      edges: lastSnapshot?.edges ?? [],
-    },
+    current_state: projectRuntimeStateAtFrame(missionId, branchId, events, lastSnapshot),
   };
 }
 

@@ -48,21 +48,17 @@ branchesRouter.post('/api/v1/missions/:missionId/replay/branches', async (req, r
     const executorId = executorRes.rows[0].id;
 
     // Validate fork point is branchable
-    const eventsRes = await pool.query(
-      `SELECT * FROM mission_events WHERE mission_id = $1 AND sequence_num = $2 LIMIT 1`,
-      [req.params.missionId, forkedSequenceNum]
-    );
-    if (eventsRes.rowCount === 0) {
+    const sourceBranchId = parsed.data.source_branch_id ?? 'main';
+    const audit = await missionStore.getAuditEvents(req.params.missionId, sourceBranchId, forkedSequenceNum);
+    const frameEvents = audit.events.filter((candidate) => candidate.sequence_num === forkedSequenceNum);
+    if (frameEvents.length === 0) {
       return res.status(422).json({ detail: 'non_branchable_fork_point' });
     }
-    const event = eventsRes.rows[0];
-    const classification = BranchClassifier.classify({
-       ...event,
-       timestamp: new Date(String(event.timestamp)).toISOString(),
-       payload: event.payload as any,
-    } as any);
+    const classification = frameEvents
+      .map((event) => BranchClassifier.classify(event))
+      .find((candidate) => candidate.capability.is_branchable);
 
-    if (!classification.capability.is_branchable) {
+    if (!classification) {
       return res.status(422).json({ detail: 'non_branchable_fork_point' });
     }
 

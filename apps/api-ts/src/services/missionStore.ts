@@ -22,7 +22,6 @@ import {
   type RuntimeNodeProjection,
   SPAN_PROJECTION_VERSION,
   eventsThroughCursor,
-  orderFrameEvents,
   projectRuntimeExplanation,
 } from '@agentlens/protocol';
 import { BuiltInRules, PolicyEngine } from './policyEngine.js';
@@ -66,6 +65,8 @@ import {
   buildBranchLineage,
   createDefaultBranch,
   selectEventsForBranch,
+  selectInterruptsForBranch,
+  selectSpanRevisionsForBranch,
   projectTraceSnapshot,
   projectReplayEvidence,
 } from './runtimeState.js';
@@ -80,6 +81,27 @@ interface UpdateMissionInput {
   status?: string;
   phase?: string;
   metadata?: Record<string, unknown>;
+}
+
+type StoredOtlpSpan = OtlpSpan & {
+  branch_id: string;
+  admission_seq: number;
+  revision_num: number;
+  admitted_at: string;
+};
+
+function spanEvidenceRepresentation(span: OtlpSpan): string {
+  return deterministicStringify({
+    trace_id: span.trace_id,
+    span_id: span.span_id,
+    parent_span_id: span.parent_span_id ?? null,
+    operation_name: span.operation_name,
+    start_time_unix_nano: String(span.start_time_unix_nano),
+    end_time_unix_nano: String(span.end_time_unix_nano ?? '0'),
+    status_code: span.status_code,
+    attributes: span.attributes ?? {},
+    events: span.events ?? [],
+  });
 }
 
 function attributeValue(attrs: AttributeMap | Record<string, unknown> | undefined, key: string): string | undefined {
@@ -101,40 +123,21 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function lastSequenceThroughTimestamp(
-  events: readonly EventEnvelope[],
-  timestamp: string,
-  floorSeq?: number,
-): number | undefined {
-  const snapshotMs = Date.parse(timestamp);
-  let lastSeq = floorSeq;
-
-  for (const event of orderFrameEvents(events)) {
-    const eventMs = Date.parse(event.timestamp);
-    if (!Number.isNaN(snapshotMs) && !Number.isNaN(eventMs) && eventMs <= snapshotMs) {
-      lastSeq = event.sequence_num;
-    }
+async function allocateEvidenceAdmission(client: PoolClient, missionId: string): Promise<number> {
+  const result = await client.query(
+    `INSERT INTO evidence_admission_counters (mission_id, next_seq)
+     VALUES ($1, 1)
+     ON CONFLICT (mission_id) DO UPDATE
+     SET next_seq = evidence_admission_counters.next_seq + 1
+     WHERE evidence_admission_counters.next_seq < 2147483647
+     RETURNING next_seq`,
+    [missionId],
+  );
+  const value = Number(result.rows[0]?.next_seq);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`Evidence admission cursor exhausted for mission ${missionId}`);
   }
-
-  return lastSeq ?? events[0]?.sequence_num;
-}
-
-function lastSequenceAtSourceTimestamp(
-  events: readonly EventEnvelope[],
-  sourceSequenceNum: number,
-): number {
-  const ordered = orderFrameEvents(events);
-  const source = ordered.find((event) => event.sequence_num === sourceSequenceNum);
-  const sourceRaw = source?.metadata?.runtime_timestamp_unix_nano;
-  if (typeof sourceRaw !== 'string') return sourceSequenceNum;
-  let last = sourceSequenceNum;
-  for (const event of ordered) {
-    const eventRaw = event.metadata?.runtime_timestamp_unix_nano;
-    if (typeof eventRaw !== 'string') continue;
-    if (BigInt(eventRaw) > BigInt(sourceRaw)) break;
-    last = event.sequence_num;
-  }
-  return last;
+  return value;
 }
 
 function sequenceNumThroughSnapshot(
@@ -142,26 +145,10 @@ function sequenceNumThroughSnapshot(
   events: readonly EventEnvelope[],
   frameIndex: number,
 ): number | undefined {
-  if (events.length === 0) return undefined;
-  if (snapshots.length === 0) return events[events.length - 1]?.sequence_num;
-
+  void events;
+  if (snapshots.length === 0) return undefined;
   const frame = Math.max(0, Math.min(frameIndex, snapshots.length - 1));
-  if (frame === snapshots.length - 1) {
-    return events[events.length - 1]?.sequence_num;
-  }
-
-  const snapshot = snapshots[frame];
-  const spanStartSeq = snapshot.source_event_id
-    ? events.find((event) => event.id === snapshot.source_event_id)?.sequence_num
-    : undefined;
-  const linkedSeq =
-    snapshot.source_event_sequence_num !== undefined &&
-    snapshot.source_event_sequence_num !== snapshot.sequence_num
-      ? snapshot.source_event_sequence_num
-      : spanStartSeq;
-
-  if (linkedSeq !== undefined) return lastSequenceAtSourceTimestamp(events, linkedSeq);
-  return lastSequenceThroughTimestamp(events, snapshot.timestamp, linkedSeq);
+  return snapshots[frame]?.sequence_num;
 }
 
 function toCompatibilityActivity(
@@ -409,17 +396,21 @@ class MissionStore {
     };
   }
 
-  private mapSpanRow(row: Record<string, any>): OtlpSpan {
+  private mapSpanRow(row: Record<string, any>): StoredOtlpSpan {
     return {
       trace_id: String(row.trace_id),
       span_id: String(row.span_id),
       parent_span_id: row.parent_span_id ? String(row.parent_span_id) : undefined,
       operation_name: String(row.name),
-      start_time_unix_nano: Number(row.start_time_unix_nano),
-      end_time_unix_nano: row.end_time_unix_nano ? Number(row.end_time_unix_nano) : 0,
+      start_time_unix_nano: String(row.start_time_unix_nano),
+      end_time_unix_nano: row.end_time_unix_nano ? String(row.end_time_unix_nano) : '0',
       status_code: String(row.status_code),
       attributes: (row.attributes as any) ?? {},
       events: (row.events as any) ?? [],
+      branch_id: String(row.branch_id ?? ROOT_BRANCH_ID),
+      admission_seq: Number(row.admission_seq ?? 0),
+      revision_num: Number(row.revision_num ?? 1),
+      admitted_at: new Date(String(row.created_at ?? '1970-01-01T00:00:00.000Z')).toISOString(),
     };
   }
 
@@ -450,7 +441,7 @@ class MissionStore {
     return serializeInterruptPublic(interrupt);
   }
 
-  private async recordInterruptsFromSpans(client: PoolClient, missionId: string, spans: OtlpSpan[], branchId: string = ROOT_BRANCH_ID): Promise<boolean> {
+  private async recordInterruptsFromSpans(client: PoolClient, missionId: string, spans: StoredOtlpSpan[], branchId: string = ROOT_BRANCH_ID): Promise<boolean> {
     let interruptRequested = false;
     // A framework may emit native identity and request evidence in separate
     // OTLP batches. Re-evaluate the trace's persisted observation facts after
@@ -459,7 +450,10 @@ class MissionStore {
     const traceRows = traceIds.length === 0
       ? []
       : (await client.query(
-          `SELECT * FROM spans WHERE mission_id = $1 AND branch_id = $2 AND trace_id = ANY($3)`,
+          `SELECT DISTINCT ON (span_id) *
+           FROM spans
+           WHERE mission_id = $1 AND branch_id = $2 AND trace_id = ANY($3)
+           ORDER BY span_id, revision_num DESC`,
           [missionId, branchId, traceIds],
         )).rows;
     const traceSpans = traceRows.map((row) => this.mapSpanRow(row as Record<string, unknown>));
@@ -542,13 +536,16 @@ class MissionStore {
             INSERT INTO interrupts (
               id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at,
               framework, native_identity, source_refs, request_type, safe_prompt, supported_decision_types, actionability, request_lifecycle,
-              runtime_outcome, identity_ambiguous
+              runtime_outcome, identity_ambiguous, requested_admission_seq, requested_evidence
             ) VALUES (
               $1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11,
-              $12, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18, $19, 'awaiting_interaction', $20
+              $12, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18, $19, 'awaiting_interaction', $20, $21, $22::jsonb
             )
             ON CONFLICT (mission_id, branch_id, interrupt_id) DO UPDATE
-            SET status = 'pending',
+            SET status = CASE
+                  WHEN interrupts.status IN ('approved', 'rejected', 'resumed') THEN interrupts.status
+                  ELSE 'pending'
+                END,
                 reason = EXCLUDED.reason,
                 resume_url = COALESCE(EXCLUDED.resume_url, interrupts.resume_url),
                 payload = interrupts.payload || EXCLUDED.payload,
@@ -562,6 +559,7 @@ class MissionStore {
                   ELSE EXCLUDED.supported_decision_types
                 END,
                 request_lifecycle = COALESCE(interrupts.request_lifecycle, EXCLUDED.request_lifecycle),
+                requested_admission_seq = COALESCE(interrupts.requested_admission_seq, EXCLUDED.requested_admission_seq),
                 identity_ambiguous = interrupts.identity_ambiguous OR EXCLUDED.identity_ambiguous,
                 updated_at = NOW()
           `,
@@ -586,6 +584,14 @@ class MissionStore {
             initialActionability,
             requestLifecycle,
             ambiguity.identityAmbiguous,
+            span.admission_seq,
+            JSON.stringify({
+              agent_id: agentId ?? attributeValue(span.attributes, AgentAttributes.ID) ?? null,
+              interrupt_id: interruptId,
+              reason,
+              resume_url: resumeUrl ?? null,
+              payload: { event: event.name, attributes: scrubbedAttrs },
+            }),
           ],
         );
 
@@ -634,13 +640,13 @@ class MissionStore {
     return this.mapBranchRow(result.rows[0] as Record<string, unknown>);
   }
 
-  private async listSpansInternal(client: PoolClient, missionId: string, branchId = ROOT_BRANCH_ID): Promise<OtlpSpan[]> {
+  private async listSpansInternal(client: PoolClient, missionId: string, branchId = ROOT_BRANCH_ID): Promise<StoredOtlpSpan[]> {
     const result = await client.query(
       `
         SELECT *
         FROM spans
         WHERE mission_id = $1 AND branch_id = $2
-        ORDER BY start_time_unix_nano ASC
+        ORDER BY admission_seq ASC
       `,
       [missionId, branchId],
     );
@@ -651,20 +657,17 @@ class MissionStore {
     client: PoolClient,
     missionId: string,
     branchIds: string[],
-  ): Promise<Array<OtlpSpan & { branch_id: string }>> {
+  ): Promise<StoredOtlpSpan[]> {
     const result = await client.query(
       `
         SELECT *
         FROM spans
         WHERE mission_id = $1 AND branch_id = ANY($2)
-        ORDER BY start_time_unix_nano ASC
+        ORDER BY admission_seq ASC
       `,
       [missionId, branchIds],
     );
-    return result.rows.map((row) => ({
-      ...this.mapSpanRow(row as Record<string, unknown>),
-      branch_id: String((row as Record<string, unknown>).branch_id ?? ROOT_BRANCH_ID),
-    }));
+    return result.rows.map((row) => this.mapSpanRow(row as Record<string, unknown>));
   }
 
   private async listReplayBranchesInternal(client: PoolClient, missionId: string): Promise<ReplayBranch[]> {
@@ -905,23 +908,39 @@ class MissionStore {
         }
       }
 
+      const sourceSpanIds = [...new Set(spans.map((span) => span.span_id))];
+      const latestRows = sourceSpanIds.length === 0
+        ? []
+        : (await client.query(
+            `SELECT DISTINCT ON (span_id) *
+             FROM spans
+             WHERE mission_id = $1 AND branch_id = $2 AND span_id = ANY($3)
+             ORDER BY span_id, revision_num DESC`,
+            [missionId, branchId, sourceSpanIds],
+          )).rows;
+      const latestBySpanId = new Map<string, StoredOtlpSpan>(
+        latestRows.map((row) => {
+          const stored = this.mapSpanRow(row as Record<string, unknown>);
+          return [stored.span_id, stored];
+        }),
+      );
+      const changedSpans: StoredOtlpSpan[] = [];
+
       for (const span of spans) {
-        await client.query(
+        const previous = latestBySpanId.get(span.span_id);
+        if (previous && spanEvidenceRepresentation(previous) === spanEvidenceRepresentation(span)) {
+          continue;
+        }
+        const admissionSeq = await allocateEvidenceAdmission(client, missionId);
+        const revisionNum = (previous?.revision_num ?? 0) + 1;
+        const inserted = await client.query(
           `
             INSERT INTO spans (
               id, mission_id, branch_id, trace_id, span_id, parent_span_id, name,
-              start_time_unix_nano, end_time_unix_nano, status_code, attributes, events
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)
-            ON CONFLICT (mission_id, branch_id, span_id) DO UPDATE SET
-              trace_id = EXCLUDED.trace_id,
-              parent_span_id = EXCLUDED.parent_span_id,
-              name = EXCLUDED.name,
-              start_time_unix_nano = EXCLUDED.start_time_unix_nano,
-              end_time_unix_nano = EXCLUDED.end_time_unix_nano,
-              status_code = EXCLUDED.status_code,
-              attributes = EXCLUDED.attributes,
-              events = EXCLUDED.events,
-              updated_at = NOW()
+              start_time_unix_nano, end_time_unix_nano, status_code, attributes, events,
+              admission_seq, revision_num
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14)
+            RETURNING *
           `,
           [
             randomUUID(),
@@ -936,8 +955,13 @@ class MissionStore {
             span.status_code,
             JSON.stringify(span.attributes ?? {}),
             JSON.stringify(span.events ?? []),
+            admissionSeq,
+            revisionNum,
           ]
         );
+        const stored = this.mapSpanRow(inserted.rows[0] as Record<string, unknown>);
+        latestBySpanId.set(span.span_id, stored);
+        changedSpans.push(stored);
       }
 
       for (const span of spans) {
@@ -964,9 +988,9 @@ class MissionStore {
         );
       }
 
-      await this.recordInterruptsFromSpans(client, missionId, spans, branchId);
+      await this.recordInterruptsFromSpans(client, missionId, changedSpans, branchId);
       await client.query('COMMIT');
-      return { accepted: true, mission_id: missionId, branch_id: branchId, evidence_changed: true };
+      return { accepted: true, mission_id: missionId, branch_id: branchId, evidence_changed: changedSpans.length > 0 };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -997,30 +1021,10 @@ class MissionStore {
       );
       const interrupts = interruptsRes.rows;
 
-      // 3. Project in memory
-      const lineageReplay = projectReplayEvidence(missionId, branchId, spans, interrupts);
-      const selectedEvents = selectEventsForBranch(lineageReplay.events, safeBranches, branchId) as EventEnvelope[];
-      const selectedSpanIds = new Set(
-        selectedEvents
-          .map((event) => event.span_id)
-          .filter((spanId): spanId is string => typeof spanId === 'string' && spanId.length > 0),
-      );
-      const selectedInterruptIds = new Set(
-        selectedEvents
-          .map((event) => {
-            const payload = (event.payload ?? {}) as Record<string, unknown>;
-            return typeof payload.interrupt_id === 'string' && payload.interrupt_id.length > 0
-              ? payload.interrupt_id
-              : null;
-          })
-          .filter((interruptId): interruptId is string => interruptId !== null),
-      );
-      const filteredSpans = spans.filter((span) => selectedSpanIds.has(span.span_id));
-      const filteredInterrupts = interrupts.filter((interrupt) =>
-        selectedInterruptIds.has(String(interrupt.interrupt_id))
-        || (interrupt.span_id ? selectedSpanIds.has(String(interrupt.span_id)) : false),
-      );
-      const replay = projectReplayEvidence(missionId, branchId, filteredSpans, filteredInterrupts);
+      // 3. Freeze ancestor membership at each persisted fork admission cutoff.
+      const selectedSpans = selectSpanRevisionsForBranch(spans, safeBranches, branchId);
+      const selectedInterrupts = selectInterruptsForBranch(interrupts, safeBranches, branchId);
+      const replay = projectReplayEvidence(missionId, branchId, selectedSpans, selectedInterrupts);
       return {
         ...replay,
         branches: safeBranches,
@@ -1076,7 +1080,8 @@ class MissionStore {
   async listMissionEvents(missionId: string, branchId = ROOT_BRANCH_ID): Promise<MissionEventRecord[] | null> {
     const replay = await this.getReplayEvidenceFromTelemetry(missionId, branchId);
     if (!replay) return null;
-    return selectEventsForBranch(replay.events, replay.branches, branchId);
+    const selected = selectEventsForBranch(replay.events, replay.branches, branchId);
+    return eventsThroughCursor(selected);
   }
 
   async createReplayBranch(missionId: string, input: CreateReplayBranchInput): Promise<ReplayBranch | null> {
@@ -1090,8 +1095,11 @@ class MissionStore {
     const branchId = `${sourceBranchId}-${randomUUID().slice(0, 8)}`;
     const forkedFromSequenceNum =
       input.forked_from_sequence_num ??
-      sourceReplay.events[sourceReplay.events.length - 1]?.sequence_num ??
+      sourceReplay.snapshots.at(-1)?.sequence_num ??
       0;
+    if (!sourceReplay.snapshots.some((snapshot) => snapshot.sequence_num === forkedFromSequenceNum)) {
+      throw new Error(`Unknown evidence frame ${forkedFromSequenceNum} on branch ${sourceBranchId}`);
+    }
 
     const client = await pool.connect();
     try {
@@ -1123,6 +1131,9 @@ class MissionStore {
                 decision: undefined,
                 decision_comment: undefined,
                 decision_payload: undefined,
+                requested_admission_seq: e.sequence_num,
+                decided_admission_seq: undefined,
+                resumed_admission_seq: undefined,
               });
             }
           } else if (e.event_type === 'interrupt.decision') {
@@ -1133,6 +1144,7 @@ class MissionStore {
               existing.decision = e.payload.decision;
               existing.decision_comment = e.payload.comment;
               existing.decision_payload = e.payload;
+              existing.decided_admission_seq = e.sequence_num;
             }
           } else if (e.event_type === 'interrupt.resumed') {
             const intrId = e.payload?.interrupt_id as string;
@@ -1141,6 +1153,7 @@ class MissionStore {
               existing.status = 'resumed';
               existing.decision = 'resume';
               existing.decision_payload = e.payload;
+              existing.resumed_admission_seq = e.sequence_num;
             }
           }
         }
@@ -1152,7 +1165,8 @@ class MissionStore {
               INSERT INTO interrupts (
                 id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload,
                 decision, decision_comment, decision_payload, expires_at, updated_at
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15, NOW())
+                , requested_admission_seq, decided_admission_seq, resumed_admission_seq, requested_evidence
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15, NOW(), $16, $17, $18, $19::jsonb)
               ON CONFLICT (mission_id, branch_id, interrupt_id) DO NOTHING
             `,
             [
@@ -1171,6 +1185,16 @@ class MissionStore {
               intr.decision_comment ?? null,
               JSON.stringify(intr.decision_payload ?? {}),
               null,
+              intr.requested_admission_seq ?? null,
+              intr.decided_admission_seq ?? null,
+              intr.resumed_admission_seq ?? null,
+              JSON.stringify({
+                agent_id: intr.agent_id ?? null,
+                interrupt_id: intr.interrupt_id,
+                reason: intr.reason,
+                resume_url: intr.resume_url ?? null,
+                payload: intr.payload ?? {},
+              }),
             ]
           );
         }
@@ -1483,16 +1507,22 @@ class MissionStore {
     try {
       await client.query('BEGIN');
       await this.ensureBranch(client, input.mission_id, branchId);
+      const requestedAdmission = await allocateEvidenceAdmission(client, input.mission_id);
       const result = await client.query(
         `
           INSERT INTO interrupts (
-            id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11)
+            id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at,
+            requested_admission_seq, requested_evidence
+          ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11, $12, $13::jsonb)
           ON CONFLICT (mission_id, branch_id, interrupt_id) DO UPDATE
-          SET status = 'pending',
+          SET status = CASE
+                WHEN interrupts.status IN ('approved', 'rejected', 'resumed') THEN interrupts.status
+                ELSE 'pending'
+              END,
               reason = EXCLUDED.reason,
               resume_url = COALESCE(EXCLUDED.resume_url, interrupts.resume_url),
               payload = interrupts.payload || EXCLUDED.payload,
+              requested_admission_seq = COALESCE(interrupts.requested_admission_seq, EXCLUDED.requested_admission_seq),
               updated_at = NOW()
           RETURNING *
         `,
@@ -1508,6 +1538,14 @@ class MissionStore {
           hashToken(resumeToken),
           JSON.stringify({ ...(input.payload ?? {}), resume_token: resumeToken }),
           input.expires_at ?? null,
+          requestedAdmission,
+          JSON.stringify({
+            agent_id: input.agent_id ?? null,
+            interrupt_id: interruptId,
+            reason: input.reason,
+            resume_url: input.resume_url ?? null,
+            payload: { ...(input.payload ?? {}), resume_token: resumeToken },
+          }),
         ],
       );
       const interrupt = this.mapInterruptRow(result.rows[0] as Record<string, unknown>);
@@ -1647,6 +1685,8 @@ class MissionStore {
         }
       }
 
+      const decisionAdmission = await allocateEvidenceAdmission(client, missionId);
+
       if (isGovernance) {
         const supported = Array.isArray(existing.supported_decision_types)
           ? existing.supported_decision_types.map(String)
@@ -1693,6 +1733,7 @@ class MissionStore {
                 runtime_outcome = COALESCE(NULLIF(runtime_outcome, 'unknown'), 'awaiting_interaction'),
                 idempotency_key = $12,
                 decided_at = COALESCE(decided_at, NOW()),
+                decided_admission_seq = COALESCE(decided_admission_seq, $13),
                 updated_at = NOW()
             WHERE mission_id = $1
               AND branch_id = $2
@@ -1719,6 +1760,7 @@ class MissionStore {
             'local-operator',
             decisionType,
             input.idempotency_key,
+            decisionAdmission,
           ],
         );
         const row = result.rows[0] as Record<string, unknown> | undefined;
@@ -1748,6 +1790,8 @@ class MissionStore {
               idempotency_key = COALESCE(idempotency_key, $7),
               decided_at = COALESCE(decided_at, NOW()),
               resumed_at = CASE WHEN $4 = 'resume' THEN COALESCE(resumed_at, NOW()) ELSE resumed_at END,
+              decided_admission_seq = COALESCE(decided_admission_seq, $8),
+              resumed_admission_seq = CASE WHEN $4 = 'resume' THEN COALESCE(resumed_admission_seq, $8) ELSE resumed_admission_seq END,
               updated_at = NOW()
           WHERE mission_id = $1
             AND branch_id = $2
@@ -1756,7 +1800,7 @@ class MissionStore {
             AND status IN ('pending', 'approved', 'rejected')
           RETURNING *
         `,
-        [missionId, branchId, interruptId, input.decision, input.comment ?? null, JSON.stringify(input.payload ?? {}), input.idempotency_key],
+        [missionId, branchId, interruptId, input.decision, input.comment ?? null, JSON.stringify(input.payload ?? {}), input.idempotency_key, decisionAdmission],
       );
       const row = result.rows[0] as Record<string, unknown> | undefined;
       const interrupt = row ? this.mapInterruptRow(row) : null;
@@ -1793,6 +1837,18 @@ class MissionStore {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const existingResult = await client.query(
+        `SELECT * FROM interrupts
+         WHERE resume_token_hash = $1 AND status IN ('pending', 'approved')
+         LIMIT 1 FOR UPDATE`,
+        [hashToken(resumeToken)],
+      );
+      const existing = existingResult.rows[0] as Record<string, unknown> | undefined;
+      if (!existing) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const resumedAdmission = await allocateEvidenceAdmission(client, String(existing.mission_id));
       const result = await client.query(
         `
           UPDATE interrupts
@@ -1800,12 +1856,13 @@ class MissionStore {
               decision = COALESCE(decision, 'resume'),
               decision_payload = decision_payload || $2::jsonb,
               resumed_at = COALESCE(resumed_at, NOW()),
+              resumed_admission_seq = COALESCE(resumed_admission_seq, $3),
               updated_at = NOW()
           WHERE resume_token_hash = $1
             AND status IN ('pending', 'approved')
           RETURNING *
         `,
-        [hashToken(resumeToken), JSON.stringify(payload)],
+        [hashToken(resumeToken), JSON.stringify(payload), resumedAdmission],
       );
       const row = result.rows[0] as Record<string, unknown> | undefined;
       const interrupt = row ? this.mapInterruptRow(row) : null;

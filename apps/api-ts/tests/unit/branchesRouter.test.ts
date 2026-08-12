@@ -20,6 +20,7 @@ const mockMissionStore = {
   getMission: vi.fn(),
   createReplayBranch: vi.fn(),
   listMissionEvents: vi.fn(),
+  getAuditEvents: vi.fn(),
 };
 
 vi.mock('../../src/db/postgres.js', () => ({
@@ -76,9 +77,10 @@ describe('POST /api/v1/missions/:missionId/replay/branches', () => {
     // get executor
     mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'e1' }] });
     
-    // Deterministic event
-    mockPool.query.mockResolvedValueOnce({
-      rowCount: 1, rows: [{ event_type: AgentEvents.MISSION_STARTED, timestamp: new Date().toISOString() }]
+    // Deterministic frame evidence
+    mockMissionStore.getAuditEvents.mockResolvedValueOnce({
+      events: [{ event_type: AgentEvents.MISSION_STARTED, sequence_num: 1, timestamp: new Date().toISOString(), payload: {} }],
+      integrity: {},
     });
 
     const res = await request(app)
@@ -107,9 +109,10 @@ describe('POST /api/v1/missions/:missionId/replay/branches', () => {
   it('returns 201 on successful branch creation', async () => {
     // 1. executor
     mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'e1' }] });
-    // 2. event
-    mockPool.query.mockResolvedValueOnce({
-      rowCount: 1, rows: [{ event_type: AgentEvents.INTERRUPT_REQUESTED, payload: {}, timestamp: new Date().toISOString() }]
+    // 2. exact frame evidence
+    mockMissionStore.getAuditEvents.mockResolvedValueOnce({
+      events: [{ event_type: AgentEvents.INTERRUPT_REQUESTED, sequence_num: 1, payload: {}, timestamp: new Date().toISOString() }],
+      integrity: {},
     });
 
     const mockClient = {

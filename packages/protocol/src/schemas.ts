@@ -12,9 +12,15 @@ export const AttributeValueSchema = z.union([
 
 export const AttributeMapSchema = z.record(z.string(), AttributeValueSchema);
 
+const UnixNanoSchema = z.union([
+  z.string().regex(/^\d+$/, 'nanosecond timestamps must be unsigned decimal strings'),
+  z.number().int().nonnegative().safe(),
+]).transform((value) => String(value));
+const EvidenceAdmissionCursorSchema = z.number().int().nonnegative().max(2_147_483_647);
+
 export const OtelEventSchema = z.object({
   name: z.string().optional(),
-  timestamp: z.union([z.number(), z.string()]).optional(),
+  timestamp: z.union([UnixNanoSchema, z.string().datetime()]).optional(),
   attributes: AttributeMapSchema.optional().default({}),
 });
 
@@ -23,8 +29,8 @@ export const OtlpSpanSchema = z.object({
   span_id: z.string().min(1),
   parent_span_id: z.string().min(1).nullable().optional(),
   operation_name: z.string().min(1),
-  start_time_unix_nano: z.union([z.number(), z.string()]).transform((value) => Number(value)),
-  end_time_unix_nano: z.union([z.number(), z.string()]).transform((value) => Number(value)),
+  start_time_unix_nano: UnixNanoSchema,
+  end_time_unix_nano: UnixNanoSchema,
   status_code: z.string().default('OK'),
   attributes: AttributeMapSchema.optional().default({}),
   events: z.array(OtelEventSchema).optional().default([]),
@@ -150,7 +156,7 @@ export const ResumeInterruptSchema = z.object({
 export const CreateReplayBranchSchema = z.object({
   name: z.string().min(1).optional(),
   source_branch_id: z.string().min(1).optional(),
-  forked_from_sequence_num: z.number().int().nonnegative().optional(),
+  forked_from_sequence_num: EvidenceAdmissionCursorSchema.optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -204,7 +210,7 @@ export const BranchContextSchema = z.object({
   mission_id: z.string().min(1),
   branch_id: z.string().min(1),
   source_branch_id: z.string().min(1),
-  forked_from_sequence_num: z.number().int().nonnegative(),
+  forked_from_sequence_num: EvidenceAdmissionCursorSchema,
   branch_point_kind: z.string().optional(),
   source_event: z.record(z.string(), z.unknown()).optional(),
   fork_snapshot: z.record(z.string(), z.unknown()).optional(),
@@ -269,8 +275,8 @@ export const EventEnvelopeSchema = z.object({
   id: z.string().uuid(),
   mission_id: z.string().min(1),
   branch_id: z.string().min(1),
-  sequence_num: z.number().int().nonnegative(),
-  branch_sequence_num: z.number().int().nonnegative(),
+  sequence_num: EvidenceAdmissionCursorSchema,
+  branch_sequence_num: EvidenceAdmissionCursorSchema,
   event_type: z.string().min(1),
   timestamp: z.string(),
   agent_id: z.string().optional(),

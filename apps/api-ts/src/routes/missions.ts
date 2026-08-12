@@ -47,8 +47,8 @@ export function normalizeOtlpJson(body: any): { resource_attributes: Record<stri
           span_id: span.spanId,
           parent_span_id: span.parentSpanId || undefined,
           operation_name: span.name ?? 'span',
-          start_time_unix_nano: Number(span.startTimeUnixNano ?? 0),
-          end_time_unix_nano: Number(span.endTimeUnixNano ?? 0),
+          start_time_unix_nano: String(span.startTimeUnixNano ?? 0),
+          end_time_unix_nano: String(span.endTimeUnixNano ?? 0),
           status_code: span.status?.code === 2 ? 'ERROR' : span.status?.code === 1 ? 'OK' : 'UNSET',
           attributes: attributesToRecord(span.attributes),
           events: (span.events ?? []).map((event: any) => ({

@@ -44,5 +44,9 @@ describe('postgres database initialization', () => {
     expect(queryTexts.some((q) => q.includes('ADD COLUMN IF NOT EXISTS actionability'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS mission_replay_branches'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS spans'))).toBe(true);
+    expect(queryTexts.some((q) => q.includes('ADD COLUMN IF NOT EXISTS admission_seq'))).toBe(true);
+    expect(queryTexts.some((q) => q.includes('ADD COLUMN IF NOT EXISTS revision_num'))).toBe(true);
+    expect(queryTexts.some((q) => q.includes('spans_mission_branch_span_revision_key'))).toBe(true);
+    expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS evidence_admission_counters'))).toBe(true);
   });
 });

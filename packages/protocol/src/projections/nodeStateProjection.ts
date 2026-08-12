@@ -100,7 +100,8 @@ export function projectAllNodeStates(input: ProjectAllNodeStatesInput): RuntimeN
   );
 
   const filtered = eventsThroughCursor(input.events, input.up_to_sequence_num);
-  const sequence_num = filtered.at(-1)?.sequence_num ?? -1;
+  const sequence_num = input.up_to_sequence_num
+    ?? filtered.reduce((maximum, event) => Math.max(maximum, event.sequence_num), -1);
 
   return [...scratch.agents.entries()]
     .map(([agentId, agent]) => buildNodeProjection(scratch, agentId, agent, {
@@ -130,7 +131,8 @@ export function projectNodeState(input: ProjectNodeStateInput): RuntimeNodeProje
   if (!entry) return null;
 
   const [agentId, agent] = entry;
-  const sequence_num = filtered.length > 0 ? filtered[filtered.length - 1].sequence_num : -1;
+  const sequence_num = input.up_to_sequence_num
+    ?? filtered.reduce((maximum, event) => Math.max(maximum, event.sequence_num), -1);
 
   return buildNodeProjection(scratch, agentId, agent, {
     mission_id: input.mission_id,

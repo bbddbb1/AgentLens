@@ -69,13 +69,34 @@ export function orderFrameEvents<T extends SequencedRuntimeRecord>(events: reado
   return [...events].sort(compareRuntimeEvidence);
 }
 
-/** Select the chronological evidence prefix ending at an exact stable cursor. */
+function evidenceLogicalId(event: SequencedRuntimeRecord): string | undefined {
+  const value = event.metadata?.evidence_logical_id;
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Materialize exactly the evidence revisions known through an immutable
+ * admission cursor, then order the selected frame by source time.
+ */
 export function eventsThroughCursor<T extends SequencedRuntimeRecord>(
   events: readonly T[],
   sequenceNum?: number,
 ): T[] {
-  const ordered = orderFrameEvents(events);
-  if (sequenceNum === undefined) return ordered;
-  const cutoffIndex = ordered.findIndex((event) => event.sequence_num === sequenceNum);
-  return cutoffIndex < 0 ? [] : ordered.slice(0, cutoffIndex + 1);
+  const admitted = sequenceNum === undefined
+    ? [...events]
+    : events.filter((event) => event.sequence_num <= sequenceNum);
+  const latestAdmissionByLogicalId = new Map<string, number>();
+  for (const event of admitted) {
+    const logicalId = evidenceLogicalId(event);
+    if (!logicalId) continue;
+    const current = latestAdmissionByLogicalId.get(logicalId);
+    if (current === undefined || event.sequence_num > current) {
+      latestAdmissionByLogicalId.set(logicalId, event.sequence_num);
+    }
+  }
+
+  return orderFrameEvents(admitted.filter((event) => {
+    const logicalId = evidenceLogicalId(event);
+    return !logicalId || latestAdmissionByLogicalId.get(logicalId) === event.sequence_num;
+  }));
 }

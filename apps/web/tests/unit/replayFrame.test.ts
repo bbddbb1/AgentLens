@@ -64,27 +64,27 @@ const snapshots: GraphSnapshot[] = [
 
 const events: MissionEventRecord[] = [
   event('span-mission', 0, '2026-06-27T12:53:10.000Z', { event_type: 'mission.created' }),
-  event('span-llm', 3, '2026-06-27T12:53:18.000Z', { span_id: 'span-llm' }),
-  event('span-llm-event-0', 4, '2026-06-27T12:53:20.000Z', {
+  event('span-llm', 1, '2026-06-27T12:53:18.000Z', { span_id: 'span-llm' }),
+  event('span-llm-event-0', 1, '2026-06-27T12:53:20.000Z', {
     event_type: 'tool.called',
     span_id: 'span-llm',
     payload: { 'gen_ai.tool.name': 'search' },
   }),
-  event('span-report', 8, '2026-06-27T12:53:30.000Z', { span_id: 'span-report', event_type: 'task.started' }),
-  event('span-report-end', 9, '2026-06-27T12:53:35.000Z', { span_id: 'span-report', event_type: 'span.completed' }),
+  event('span-report', 2, '2026-06-27T12:53:30.000Z', { span_id: 'span-report', event_type: 'task.started' }),
+  event('span-report-end', 2, '2026-06-27T12:53:35.000Z', { span_id: 'span-report', event_type: 'span.completed' }),
 ];
 
 describe('sequenceNumThroughFrame', () => {
-  it('uses full event stream on the last snapshot frame', () => {
-    expect(sequenceNumThroughFrame(snapshots, events, 2)).toBe(9);
+  it('uses the exact published cutoff on the last snapshot frame', () => {
+    expect(sequenceNumThroughFrame(snapshots, events, 2)).toBe(2);
   });
 
-  it('cuts off at the span-start checkpoint for earlier frames', () => {
-    expect(sequenceNumThroughFrame(snapshots, events, 1)).toBeGreaterThanOrEqual(3);
+  it('uses the snapshot admission cutoff without source-time widening', () => {
+    expect(sequenceNumThroughFrame(snapshots, events, 1)).toBe(1);
     expect(sequenceNumThroughFrame(snapshots, events, 0)).toBe(0);
   });
 
-  it('includes every event at the exact source nanosecond without admitting a later same-millisecond event', () => {
+  it('does not admit same-source-time evidence outside the frame admission cutoff', () => {
     const sameTimeEvents = [
       event('a-root', 900, '2026-06-27T12:53:10.000Z', { metadata: { runtime_timestamp_unix_nano: '1000000000' } }),
       event('b-lifecycle', 100, '2026-06-27T12:53:10.000Z', { metadata: { runtime_timestamp_unix_nano: '1000000000' } }),
@@ -99,7 +99,7 @@ describe('sequenceNumThroughFrame', () => {
 
     expect(sequenceNumThroughFrame([...sameTimeSnapshots, snapshots[1]], sameTimeEvents, 0)).toBe(100);
     expect(eventsThroughFrame([...sameTimeSnapshots, snapshots[1]], sameTimeEvents, 0).map((entry) => entry.id))
-      .toEqual(['a-root', 'b-lifecycle']);
+      .toEqual(['b-lifecycle']);
   });
 });
 
@@ -108,15 +108,15 @@ describe('eventAtFrame', () => {
     expect(eventAtFrame(snapshots, events, 1)?.id).toBe('span-llm');
   });
 
-  it('returns the latest event on the last frame', () => {
-    expect(eventAtFrame(snapshots, events, 2)?.id).toBe('span-report-end');
+  it('returns an event admitted at the exact last-frame cutoff', () => {
+    expect(eventAtFrame(snapshots, events, 2)?.id).toBe('span-report');
   });
 });
 
 describe('eventsThroughFrame', () => {
   it('includes all events through the frame cutoff', () => {
     const visible = eventsThroughFrame(snapshots, events, 1);
-    expect(visible.map((e) => e.id)).toEqual(['span-mission', 'span-llm']);
+    expect(visible.map((e) => e.id)).toEqual(['span-mission', 'span-llm', 'span-llm-event-0']);
   });
 });
 

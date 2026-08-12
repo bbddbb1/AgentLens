@@ -52,6 +52,107 @@ export function selectEventsForBranch(
   return orderFrameEvents(selected);
 }
 
+type AdmittedBranchRecord = {
+  branch_id?: string;
+  admission_seq?: number;
+};
+
+/**
+ * Select append-only span revisions admitted into an immutable branch lineage.
+ * Ancestors are bounded by the exact cursor captured by the next fork.
+ */
+export function selectSpanRevisionsForBranch<T extends AdmittedBranchRecord>(
+  spans: readonly T[],
+  branches: ReplayBranch[],
+  branchId = ROOT_BRANCH_ID,
+): T[] {
+  const lineage = buildBranchLineage(branches, branchId);
+  if (lineage.length === 0) return [];
+
+  const selected: T[] = [];
+  for (let index = 0; index < lineage.length; index += 1) {
+    const branch = lineage[index];
+    const upperBound = lineage[index + 1]?.forked_from_sequence_num;
+    for (const span of spans) {
+      if ((span.branch_id ?? branchId) !== branch.id) continue;
+      if (upperBound !== undefined && (span.admission_seq ?? Number.MAX_SAFE_INTEGER) > upperBound) continue;
+      selected.push(span);
+    }
+  }
+
+  return selected.sort((left, right) =>
+    (left.admission_seq ?? 0) - (right.admission_seq ?? 0),
+  );
+}
+
+type AdmittedInterruptRecord = Record<string, unknown> & {
+  interrupt_id?: string;
+  branch_id?: string;
+  requested_admission_seq?: number | null;
+  decided_admission_seq?: number | null;
+  resumed_admission_seq?: number | null;
+};
+
+/** Apply the same immutable ancestor cutoff to persisted interrupt lifecycle facts. */
+export function selectInterruptsForBranch<T extends AdmittedInterruptRecord>(
+  interrupts: readonly T[],
+  branches: ReplayBranch[],
+  branchId = ROOT_BRANCH_ID,
+): T[] {
+  const lineage = buildBranchLineage(branches, branchId);
+  if (lineage.length === 0) return [];
+  const selected: T[] = [];
+
+  for (let index = 0; index < lineage.length; index += 1) {
+    const branch = lineage[index];
+    const upperBound = lineage[index + 1]?.forked_from_sequence_num;
+    for (const source of interrupts) {
+      if ((source.branch_id ?? branchId) !== branch.id) continue;
+      const requested = Number(source.requested_admission_seq ?? 0);
+      if (upperBound !== undefined && requested > upperBound) continue;
+      if (upperBound === undefined) {
+        selected.push(source);
+        continue;
+      }
+
+      const row = { ...source } as T;
+      const decided = Number(source.decided_admission_seq ?? 0);
+      const resumed = Number(source.resumed_admission_seq ?? 0);
+      if (decided > upperBound) {
+        Object.assign(row, {
+          status: 'pending',
+          decision: null,
+          decision_comment: null,
+          decision_payload: {},
+          decided_at: null,
+          decided_admission_seq: null,
+          resumed_at: null,
+          resumed_admission_seq: null,
+          decision_state: 'none',
+          delivery_state: 'not_requested',
+          runtime_outcome: 'awaiting_interaction',
+        });
+      } else if (resumed > upperBound) {
+        Object.assign(row, {
+          status: source.decision === 'approve' ? 'approved' : source.decision === 'reject' ? 'rejected' : 'pending',
+          resumed_at: null,
+          resumed_admission_seq: null,
+        });
+      }
+      selected.push(row);
+    }
+  }
+  const closestByInterruptId = new Map<string, T>();
+  for (const row of selected) {
+    const interruptId = String(row.interrupt_id ?? '');
+    if (interruptId) closestByInterruptId.set(interruptId, row);
+  }
+  return selected.filter((row) => {
+    const interruptId = String(row.interrupt_id ?? '');
+    return !interruptId || closestByInterruptId.get(interruptId) === row;
+  });
+}
+
 export function createMissionEventRecord(
   input: Omit<MissionEventRecord, 'id'> & { id?: string },
 ): MissionEventRecord {

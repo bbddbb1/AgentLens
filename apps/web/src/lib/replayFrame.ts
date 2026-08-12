@@ -13,36 +13,21 @@ export function getSnapshotAtFrame(
 
 /**
  * Event sequence number inclusive through a replay frame.
- * Frames index **snapshots** (span-start checkpoints), not the events array.
+ * Frames index immutable evidence-admission snapshots, not the events array.
  */
 export function sequenceNumThroughFrame(
   snapshots: readonly GraphSnapshot[],
   events: readonly MissionEventRecord[],
   frameIndex: number,
 ): number | undefined {
-  if (events.length === 0) return undefined;
+  if (events.length === 0 && snapshots.length === 0) return undefined;
   if (snapshots.length === 0) {
     const idx = Math.max(0, Math.min(frameIndex, events.length - 1));
     return events[idx]?.sequence_num;
   }
 
   const frame = Math.max(0, Math.min(frameIndex, snapshots.length - 1));
-  if (frame === snapshots.length - 1) {
-    return events[events.length - 1]?.sequence_num;
-  }
-
-  const snapshot = snapshots[frame];
-  const spanStartSeq = snapshot.source_event_id
-    ? events.find((event) => event.id === snapshot.source_event_id)?.sequence_num
-    : undefined;
-  const linkedSeq =
-    snapshot.source_event_sequence_num !== undefined &&
-    snapshot.source_event_sequence_num !== snapshot.sequence_num
-      ? snapshot.source_event_sequence_num
-      : spanStartSeq;
-
-  if (linkedSeq !== undefined) return lastSequenceAtSourceTimestamp(events, linkedSeq);
-  return lastSequenceThroughTimestamp(events, snapshot.timestamp, linkedSeq);
+  return snapshots[frame]?.sequence_num;
 }
 
 /** Representative mission event for timeline / audit context at a frame. */
@@ -58,17 +43,13 @@ export function eventAtFrame(
   }
 
   const frame = Math.max(0, Math.min(frameIndex, snapshots.length - 1));
-  if (frame === snapshots.length - 1) {
-    return events[events.length - 1] ?? null;
-  }
-
   const snapshot = snapshots[frame];
+  const visible = eventsThroughCursor(events, snapshot.sequence_num);
   if (snapshot.source_event_id) {
-    const spanStart = events.find((event) => event.id === snapshot.source_event_id);
+    const spanStart = visible.find((event) => event.id === snapshot.source_event_id);
     if (spanStart) return spanStart;
   }
-
-  return lastEventThroughTimestamp(events, snapshot.timestamp) ?? events[0] ?? null;
+  return visible.find((event) => event.sequence_num === snapshot.sequence_num) ?? visible.at(-1) ?? null;
 }
 
 /** Map a mission event id to the snapshot frame that best contains it. */
@@ -87,70 +68,10 @@ export function findFrameForEvent(
   const directIdx = snapshots.findIndex((snapshot) => snapshot.source_event_id === event.id);
   if (directIdx >= 0) return directIdx;
 
-  const eventMs = Date.parse(event.timestamp);
-  if (Number.isNaN(eventMs)) return snapshots.length - 1;
-
-  let bestFrame = 0;
-  for (let i = 0; i < snapshots.length; i++) {
-    const snapMs = Date.parse(snapshots[i].timestamp);
-    if (!Number.isNaN(snapMs) && snapMs <= eventMs) {
-      bestFrame = i;
-    }
-  }
-  return bestFrame;
-}
-
-function lastSequenceThroughTimestamp(
-  events: readonly MissionEventRecord[],
-  timestamp: string,
-  floorSeq?: number,
-): number | undefined {
-  const snapshotMs = Date.parse(timestamp);
-  let lastSeq = floorSeq;
-
-  for (const event of orderFrameEvents(events)) {
-    const eventMs = Date.parse(event.timestamp);
-    if (!Number.isNaN(snapshotMs) && !Number.isNaN(eventMs) && eventMs <= snapshotMs) {
-      lastSeq = event.sequence_num;
-    }
-  }
-
-  return lastSeq ?? events[0]?.sequence_num;
-}
-
-function lastSequenceAtSourceTimestamp(
-  events: readonly MissionEventRecord[],
-  sourceSequenceNum: number,
-): number {
-  const ordered = orderFrameEvents(events);
-  const source = ordered.find((event) => event.sequence_num === sourceSequenceNum);
-  const sourceRaw = source?.metadata?.runtime_timestamp_unix_nano;
-  if (typeof sourceRaw !== 'string') return sourceSequenceNum;
-  let last = sourceSequenceNum;
-  for (const event of ordered) {
-    const eventRaw = event.metadata?.runtime_timestamp_unix_nano;
-    if (typeof eventRaw !== 'string') continue;
-    if (BigInt(eventRaw) > BigInt(sourceRaw)) break;
-    last = event.sequence_num;
-  }
-  return last;
-}
-
-function lastEventThroughTimestamp(
-  events: readonly MissionEventRecord[],
-  timestamp: string,
-): MissionEventRecord | null {
-  const snapshotMs = Date.parse(timestamp);
-  if (Number.isNaN(snapshotMs)) return null;
-
-  let best: MissionEventRecord | null = null;
-  for (const event of orderFrameEvents(events)) {
-    const eventMs = Date.parse(event.timestamp);
-    if (!Number.isNaN(eventMs) && eventMs <= snapshotMs) {
-      best = event;
-    }
-  }
-  return best;
+  const exact = snapshots.findIndex((snapshot) => snapshot.sequence_num === event.sequence_num);
+  if (exact >= 0) return exact;
+  const containing = snapshots.findIndex((snapshot) => snapshot.sequence_num >= event.sequence_num);
+  return containing >= 0 ? containing : snapshots.length - 1;
 }
 
 /** Mission events visible at or before a replay frame. */

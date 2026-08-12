@@ -363,8 +363,10 @@ function sourceReference(
 }
 
 function compareSpans(left: any, right: any): number {
+  const leftStart = BigInt(String(left?.start_time_unix_nano ?? 0));
+  const rightStart = BigInt(String(right?.start_time_unix_nano ?? 0));
   return (
-    Number(left?.start_time_unix_nano ?? 0) - Number(right?.start_time_unix_nano ?? 0) ||
+    (leftStart < rightStart ? -1 : leftStart > rightStart ? 1 : 0) ||
     String(left?.trace_id ?? '').localeCompare(String(right?.trace_id ?? '')) ||
     String(left?.span_id ?? '').localeCompare(String(right?.span_id ?? ''))
   );

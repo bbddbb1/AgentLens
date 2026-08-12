@@ -42,6 +42,8 @@ interface ActivityAccumulator {
   invocation_id?: string;
   started_at?: string;
   ended_at?: string;
+  started_at_unix_nano?: string;
+  ended_at_unix_nano?: string;
   terminal_status?: RuntimeExplanationRunOutcome;
   inputs?: Record<string, RuntimeExplanationValue>;
   outputs?: Record<string, RuntimeExplanationValue>;
@@ -87,6 +89,18 @@ function parseTimestamp(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function eventTimestampNanos(event: EventEnvelope): string | undefined {
+  const value = event.metadata?.runtime_timestamp_unix_nano;
+  return typeof value === 'string' && /^\d+$/.test(value) ? value : undefined;
+}
+
+function exactDurationMs(start: string | undefined, end: string | undefined): number | undefined {
+  if (!start || !end) return undefined;
+  const startNano = BigInt(start);
+  const endNano = BigInt(end);
+  return endNano >= startNano ? Number(endNano - startNano) / 1e6 : undefined;
 }
 
 function evidenceRef(event: EventEnvelope): RuntimeExplanationEvidenceRef {
@@ -748,8 +762,12 @@ export function projectRuntimeExplanation(
 ): RuntimeExplanationProjection {
   const filtered = eventsThroughCursor(input.events, input.as_of_sequence_num);
 
-  const asOfSequenceNum = input.as_of_sequence_num ?? filtered[filtered.length - 1]?.sequence_num ?? 0;
-  const asOfTimestamp = filtered[filtered.length - 1]?.timestamp;
+  const frameEvent = filtered.reduce<EventEnvelope | undefined>((latest, event) =>
+    !latest || event.sequence_num > latest.sequence_num ? event : latest,
+  undefined);
+  const asOfSequenceNum = input.as_of_sequence_num ?? frameEvent?.sequence_num ?? 0;
+  const admittedAt = frameEvent?.metadata?.evidence_admitted_at;
+  const asOfTimestamp = typeof admittedAt === 'string' ? admittedAt : frameEvent?.timestamp;
   const activityMap = new Map<string, ActivityAccumulator>();
   const eventToActivityId = new Map<string, string>();
   const spanToActivityIds = new Map<string, Set<string>>();
@@ -758,6 +776,9 @@ export function projectRuntimeExplanation(
   let runStartAt: string | undefined;
   let runCompletedAt: string | undefined;
   let runFailedAt: string | undefined;
+  let runStartNano: string | undefined;
+  let runCompletedNano: string | undefined;
+  let runFailedNano: string | undefined;
   const runtimeRootCandidateIds = new Set<string>();
   let explicitRunStartedAt: string | undefined;
   const runTerminalEvidence: Array<{
@@ -779,6 +800,7 @@ export function projectRuntimeExplanation(
       && !runStartAt
     ) {
       runStartAt = event.timestamp;
+      runStartNano = eventTimestampNanos(event);
     }
     if (lifecycle === 'started' && lifecycleBasis !== 'execution_root_span' && !explicitRunStartedAt) {
       explicitRunStartedAt = event.timestamp;
@@ -786,8 +808,14 @@ export function projectRuntimeExplanation(
     if (lifecycle === 'completed' || lifecycle === 'failed') {
       const ref = evidenceRef(event);
       runTerminalEvidence.push({ state: lifecycle, basis: lifecycleBasis, ref });
-      if (lifecycle === 'completed') runCompletedAt ??= event.timestamp;
-      if (lifecycle === 'failed') runFailedAt ??= event.timestamp;
+      if (lifecycle === 'completed') {
+        runCompletedAt ??= event.timestamp;
+        runCompletedNano ??= eventTimestampNanos(event);
+      }
+      if (lifecycle === 'failed') {
+        runFailedAt ??= event.timestamp;
+        runFailedNano ??= eventTimestampNanos(event);
+      }
     }
     const interruptId = stringValue(payload, 'interrupt_id', 'gen_ai.agent.interrupt.id');
     if (event.event_type === 'interrupt.requested' && interruptId) pendingInterrupts.add(interruptId);
@@ -839,11 +867,14 @@ export function projectRuntimeExplanation(
     if (projection.phase === 'start') {
       if (!activity.started_at) {
         activity.started_at = event.timestamp;
+        activity.started_at_unix_nano = eventTimestampNanos(event);
       }
       activity.sequence_num ??= event.sequence_num;
     } else if (projection.phase === 'instant') {
       activity.started_at ??= event.timestamp;
       activity.ended_at ??= event.timestamp;
+      activity.started_at_unix_nano ??= eventTimestampNanos(event);
+      activity.ended_at_unix_nano ??= eventTimestampNanos(event);
       activity.terminal_status = projection.completed_status;
     } else {
       if (!activity.started_at) {
@@ -870,6 +901,7 @@ export function projectRuntimeExplanation(
         }
       } else {
         activity.ended_at = event.timestamp;
+        activity.ended_at_unix_nano = eventTimestampNanos(event);
         activity.terminal_status = projection.completed_status;
       }
     }
@@ -929,10 +961,10 @@ export function projectRuntimeExplanation(
         outcome: runtimeOutcomeLabel(status),
         started_at: activity.started_at,
         ended_at: activity.ended_at,
-        duration_ms:
-          startedAtMs !== undefined && endedAtMs !== undefined && endedAtMs >= startedAtMs
+        duration_ms: exactDurationMs(activity.started_at_unix_nano, activity.ended_at_unix_nano)
+          ?? (startedAtMs !== undefined && endedAtMs !== undefined && endedAtMs >= startedAtMs
             ? endedAtMs - startedAtMs
-            : undefined,
+            : undefined),
         actor: activity.actor,
         source_span_id: activity.source_span_id,
         parent_span_id: activity.parent_span_id,
@@ -946,6 +978,9 @@ export function projectRuntimeExplanation(
       };
     })
     .sort((left, right) => {
+      const leftRaw = activityMap.get(left.id)?.started_at_unix_nano;
+      const rightRaw = activityMap.get(right.id)?.started_at_unix_nano;
+      if (leftRaw && rightRaw && leftRaw !== rightRaw) return BigInt(leftRaw) < BigInt(rightRaw) ? -1 : 1;
       const leftTime = Date.parse(left.started_at ?? left.ended_at ?? '');
       const rightTime = Date.parse(right.started_at ?? right.ended_at ?? '');
       if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) return leftTime - rightTime;
@@ -1220,6 +1255,8 @@ export function projectRuntimeExplanation(
     ));
   }
   const runDurationMs = (() => {
+    const exact = exactDurationMs(runStartNano, runFailedNano ?? runCompletedNano);
+    if (exact !== undefined) return exact;
     const start = parseTimestamp(runStartAt);
     const end = parseTimestamp(runFailedAt ?? runCompletedAt);
     return start !== undefined && end !== undefined && end >= start ? end - start : undefined;

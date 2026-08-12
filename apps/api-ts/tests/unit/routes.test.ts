@@ -226,6 +226,16 @@ describe('POST /api/v1/ingest/otlp', () => {
 
     expect(res.status).toBe(202);
     expect(res.body.partialSuccess.rejectedSpans).toBe(0);
+    expect(mockStore.ingestSpans).toHaveBeenCalledWith(
+      undefined,
+      [expect.objectContaining({
+        start_time_unix_nano: '1',
+        end_time_unix_nano: '2',
+      })],
+      { 'agentlens.mission.id': '550e8400-e29b-41d4-a716-446655440000' },
+      undefined,
+      undefined,
+    );
   });
 });
 

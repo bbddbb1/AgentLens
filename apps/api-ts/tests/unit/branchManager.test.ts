@@ -6,7 +6,10 @@ import {
   createDefaultBranch,
   createMissionEventRecord,
   selectEventsForBranch,
+  selectInterruptsForBranch,
+  selectSpanRevisionsForBranch,
 } from '../../src/services/runtime/BranchManager.js';
+import { projectReplayEvidence } from '../../src/services/runtime/projection.js';
 
 function event(
   type: string,
@@ -164,5 +167,80 @@ describe('selectEventsForBranch', () => {
 
     const selected = selectEventsForBranch(events, branches, 'main-b1-c1');
     expect(selected.map((e) => e.id)).toEqual(['e0', 'e1', 'e3', 'e5']);
+  });
+});
+
+describe('immutable span-backed branch inheritance', () => {
+  it('freezes the parent admission prefix and scopes colliding source span ids', () => {
+    const now = '2026-01-01T00:00:00.000Z';
+    const branches: ReplayBranch[] = [
+      { id: ROOT_BRANCH_ID, mission_id: 'm1', name: 'Main', status: 'active', metadata: {}, created_at: now, updated_at: now },
+      { id: 'child', mission_id: 'm1', name: 'Child', parent_branch_id: ROOT_BRANCH_ID, forked_from_sequence_num: 1, status: 'active', metadata: {}, created_at: now, updated_at: now },
+    ];
+    const revisions = [
+      {
+        branch_id: ROOT_BRANCH_ID, admission_seq: 1, revision_num: 1,
+        span_id: 'collision', trace_id: 'parent-trace', parent_span_id: null,
+        operation_name: 'parent-A', start_time_unix_nano: '200', end_time_unix_nano: '250',
+        status_code: 'OK', attributes: { revision: 'A' }, events: [],
+      },
+      {
+        branch_id: ROOT_BRANCH_ID, admission_seq: 2, revision_num: 2,
+        span_id: 'collision', trace_id: 'parent-trace', parent_span_id: null,
+        operation_name: 'parent-B', start_time_unix_nano: '100', end_time_unix_nano: '260',
+        status_code: 'OK', attributes: { revision: 'B' }, events: [],
+      },
+      {
+        branch_id: 'child', admission_seq: 3, revision_num: 1,
+        span_id: 'collision', trace_id: 'child-trace', parent_span_id: null,
+        operation_name: 'child', start_time_unix_nano: '300', end_time_unix_nano: '350',
+        status_code: 'OK', attributes: {}, events: [],
+      },
+    ];
+
+    const selected = selectSpanRevisionsForBranch(revisions, branches, 'child');
+    expect(selected.map((span) => [span.branch_id, span.admission_seq, span.operation_name])).toEqual([
+      ['main', 1, 'parent-A'],
+      ['child', 3, 'child'],
+    ]);
+
+    const replay = projectReplayEvidence('m1', 'child', selected);
+    const nodes = replay.snapshots.at(-1)?.nodes ?? [];
+    expect(nodes).toHaveLength(2);
+    expect(new Set(nodes.map((node) => node.id)).size).toBe(2);
+    expect(nodes.map((node) => node.source_span_id)).toEqual(['collision', 'collision']);
+    expect(replay.snapshots.map((snapshot) => snapshot.sequence_num)).toEqual([1, 3]);
+  });
+
+  it('rewinds ancestor interrupt lifecycle facts to the fork admission', () => {
+    const now = '2026-01-01T00:00:00.000Z';
+    const branches: ReplayBranch[] = [
+      { id: ROOT_BRANCH_ID, mission_id: 'm1', name: 'Main', status: 'active', metadata: {}, created_at: now, updated_at: now },
+      { id: 'child', mission_id: 'm1', name: 'Child', parent_branch_id: ROOT_BRANCH_ID, forked_from_sequence_num: 2, status: 'active', metadata: {}, created_at: now, updated_at: now },
+    ];
+    const selected = selectInterruptsForBranch([{
+      branch_id: ROOT_BRANCH_ID,
+      interrupt_id: 'interrupt-1',
+      status: 'resumed',
+      decision: 'approve',
+      decision_comment: 'later',
+      decision_payload: { accepted: true },
+      decision_state: 'recorded',
+      delivery_state: 'delivered',
+      runtime_outcome: 'resumed',
+      requested_admission_seq: 2,
+      decided_admission_seq: 3,
+      resumed_admission_seq: 4,
+    }], branches, 'child');
+
+    expect(selected).toMatchObject([{
+      interrupt_id: 'interrupt-1',
+      status: 'pending',
+      decision: null,
+      decided_admission_seq: null,
+      resumed_admission_seq: null,
+      decision_state: 'none',
+      delivery_state: 'not_requested',
+    }]);
   });
 });
