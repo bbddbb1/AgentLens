@@ -60,6 +60,6 @@ export function runtimeActivityInspectorView(
         sequenceNum: reference.sequence_num,
       })),
     },
-    limitation: activity.story_critical_limitation,
+    limitation: activity.operator_facing_record?.limitation,
   };
 }

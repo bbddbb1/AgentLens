@@ -152,7 +152,9 @@ export interface RuntimeExplanationActivity {
   /** Exact evidence and derivation class for canonical L1 semantic fields. */
   semantic_provenance?: RuntimeExplanationActivitySemanticProvenance;
   operator_facing_record?: RuntimeOperatorActivityRecord;
+  /** @deprecated L2 presentation ranking only; canonical L1 does not populate it. */
   story_critical?: boolean;
+  /** @deprecated L2 presentation ranking only; canonical L1 does not populate it. */
   story_critical_limitation?: string;
   evidence_refs: RuntimeExplanationEvidenceRef[];
 }
@@ -255,6 +257,7 @@ export interface RuntimeOperatorActivityRecord {
   downstream_effect: RuntimeActivityField;
   artifacts: RuntimeActivityField;
   evidence_condition: RuntimeActivityField<string>;
+  /** Legacy compatibility name for operator-record completeness, not activity importance. */
   story_critical_sufficient: boolean;
   limitation?: string;
 }
@@ -281,7 +284,9 @@ export interface RuntimeActivity {
   invocation_id?: string;
   semantic_provenance?: RuntimeExplanationActivitySemanticProvenance;
   operator_facing_record?: RuntimeOperatorActivityRecord;
+  /** @deprecated L2 presentation ranking only; canonical L1 does not populate it. */
   story_critical?: boolean;
+  /** @deprecated L2 presentation ranking only; canonical L1 does not populate it. */
   story_critical_limitation?: string;
   provenance: 'projection';
 }
@@ -408,6 +413,10 @@ export interface SemanticSummaryResult {
   summary: string;
   conflicts: Array<Record<string, unknown>>;
   anomalies: Array<Record<string, unknown>>;
+  /** Exact RuntimeExplanation frame used by frame-bounded explanatory presentation. */
+  frame?: RuntimeFrame;
+  /** Evidence supporting the complete explanatory presentation. */
+  evidence_refs?: RuntimeExplanationEvidenceRef[];
 }
 
 /** A single progressive step in the runtime execution narrative. */
@@ -604,7 +613,7 @@ export interface RuntimeSummary {
   progress_markers?: RuntimeProgressMarker[];
   /** Compact Runtime Story (normally 5-8 key universal activities). */
   activities?: RuntimeActivity[];
-  /** Ordered, concise story selection for the summary surface. */
+  /** L2-only ordered selection for the summary surface; membership is not an L1 runtime fact. */
   story_activities?: RuntimeActivity[];
   selected_activity_id?: string;
   selected_activity_state?: RuntimeSelectedActivityState;

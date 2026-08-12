@@ -46,7 +46,7 @@ describe('progressive missing-field disclosure', () => {
     expect(html).toContain('not recorded');
   });
 });
-describe('readable causal relationships', () => {
+describe('readable evidence-bounded relationships', () => {
   it('resolves raw ids to activity labels, types, and statuses', () => {
     const nodes: GraphNode[] = [
       {
@@ -73,9 +73,10 @@ describe('readable causal relationships', () => {
         status: 'failed',
       },
     ]);
-    const parent = relationships.find((relationship) => relationship.kind === 'parent');
-    expect(parent).toBeDefined();
-    expect(resolveRelationshipTargets(parent!.nodeIds, nodes)).toEqual([
+    const dependency = relationships.find((relationship) => relationship.label === 'Dependency from');
+    expect(dependency).toBeDefined();
+    expect(relationships.map((relationship) => relationship.label).join(' ')).not.toMatch(/Triggered|Called|Next/);
+    expect(resolveRelationshipTargets(dependency!.nodeIds, nodes)).toEqual([
       {
         id: 'parent-id',
         label: 'Agent · planner',

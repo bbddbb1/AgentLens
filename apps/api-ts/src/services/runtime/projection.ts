@@ -786,12 +786,13 @@ export function projectTraceSnapshot(
       source,
       target,
       type: 'delegation',
+      label: 'Handoff',
       status: 'completed',
       evidenceSpanId: relationship.source.span_id,
       evidence_span_id: relationship.source.span_id,
       source_span_id: relationship.source.span_id,
       source_event_id: relationship.source.event_name,
-      metadata: {},
+      metadata: { relationship_basis: 'explicit_handoff' },
     });
   }
 
@@ -808,9 +809,11 @@ export function projectTraceSnapshot(
             source: span.parent_span_id,
             target: node.id,
             type: 'dependency',
+            label: 'Parent span',
             status: node.status === 'failed' ? 'failed' : node.status === 'completed' ? 'completed' : 'active',
             evidenceSpanId: span.span_id,
             evidence_span_id: span.span_id,
+            metadata: { relationship_basis: 'parent_span' },
           });
         }
       }

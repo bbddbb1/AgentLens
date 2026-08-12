@@ -48,5 +48,6 @@ describe('postgres database initialization', () => {
     expect(queryTexts.some((q) => q.includes('ADD COLUMN IF NOT EXISTS revision_num'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('spans_mission_branch_span_revision_key'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS evidence_admission_counters'))).toBe(true);
+    expect(queryTexts.some((q) => q.includes('ADD COLUMN IF NOT EXISTS authority_version'))).toBe(true);
   });
 });

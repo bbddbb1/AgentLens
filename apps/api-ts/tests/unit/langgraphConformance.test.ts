@@ -178,6 +178,14 @@ describe('LangGraph native-fact conformance', async () => {
       expect(handoffEdges).toHaveLength(expected.oracle.handoff_edges_expected);
       expect(replay.current_state.edges.filter((edge) => edge.type === 'delegation'))
         .toHaveLength(expected.oracle.handoff_edges_expected);
+      if (expected.oracle.handoff_edges_expected > 0) {
+        for (const edge of handoffEdges) {
+          expect(edge).toMatchObject({
+            label: 'Handoff',
+            metadata: { relationship_basis: 'explicit_handoff' },
+          });
+        }
+      }
     }
     if (expected.oracle.safety?.failure_never_success) {
       for (const activity of facts.activities.filter((candidate) => candidate.outcome === 'failure')) {

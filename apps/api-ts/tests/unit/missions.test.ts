@@ -16,6 +16,7 @@ vi.mock('../../src/db/postgres.js', () => ({
 
 import { missionStore } from '../../src/services/missionStore.js';
 import { projectReplay } from '../../src/services/runtime/projection.js';
+import { SEMANTIC_PRESENTATION_AUTHORITY_VERSION } from '../../src/services/semantic.js';
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -147,6 +148,65 @@ describe('missionStore — listMissions', () => {
       (call) => typeof call[0] === 'string' && call[0].includes('WHERE status')
     );
     expect(hasStatusCall).toBe(true);
+  });
+});
+
+describe('missionStore — semantic presentation cache', () => {
+  it('reads only the requested branch and the bounded presentation authority', async () => {
+    mockClient.query.mockResolvedValueOnce({
+      rows: [{
+        summary: 'bounded child summary', conflicts: [], anomalies: [],
+        branch_id: 'child', level: 'mission', created_at: new Date('2026-01-01T00:00:00.000Z'),
+      }],
+      rowCount: 1,
+    });
+
+    const result = await missionStore.listSummaries('mission-1', undefined, 'child');
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.summary).toBe('bounded child summary');
+    expect(mockClient.query).toHaveBeenCalledWith(
+      expect.stringMatching(/branch_id = \$2[\s\S]*authority_version = \$3/),
+      ['mission-1', 'child', SEMANTIC_PRESENTATION_AUTHORITY_VERSION],
+    );
+  });
+
+  it('builds why-this-state from the exact requested frame and never falls back to latest', async () => {
+    const getMission = vi.spyOn(missionStore, 'getMission').mockResolvedValue(fakeRow() as any);
+    const getReplay = vi.spyOn(missionStore, 'getReplayFromTelemetry').mockResolvedValue({
+      mission_id: 'mission-1', branch_id: 'main', branches: [],
+      events: [
+        {
+          id: 'frame-zero-event', mission_id: 'mission-1', branch_id: 'main',
+          branch_sequence_num: 0, sequence_num: 0, event_type: 'task.started',
+          timestamp: '2026-01-01T00:00:00.000Z', payload: { task: 'root' }, metadata: {},
+          span_id: 'root-span',
+        },
+        {
+          id: 'later-trigger', mission_id: 'mission-1', branch_id: 'main',
+          branch_sequence_num: 1, sequence_num: 1, event_type: 'tool.called',
+          timestamp: '2026-01-01T00:00:01.000Z', payload: { 'gen_ai.tool.name': 'late' }, metadata: {},
+          span_id: 'late-span', causal: { triggered_by_event_id: 'frame-zero-event', tool_call_id: 'late' },
+        },
+      ],
+      snapshots: [
+        { id: 'frame-0', mission_id: 'mission-1', branch_id: 'main', sequence_num: 0, timestamp: '2026-01-01T00:00:00.000Z', nodes: [], edges: [] },
+        { id: 'frame-1', mission_id: 'mission-1', branch_id: 'main', sequence_num: 1, timestamp: '2026-01-01T00:00:01.000Z', nodes: [], edges: [] },
+      ],
+      current_state: { status: 'active', phase: 'executing', agents: {}, interrupts: {}, nodes: [], edges: [] },
+    } as any);
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    try {
+      const historical = await missionStore.generateWhyThisState('mission-1', 0, 'main');
+      expect(historical?.frame?.sequence_num).toBe(0);
+      expect(historical?.summary).not.toContain('trigger reference');
+      expect(historical?.evidence_refs?.some((ref) => ref.event_id === 'later-trigger')).toBe(false);
+      expect(await missionStore.generateWhyThisState('mission-1', 2, 'main')).toBeNull();
+    } finally {
+      getMission.mockRestore();
+      getReplay.mockRestore();
+    }
   });
 });
 

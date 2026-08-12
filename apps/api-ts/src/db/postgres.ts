@@ -100,6 +100,7 @@ export async function initializeDatabase(): Promise<void> {
       summary TEXT NOT NULL,
       conflicts JSONB NOT NULL DEFAULT '[]'::jsonb,
       anomalies JSONB NOT NULL DEFAULT '[]'::jsonb,
+      authority_version VARCHAR(64) NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
@@ -363,6 +364,10 @@ export async function initializeDatabase(): Promise<void> {
 
   await pool.query(`
     ALTER TABLE semantic_summaries ADD COLUMN IF NOT EXISTS branch_id VARCHAR(255) NOT NULL DEFAULT 'main';
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE semantic_summaries ADD COLUMN IF NOT EXISTS authority_version VARCHAR(64) NULL;
   `).catch(() => {});
 
   await pool.query(`

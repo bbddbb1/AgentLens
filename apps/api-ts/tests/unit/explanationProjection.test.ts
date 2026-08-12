@@ -456,7 +456,7 @@ describe('projectRuntimeExplanation', () => {
     expect(explanation.activities[0]?.status).toBe('completed');
   });
 
-  it('emits proven parallel and merge groups only from shared-parent overlap evidence', () => {
+  it('does not promote shared-parent overlap into parallel or merge semantics', () => {
     const events = [
       event(0, 'task.started', { task: 'root' }, { span_id: 'root-span' }),
       event(1, 'tool.called', { 'gen_ai.tool.name': 'a' }, {
@@ -498,10 +498,12 @@ describe('projectRuntimeExplanation', () => {
       events,
     });
 
-    expect(explanation.parallel_groups).toHaveLength(1);
-    expect(explanation.parallel_groups[0]?.activity_ids).toEqual(['tool:a-1', 'tool:b-1']);
-    expect(explanation.merge_groups).toHaveLength(1);
-    expect(explanation.merge_groups[0]?.predecessor_activity_ids).toEqual(['tool:a-1', 'tool:b-1']);
+    expect(explanation.parallel_groups).toEqual([]);
+    expect(explanation.merge_groups).toEqual([]);
+    expect(explanation.consistency_flags).toContainEqual(expect.objectContaining({
+      code: 'ambiguous_parallelism',
+      message: expect.stringContaining('overlap does not establish parallel execution'),
+    }));
   });
 
   it('promotes gen_ai.completion into operator-facing output', () => {

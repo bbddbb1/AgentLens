@@ -523,12 +523,20 @@ describe('projectReplay', () => {
     expect(edge1!.target).toBe('span-researcher');
     expect(edge1!.source_span_id).toBe('span-planner');
     expect(edge1!.source_event_id).toBe('agent.handoff.requested');
+    expect(edge1).toMatchObject({
+      label: 'Handoff',
+      metadata: { relationship_basis: 'explicit_handoff' },
+    });
 
     const edge2 = delegationEdges.find(e => e.source === 'span-researcher');
     expect(edge2).toBeDefined();
     expect(edge2!.target).toBe('span-writer');
     expect(edge2!.source_span_id).toBe('span-researcher');
     expect(edge2!.source_event_id).toBe('agent.handoff.requested');
+    expect(edge2).toMatchObject({
+      label: 'Handoff',
+      metadata: { relationship_basis: 'explicit_handoff' },
+    });
   });
 
   it('Scenario 2: Writer <-> Reviewer review loop with strict targets', () => {

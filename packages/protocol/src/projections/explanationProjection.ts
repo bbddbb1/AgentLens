@@ -41,7 +41,6 @@ interface ActivityAccumulator {
   target?: string;
   target_basis?: RuntimeFactBasis;
   target_condition?: RuntimeOperatorActivityRecord['target']['condition'];
-  trigger?: string;
   source_span_id?: string;
   parent_span_id?: string;
   sequence_num?: number;
@@ -60,7 +59,6 @@ interface ActivityAccumulator {
   kind_refs: RuntimeExplanationEvidenceRef[];
   actor_refs: RuntimeExplanationEvidenceRef[];
   target_refs: RuntimeExplanationEvidenceRef[];
-  trigger_refs: RuntimeExplanationEvidenceRef[];
   input_refs: RuntimeExplanationEvidenceRef[];
   output_refs: RuntimeExplanationEvidenceRef[];
   artifact_refs: RuntimeExplanationEvidenceRef[];
@@ -912,27 +910,6 @@ function effectiveEvidenceRevisionEvents(events: EventEnvelope[]): EventEnvelope
   });
 }
 
-function hasPath(relations: RuntimeExplanationRelation[], source: string, target: string): boolean {
-  const adjacency = new Map<string, string[]>();
-  for (const relation of relations) {
-    const current = adjacency.get(relation.source_activity_id) ?? [];
-    current.push(relation.target_activity_id);
-    adjacency.set(relation.source_activity_id, current);
-  }
-  const queue = [source];
-  const seen = new Set<string>();
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    if (current === target) return true;
-    if (seen.has(current)) continue;
-    seen.add(current);
-    for (const next of adjacency.get(current) ?? []) {
-      if (!seen.has(next)) queue.push(next);
-    }
-  }
-  return false;
-}
-
 function timestampsOverlap(
   left: RuntimeExplanationActivity,
   right: RuntimeExplanationActivity,
@@ -994,6 +971,7 @@ function deriveRuntimePhase(
 function buildOperatorFacingRecord(
   activity: RuntimeExplanationActivity,
   source: ActivityAccumulator,
+  trigger: { value: string; refs: RuntimeExplanationEvidenceRef[] } | undefined,
   downstreamEffect: { value: string; refs: RuntimeExplanationEvidenceRef[] } | undefined,
 ): RuntimeOperatorActivityRecord {
   const actorField = field(
@@ -1018,9 +996,9 @@ function buildOperatorFacingRecord(
     outcomeProvenance.condition,
   );
   const triggerField = field(
-    source.trigger,
-    source.trigger_refs,
-    source.trigger === undefined ? 'unknown' : 'derived',
+    trigger?.value,
+    trigger?.refs ?? [],
+    trigger === undefined ? 'unknown' : 'derived',
   );
   const inputValue = preferredActivityValue(activity.inputs, 'input', 'reason');
   const outputValue = preferredActivityValue(activity.outputs, 'output', 'decision');
@@ -1036,7 +1014,7 @@ function buildOperatorFacingRecord(
     .flatMap((candidate) => candidate.evidence_refs ?? []);
   const limitation =
     missingParts.length > 0
-      ? `Incomplete story-critical context: ${missingParts.join(', ')} not fully available`
+      ? `Incomplete operator context: ${missingParts.join(', ')} not fully available`
       : undefined;
 
   return {
@@ -1177,7 +1155,6 @@ export function projectRuntimeExplanation(
 
     const ref = evidenceRef(event);
     const actor = event.agent_id ?? event.actor_id;
-    const trigger = projection.subtitle ?? event.parent_span_id ?? event.causal?.parent_span_id;
     const existing = activityMap.get(projection.id);
     if (!existing) {
       activityMap.set(projection.id, {
@@ -1190,7 +1167,6 @@ export function projectRuntimeExplanation(
         target: projection.target,
         target_basis: projection.target_basis,
         target_condition: projection.target_condition,
-        trigger,
         source_span_id: event.span_id,
         parent_span_id: event.parent_span_id ?? event.causal?.parent_span_id,
         sequence_num: event.sequence_num,
@@ -1200,7 +1176,6 @@ export function projectRuntimeExplanation(
         kind_refs: [ref],
         actor_refs: actor === undefined ? [] : [ref],
         target_refs: projection.target === undefined && projection.target_condition === undefined ? [] : [ref],
-        trigger_refs: trigger === undefined ? [] : [ref],
         input_refs: projection.inputs === undefined ? [] : [ref],
         output_refs: projection.outputs === undefined ? [] : [ref],
         artifact_refs: projection.artifacts === undefined ? [] : [ref],
@@ -1241,10 +1216,6 @@ export function projectRuntimeExplanation(
       } else if (projection.target !== undefined && existing.target !== projection.target) {
         existing.target_conflict = true;
         existing.target_refs.push(ref);
-      }
-      if (existing.trigger === undefined && trigger !== undefined) {
-        existing.trigger = trigger;
-        existing.trigger_refs = [ref];
       }
       if (
         (projection.inputs !== undefined && Object.prototype.hasOwnProperty.call(projection.inputs, 'input'))
@@ -1464,11 +1435,9 @@ export function projectRuntimeExplanation(
     });
 
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
-  const primaryActivityBySpan = new Map<string, string>();
-  for (const activity of activities) {
-    if (activity.source_span_id && !primaryActivityBySpan.has(activity.source_span_id)) {
-      primaryActivityBySpan.set(activity.source_span_id, activity.id);
-    }
+  const uniqueActivityBySpan = new Map<string, string>();
+  for (const [spanId, activityIds] of spanToActivityIds) {
+    if (activityIds.size === 1) uniqueActivityBySpan.set(spanId, [...activityIds][0]);
   }
 
   const relationMap = new Map<string, RuntimeExplanationRelation>();
@@ -1476,6 +1445,8 @@ export function projectRuntimeExplanation(
     const currentActivityId = eventToActivityId.get(event.id);
     if (!currentActivityId) continue;
     const refs = [evidenceRef(event)];
+    const parentSpanId = event.causal?.parent_span_id;
+    const parentSpanCandidates = parentSpanId ? spanToActivityIds.get(parentSpanId) : undefined;
     const candidates: Array<{
       basis: RuntimeExplanationRelation['basis'];
       source_activity_id: string | undefined;
@@ -1503,11 +1474,13 @@ export function projectRuntimeExplanation(
       },
       {
         basis: 'parent_span',
-        source_activity_id: event.causal?.parent_span_id ? primaryActivityBySpan.get(event.causal.parent_span_id) : undefined,
+        source_activity_id: parentSpanId ? uniqueActivityBySpan.get(parentSpanId) : undefined,
         target_activity_id: currentActivityId,
-        danglingCode: event.causal?.parent_span_id ? 'dangling_parent_span' : undefined,
-        danglingMessage: event.causal?.parent_span_id
-          ? `Parent span ${event.causal.parent_span_id} could not be resolved at this frame.`
+        danglingCode: parentSpanId ? 'dangling_parent_span' : undefined,
+        danglingMessage: parentSpanId
+          ? parentSpanCandidates && parentSpanCandidates.size > 1
+            ? `Parent span ${parentSpanId} maps to multiple canonical activities and cannot be resolved unambiguously at this frame.`
+            : `Parent span ${parentSpanId} could not be resolved at this frame.`
           : undefined,
       },
     ];
@@ -1546,7 +1519,7 @@ export function projectRuntimeExplanation(
         createFlag(
           'timestamp_conflict',
           'info',
-          `Causal order for ${relation.id} conflicts with event timestamps.`,
+          `Recorded relationship ${relation.id} conflicts with source timestamps.`,
           relation.evidence_refs,
           undefined,
           relation.id,
@@ -1567,131 +1540,69 @@ export function projectRuntimeExplanation(
   for (const [parentId, children] of [...byParent.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
     const uniqueChildren = [...new Set(children)].sort();
     if (uniqueChildren.length < 2) continue;
-    const adjacency = new Map<string, Set<string>>();
-    for (const child of uniqueChildren) adjacency.set(child, new Set<string>());
-
+    const overlappingActivityIds = new Set<string>();
     for (let index = 0; index < uniqueChildren.length; index += 1) {
       for (let nextIndex = index + 1; nextIndex < uniqueChildren.length; nextIndex += 1) {
         const left = activityById.get(uniqueChildren[index]);
         const right = activityById.get(uniqueChildren[nextIndex]);
         if (!left || !right) continue;
-        const precedence =
-          hasPath(relations, left.id, right.id)
-          || hasPath(relations, right.id, left.id);
-        if (precedence) continue;
         if (timestampsOverlap(left, right, asOfTimestamp)) {
-          adjacency.get(left.id)!.add(right.id);
-          adjacency.get(right.id)!.add(left.id);
+          overlappingActivityIds.add(left.id);
+          overlappingActivityIds.add(right.id);
         }
       }
     }
-
-    const visited = new Set<string>();
-    let emittedGroup = false;
-    for (const child of uniqueChildren) {
-      if (visited.has(child)) continue;
-      const queue = [child];
-      const component: string[] = [];
-      while (queue.length > 0) {
-        const current = queue.shift()!;
-        if (visited.has(current)) continue;
-        visited.add(current);
-        component.push(current);
-        for (const next of adjacency.get(current) ?? []) {
-          if (!visited.has(next)) queue.push(next);
-        }
-      }
-      if (component.length > 1) {
-        emittedGroup = true;
-        const activityIds = component.sort();
-        const refs = activityIds.flatMap((id) => activityById.get(id)?.evidence_refs ?? []);
-        parallelGroups.push({
-          id: `parallel:${parentId}:${activityIds.join(',')}`,
-          activity_ids: activityIds,
-          basis: 'parent_overlap',
-          evidence_refs: refs,
-        });
-      }
-    }
-
-    if (!emittedGroup) {
-      const maybeAmbiguous = uniqueChildren
-        .map((id) => activityById.get(id))
-        .filter((activity): activity is RuntimeExplanationActivity => Boolean(activity))
-        .some((activity) => activity.started_at !== undefined && activity.ended_at === undefined);
-      if (maybeAmbiguous) {
-        const refs = uniqueChildren.flatMap((id) => activityById.get(id)?.evidence_refs ?? []);
-        flags.push(
-          createFlag(
-            'ambiguous_parallelism',
-            'info',
-            `Sibling activities under ${parentId} look concurrent but cannot be proven from the available evidence.`,
-            refs,
-          ),
-        );
-      }
+    if (overlappingActivityIds.size > 1) {
+      const refs = [...overlappingActivityIds]
+        .sort()
+        .flatMap((id) => activityById.get(id)?.evidence_refs ?? []);
+      flags.push(
+        createFlag(
+          'ambiguous_parallelism',
+          'info',
+          `Sibling activity intervals under ${parentId} overlap in recorded time; overlap does not establish parallel execution.`,
+          refs,
+        ),
+      );
     }
   }
 
   const mergeGroups: RuntimeExplanationMergeGroup[] = [];
-  const parallelGroupByActivity = new Map<string, RuntimeExplanationParallelGroup[]>();
-  for (const group of parallelGroups) {
-    for (const activityId of group.activity_ids) {
-      const existing = parallelGroupByActivity.get(activityId) ?? [];
-      existing.push(group);
-      parallelGroupByActivity.set(activityId, existing);
-    }
-  }
-  const predecessorMap = new Map<string, string[]>();
-  for (const relation of relations) {
-    const current = predecessorMap.get(relation.target_activity_id) ?? [];
-    current.push(relation.source_activity_id);
-    predecessorMap.set(relation.target_activity_id, current);
-  }
-  for (const [targetId, predecessors] of [...predecessorMap.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
-    const uniquePredecessors = [...new Set(predecessors)].sort();
-    if (uniquePredecessors.length < 2) continue;
-    const candidateGroup = parallelGroups.find((group) => uniquePredecessors.every((id) => group.activity_ids.includes(id)));
-    if (!candidateGroup) continue;
-    const refs = relations
-      .filter((relation) => relation.target_activity_id === targetId && uniquePredecessors.includes(relation.source_activity_id))
-      .flatMap((relation) => relation.evidence_refs);
-    mergeGroups.push({
-      id: `merge:${candidateGroup.id}:${targetId}`,
-      predecessor_activity_ids: uniquePredecessors,
-      downstream_activity_id: targetId,
-      parallel_group_id: candidateGroup.id,
-      evidence_refs: refs,
-    });
-  }
-
+  const triggerByActivityId = new Map<string, {
+    value: string;
+    refs: RuntimeExplanationEvidenceRef[];
+  }>();
   const downstreamByActivityId = new Map<string, {
     value: string;
     refs: RuntimeExplanationEvidenceRef[];
   }>();
   for (const relation of relations) {
+    if (relation.basis !== 'trigger_reference') continue;
+    const source = activityById.get(relation.source_activity_id);
     const target = activityById.get(relation.target_activity_id);
-    if (!target) continue;
+    if (!source || !target) continue;
+    const currentTrigger = triggerByActivityId.get(relation.target_activity_id);
+    triggerByActivityId.set(relation.target_activity_id, {
+      value: currentTrigger ? `${currentTrigger.value}, ${source.title}` : source.title,
+      refs: dedupeRefs([...(currentTrigger?.refs ?? []), ...relation.evidence_refs]),
+    });
     const current = downstreamByActivityId.get(relation.source_activity_id);
-    const next = target.title;
     downstreamByActivityId.set(relation.source_activity_id, {
-      value: current ? `${current.value}, ${next}` : next,
+      value: current ? `${current.value}, ${target.title}` : target.title,
       refs: dedupeRefs([...(current?.refs ?? []), ...relation.evidence_refs]),
     });
   }
 
-  const activitiesWithRecords = activities.map((activity, index) => {
-    const storyCritical = index < 5 || activity.status === 'failed' || activity.status === 'waiting';
+  const activitiesWithRecords = activities.map((activity) => {
     const operatorFacingRecord = buildOperatorFacingRecord(
       activity,
       activityMap.get(activity.id)!,
+      triggerByActivityId.get(activity.id),
       downstreamByActivityId.get(activity.id),
     );
     return {
       ...activity,
       operator_facing_record: operatorFacingRecord,
-      story_critical: storyCritical,
-      story_critical_limitation: storyCritical ? operatorFacingRecord.limitation : undefined,
     };
   });
 

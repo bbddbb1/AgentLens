@@ -199,7 +199,7 @@ function ProfileNodeInspector({ input, profile, objectType }: { input: RopsInspe
 
   return (
     <PanelShell objectType={objectType ?? view.objectType} name={view.label.value ?? '—'} profile={profile}>
-      <SelectedActivityPrioritySection node={node} view={view} evidence={evidence} rels={rels} nodes={input.nodes} />
+      <SelectedActivityPrioritySection node={node} view={view} evidence={evidence} rels={rels} />
       <RopsSection title="Identity">
         <RopsFieldRow label="label" field={view.label} />
         <RopsFieldRow label="id" field={view.id} />
@@ -360,7 +360,7 @@ function AgentInspector({ input }: { input: RopsInspectorInput }) {
 
   return (
     <PanelShell objectType={view.objectType} name={view.name.value ?? '—'}>
-      {node && <SelectedActivityPrioritySection node={node} view={view} evidence={collectNodeEvidence(node, input.eventEnvelopes, agentProjection)} rels={rels} nodes={input.nodes} />}
+      {node && <SelectedActivityPrioritySection node={node} view={view} evidence={collectNodeEvidence(node, input.eventEnvelopes, agentProjection)} rels={rels} />}
       <RopsSection title="Identity">
         <RopsFieldRow label="name" field={view.name} />
         <RopsFieldRow label="agent_id" field={view.agentId} />
@@ -391,7 +391,7 @@ function AgentInspector({ input }: { input: RopsInspectorInput }) {
       </RopsSection>
 
       <RopsSection title="Relationships" collapsible defaultOpen={false}>
-        <RopsFieldRow label="next_transition" field={view.nextTransition} formatter={(t) => `→ ${t.target} (${t.kind})${t.reason ? ` — ${t.reason}` : ''}`} />
+        <RopsFieldRow label="recorded_transition" field={view.nextTransition} formatter={(t) => `→ ${t.target} (${t.kind})${t.reason ? ` — ${t.reason}` : ''}`} />
         <DerivedRelationshipRows rels={rels} nodes={input.nodes} onSelectNode={input.onSelectNode} />
         <RopsFieldRow label="source_span_id" field={view.sourceSpanId} />
         <RopsFieldRow label="source_event_id" field={view.sourceEventId} />
@@ -446,7 +446,7 @@ function RuntimeAgentStateInspector({ input }: { input: RopsInspectorInput }) {
   const prov = envelopeProvenance(eventEnvelope);
   return (
     <PanelShell objectType={view.objectType} name={view.name.value ?? '—'}>
-      {node && <SelectedActivityPrioritySection node={node} view={view} evidence={collectNodeEvidence(node, input.eventEnvelopes, null)} rels={rels} nodes={input.nodes} />}
+      {node && <SelectedActivityPrioritySection node={node} view={view} evidence={collectNodeEvidence(node, input.eventEnvelopes, null)} rels={rels} />}
       <RopsSection title="Identity">
         <RopsFieldRow label="name" field={view.name} />
         <RopsFieldRow label="agent_id" field={view.agentId} />
@@ -609,7 +609,6 @@ function SelectedActivityPrioritySection({
   view,
   evidence,
   rels,
-  nodes,
 }: {
   node: GraphNode;
   view: {
@@ -620,31 +619,24 @@ function SelectedActivityPrioritySection({
   };
   evidence: import('@/lib/rops/nodeEvidence').NodeCorrelatedEvidence;
   rels: ReturnType<typeof deriveRelationships>;
-  nodes: readonly GraphNode[];
 }) {
   const activity = node.activity;
   if (!activity && !evidence.toolInput && !evidence.toolOutput && !evidence.failureReason && rels.length === 0) {
     return null;
   }
 
-  const downstreamNodes = rels
-    .filter((rel) => rel.kind === 'children' || rel.kind === 'dependency')
-    .flatMap((rel) => resolveRelationshipTargets(rel.nodeIds, nodes))
-    .map((item) => item.label)
-    .slice(0, 3);
-
   const record = activity?.operator_facing_record;
   const outcomeText = displayText(record?.status_or_outcome.value ?? activity?.outcome ?? view.statusLabel.value ?? view.status.value, 'unknown');
   const viewTitle = view.label?.value ?? view.name?.value;
   const activityTitle = displayText(record?.primary_label ?? activity?.title ?? activity?.label ?? activity?.action ?? viewTitle, 'Activity');
   const actionText = displayText(record?.action.value ?? activity?.action ?? viewTitle, 'Activity');
-  const triggerValue = record?.trigger.value ?? activity?.subtitle ?? activity?.action ?? viewTitle;
+  const triggerValue = record?.trigger.value;
   const triggerText = typeof triggerValue === 'string' && triggerValue.length > 0 ? triggerValue : undefined;
   const errorOrWaitReason = evidence.failureReason ?? evidence.failureCause;
   const errorOrWaitField = errorOrWaitReason !== undefined ? packEvidence('error_or_wait_reason', errorOrWaitReason) : packProjection('error_or_wait_reason', record?.status_or_outcome.value === 'Waiting' ? (record.evidence_condition.value ?? 'waiting') : undefined);
-  const downstreamValue = record?.downstream_effect.value ?? (downstreamNodes.length > 0 ? downstreamNodes.join(', ') : undefined);
+  const downstreamValue = record?.downstream_effect.value;
   const artifactValue = record?.artifacts.value ?? (evidence.producedOutputs !== undefined ? evidence.producedOutputs.length : undefined);
-  const storySufficiency = record ? (record.story_critical_sufficient ? 'sufficient' : 'limited') : undefined;
+  const operatorContextSufficiency = record ? (record.story_critical_sufficient ? 'sufficient' : 'limited') : undefined;
 
   return (
     <RopsSection title="Selected activity">
@@ -667,7 +659,7 @@ function SelectedActivityPrioritySection({
           <RopsFieldRow label="error_or_wait_reason" field={errorOrWaitField} />
           <RopsFieldRow label="downstream_activity" field={packProjection('downstream_activity', downstreamValue)} />
           <RopsFieldRow label="artifacts" field={packProjection('artifacts', artifactValue)} />
-          <RopsFieldRow label="story_sufficiency" field={packProjection('story_sufficiency', storySufficiency)} />
+          <RopsFieldRow label="operator_context_sufficiency" field={packProjection('operator_context_sufficiency', operatorContextSufficiency)} />
         </div>
       </div>
     </RopsSection>
@@ -703,18 +695,11 @@ function DerivedRelationshipRows({ rels, nodes, onSelectNode }: { rels: ReturnTy
   if (rels.length === 0) {
     return <span className="text-[10px] italic text-text-muted">none derived</span>;
   }
-  const relationshipLabels: Record<string, string> = {
-    parent: 'Triggered by',
-    children: 'Next',
-    producer: 'Produced by',
-    consumer: 'Produced',
-    dependency: 'Called',
-  };
   return (
     <>
       {rels.map((r) => (
-        <div key={r.kind} className="flex items-start justify-between gap-3 border-b border-border-subtle pb-1.5">
-          <span className="shrink-0 text-[10px] font-semibold text-text-muted">{relationshipLabels[r.kind] ?? r.kind}</span>
+        <div key={`${r.kind}:${r.edgeType}:${r.label}`} className="flex items-start justify-between gap-3 border-b border-border-subtle pb-1.5">
+          <span className="shrink-0 text-[10px] font-semibold text-text-muted">{r.label}</span>
           <div className="min-w-0 space-y-1 text-right">
             {resolveRelationshipTargets(r.nodeIds, nodes).map((target) => {
               return (
@@ -728,6 +713,7 @@ function DerivedRelationshipRows({ rels, nodes, onSelectNode }: { rels: ReturnTy
                 </button>
               );
             })}
+            <div className="font-mono text-[9px] text-text-faint">evidence: {r.evidenceAnchors.join(', ')}</div>
             <ProvenanceTag provenance="projection" />
           </div>
         </div>

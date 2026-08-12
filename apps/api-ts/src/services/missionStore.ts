@@ -58,8 +58,8 @@ import {
   resolveInterruptIdentityAmbiguity,
   type StoredNativeIdentity,
 } from './interrupts/nativeIdentityAmbiguity.js';
-import { generateMissionSummary, generateWhyThisState, type WhyThisStateContext } from './semantic.js';
-import { buildRuntimeSummary, buildRuntimeSummaryWithOptionalLlm, buildNodeProjection, enhanceNodeProjectionWithLlm, isNodeProjectionCacheValid } from './runtimeSummary.js';
+import { SEMANTIC_PRESENTATION_AUTHORITY_VERSION, generateMissionSummary, generateWhyThisState, type WhyThisStateContext } from './semantic.js';
+import { buildRuntimeSummaryWithOptionalLlm, buildNodeProjection, enhanceNodeProjectionWithLlm } from './runtimeSummary.js';
 import {
   ROOT_BRANCH_ID,
   buildBranchLineage,
@@ -178,8 +178,6 @@ function toCompatibilityActivity(
     invocation_id: activity.invocation_id,
     semantic_provenance: activity.semantic_provenance,
     operator_facing_record: activity.operator_facing_record,
-    story_critical: activity.story_critical,
-    story_critical_limitation: activity.story_critical_limitation,
     provenance: 'projection',
   };
 }
@@ -1301,64 +1299,6 @@ class MissionStore {
     });
   }
 
-  async getCachedNodeProjectionEnhancement(
-    missionId: string,
-    agentId: string,
-    sequenceNum: number,
-    branchId = ROOT_BRANCH_ID,
-  ): Promise<RuntimeNodeProjection | null> {
-    const cacheKey = `${agentId}:${sequenceNum}`;
-    const result = await pool.query(
-      `
-        SELECT summary, conflicts
-        FROM semantic_summaries
-        WHERE mission_id = $1 AND branch_id = $2 AND level = 'node_projection' AND span_id = $3
-        ORDER BY created_at DESC
-        LIMIT 1
-      `,
-      [missionId, branchId, cacheKey],
-    );
-    const row = result.rows[0] as { summary?: string; conflicts?: unknown } | undefined;
-    if (!row?.summary) return null;
-
-    try {
-      const parsed = JSON.parse(row.summary) as RuntimeNodeProjection;
-      const meta = (row.conflicts ?? {}) as { projection_version?: number; prompt_version?: string };
-      if (!isNodeProjectionCacheValid(meta)) return null;
-      return parsed;
-    } catch {
-      return null;
-    }
-  }
-
-  async cacheNodeProjectionEnhancement(
-    missionId: string,
-    agentId: string,
-    projection: RuntimeNodeProjection,
-    branchId = ROOT_BRANCH_ID,
-  ): Promise<void> {
-    const cacheKey = `${agentId}:${projection.sequence_num}`;
-    await pool.query(
-      `
-        INSERT INTO semantic_summaries (id, mission_id, branch_id, span_id, level, summary, conflicts, anomalies)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
-      `,
-      [
-        randomUUID(),
-        missionId,
-        branchId,
-        cacheKey,
-        'node_projection',
-        JSON.stringify(projection),
-        JSON.stringify({
-          projection_version: projection.generated?.projection_version,
-          prompt_version: projection.generated?.prompt_version,
-        }),
-        JSON.stringify([]),
-      ],
-    );
-  }
-
   async enhanceNodeProjection(
     missionId: string,
     agentId: string,
@@ -1367,41 +1307,15 @@ class MissionStore {
   ): Promise<RuntimeNodeProjection | null> {
     const projection = await this.getNodeProjection(missionId, agentId, branchId, upToSequenceNum);
     if (!projection) return null;
-
-    const cached = await this.getCachedNodeProjectionEnhancement(
-      missionId,
-      agentId,
-      projection.sequence_num,
-      branchId,
-    );
-    if (cached?.generated?.source === 'llm') {
-      return { ...projection, generated: cached.generated };
-    }
-
-    const enhanced = await enhanceNodeProjectionWithLlm(projection);
-    await this.cacheNodeProjectionEnhancement(missionId, agentId, enhanced, branchId);
-    return enhanced;
+    return enhanceNodeProjectionWithLlm(projection);
   }
 
   async scheduleNodeProjectionEnhancements(
     missionId: string,
     branchId = ROOT_BRANCH_ID,
   ): Promise<void> {
-    const summary = await this.getRuntimeSummary(missionId, branchId);
-    if (!summary?.agents?.length) return;
-
-    await Promise.allSettled(
-      summary.agents.map(async (agent) => {
-        const cached = await this.getCachedNodeProjectionEnhancement(
-          missionId,
-          agent.agent_id,
-          agent.sequence_num,
-          branchId,
-        );
-        if (cached?.generated?.source === 'llm') return;
-        await this.enhanceNodeProjection(missionId, agent.agent_id, branchId, agent.sequence_num);
-      }),
-    );
+    void missionId;
+    void branchId;
   }
 
   async generateSummary(missionId: string, branchId = ROOT_BRANCH_ID): Promise<SemanticSummaryResult | null> {
@@ -1431,8 +1345,8 @@ class MissionStore {
 
     await pool.query(
       `
-        INSERT INTO semantic_summaries (id, mission_id, branch_id, level, summary, conflicts, anomalies)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+        INSERT INTO semantic_summaries (id, mission_id, branch_id, level, summary, conflicts, anomalies, authority_version)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8)
       `,
       [
         randomUUID(),
@@ -1442,6 +1356,7 @@ class MissionStore {
         summary.summary,
         JSON.stringify(summary.conflicts ?? []),
         JSON.stringify(summary.anomalies ?? []),
+        SEMANTIC_PRESENTATION_AUTHORITY_VERSION,
       ],
     );
 
@@ -1460,44 +1375,23 @@ class MissionStore {
     const replay = await this.getReplayFromTelemetry(missionId, branchId);
     if (!replay) return null;
 
-    const snapshot = replay.snapshots.find((s) => s.sequence_num === sequenceNum)
-      ?? replay.snapshots[replay.snapshots.length - 1];
+    const snapshot = replay.snapshots.find((s) => s.sequence_num === sequenceNum);
     if (!snapshot) return null;
-
-    const eventsUpToSnapshot = eventsThroughCursor(replay.events, sequenceNum);
-
     const ctx: WhyThisStateContext = {
-      missionObjective: mission.objective,
-      eventDescription: snapshot.event_description,
-      eventType: snapshot.event_type,
-      phase: snapshot.phase ?? replay.current_state?.phase,
-      missionStatus: replay.current_state?.status ?? mission.status,
-      agentStates: Object.values(replay.current_state?.agents ?? {}).map((a) => ({
-        agent_id: a.agent_id,
-        name: a.name,
-        role: a.role,
-        status: a.status,
-        summary: a.summary,
-        last_reason: a.last_reason,
-      })),
-      agentCount: Object.keys(replay.current_state?.agents ?? {}).length,
-      activeAgentCount: Object.values(replay.current_state?.agents ?? {}).filter((a) => a.status === 'active').length,
-      pendingInterruptCount: Object.values(replay.current_state?.interrupts ?? {}).filter((i) => i.status === 'pending').length,
-      nodeSummary: (snapshot.nodes ?? []).map((n) => ({ label: n.label, type: n.type, status: n.status })),
-      edgeSummary: (snapshot.edges ?? []).map((e) => ({ source: e.source, target: e.target, type: e.type, label: e.label })),
-      recentEvents: eventsUpToSnapshot.slice(-8).map((e) => ({
-        event_type: e.event_type,
-        description: (e.payload as Record<string, unknown>)?.event_description as string ?? e.event_type,
-        agent: e.agent_id,
-      })),
+      explanation: projectRuntimeExplanation({
+        mission_id: missionId,
+        branch_id: branchId,
+        events: replay.events as EventEnvelope[],
+        as_of_sequence_num: snapshot.sequence_num,
+      }),
     };
 
     const result = await generateWhyThisState(ctx);
 
     await pool.query(
       `
-        INSERT INTO semantic_summaries (id, mission_id, branch_id, span_id, level, summary, conflicts, anomalies)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+        INSERT INTO semantic_summaries (id, mission_id, branch_id, span_id, level, summary, conflicts, anomalies, authority_version)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
       `,
       [
         randomUUID(),
@@ -1508,6 +1402,7 @@ class MissionStore {
         result.summary,
         JSON.stringify(result.conflicts ?? []),
         JSON.stringify(result.anomalies ?? []),
+        SEMANTIC_PRESENTATION_AUTHORITY_VERSION,
       ],
     );
 
@@ -1996,19 +1891,15 @@ class MissionStore {
   async listSummaries(missionId: string, level?: string, branchId = ROOT_BRANCH_ID): Promise<Array<Record<string, unknown>>> {
     const client = await pool.connect();
     try {
-      const branches = await this.listReplayBranchesInternal(client, missionId);
-      const lineage = buildBranchLineage(branches, branchId);
-      const branchIds = lineage.length > 0 ? lineage.map(b => b.id) : [branchId];
-
-      const params: Array<unknown> = [missionId, branchIds];
+      const params: Array<unknown> = [missionId, branchId, SEMANTIC_PRESENTATION_AUTHORITY_VERSION];
       let queryStr = `
         SELECT *
         FROM semantic_summaries
-        WHERE mission_id = $1 AND branch_id = ANY($2)
+        WHERE mission_id = $1 AND branch_id = $2 AND authority_version = $3
       `;
       if (level) {
         params.push(level);
-        queryStr += ` AND level = $3`;
+        queryStr += ` AND level = $4`;
       }
       queryStr += ` ORDER BY created_at DESC`;
 
@@ -2022,19 +1913,14 @@ class MissionStore {
         created_at: row.created_at,
       }));
 
-      // Find the latest summary for each level, prioritizing the most specific branch in the lineage
-      const reversedBranchIds = [...branchIds].reverse();
+      // Presentation caches are branch-local. Inheriting an ancestor's latest
+      // row could expose evidence admitted after the immutable fork prefix.
       const finalResult: Array<Record<string, unknown>> = [];
       const levels = level ? [level] : ['mission', 'why_this_state'];
-      
+
       for (const lvl of levels) {
-        for (const bid of reversedBranchIds) {
-          const match = mapped.find(m => m.branch_id === bid && m.level === lvl);
-          if (match) {
-            finalResult.push(match);
-            break;
-          }
-        }
+        const match = mapped.find(m => m.branch_id === branchId && m.level === lvl);
+        if (match) finalResult.push(match);
       }
 
       return finalResult;

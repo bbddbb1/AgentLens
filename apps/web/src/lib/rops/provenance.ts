@@ -173,9 +173,11 @@ export function classifyConfidence(
 // ---------------------------------------------------------------------------
 
 export interface DerivedRelationship {
-  readonly kind: 'children' | 'producer' | 'consumer' | 'parent' | 'dependency';
+  readonly kind: 'incoming' | 'outgoing';
   readonly edgeType: string;
+  readonly label: string;
   readonly nodeIds: readonly string[];
+  readonly evidenceAnchors: readonly string[];
   readonly provenance: Provenance;
 }
 
@@ -205,43 +207,64 @@ export function resolveRelationshipTargets(
   });
 }
 
-/** Derive `children`/`producer`/`consumer`/`parent` adjacency from edges (spec 6.4). */
+function relationshipLabel(edge: GraphEdge, direction: DerivedRelationship['kind']): string {
+  if (edge.metadata?.relationship_basis === 'parent_span') {
+    return direction === 'incoming' ? 'Parent span' : 'Child span';
+  }
+  if (edge.type === 'delegation' && edge.metadata?.relationship_basis === 'explicit_handoff') {
+    return direction === 'incoming' ? 'Handoff from' : 'Handed off to';
+  }
+  const labels: Record<GraphEdge['type'], { incoming: string; outgoing: string }> = {
+    dependency: { incoming: 'Dependency from', outgoing: 'Dependency' },
+    uses: { incoming: 'Used by', outgoing: 'Uses' },
+    delegation: { incoming: 'Delegation from', outgoing: 'Delegated to' },
+    critique: { incoming: 'Critique from', outgoing: 'Critique of' },
+    review: { incoming: 'Review from', outgoing: 'Review of' },
+    escalation: { incoming: 'Escalation from', outgoing: 'Escalated to' },
+    data_flow: { incoming: 'Data from', outgoing: 'Data to' },
+    approval: { incoming: 'Approval from', outgoing: 'Approval for' },
+    member_of: { incoming: 'Contains member', outgoing: 'Member of' },
+    produces: { incoming: 'Produced by', outgoing: 'Produces' },
+  };
+  return labels[edge.type][direction];
+}
+
+/** Present graph adjacency without upgrading direction or topology into causality. */
 export function deriveRelationships(
   nodeId: string,
   edges: readonly GraphEdge[],
 ): DerivedRelationship[] {
-  const out: DerivedRelationship[] = [];
-  const children = edges
-    .filter((e) => e.source === nodeId)
-    .map((e) => e.target);
-  if (children.length > 0) {
-    out.push({ kind: 'children', edgeType: 'outgoing', nodeIds: children, provenance: 'projection' });
+  const grouped = new Map<string, {
+    kind: DerivedRelationship['kind'];
+    edgeType: string;
+    label: string;
+    nodeIds: string[];
+    evidenceAnchors: string[];
+  }>();
+  for (const edge of edges) {
+    const kind = edge.source === nodeId ? 'outgoing' : edge.target === nodeId ? 'incoming' : undefined;
+    if (!kind) continue;
+    const label = relationshipLabel(edge, kind);
+    const key = `${kind}:${edge.type}:${label}`;
+    const group = grouped.get(key) ?? {
+      kind,
+      edgeType: edge.type,
+      label,
+      nodeIds: [],
+      evidenceAnchors: [],
+    };
+    group.nodeIds.push(kind === 'outgoing' ? edge.target : edge.source);
+    group.evidenceAnchors.push(edge.source_event_id ?? edge.evidence_span_id ?? edge.id);
+    grouped.set(key, group);
   }
-  const parents = edges
-    .filter((e) => e.target === nodeId)
-    .map((e) => e.source);
-  if (parents.length > 0) {
-    out.push({ kind: 'parent', edgeType: 'incoming', nodeIds: parents, provenance: 'projection' });
-  }
-  const producers = edges
-    .filter((e) => e.target === nodeId && (e.type === 'produces' || e.type === 'uses' || e.type === 'data_flow'))
-    .map((e) => e.source);
-  if (producers.length > 0) {
-    out.push({ kind: 'producer', edgeType: 'produces|uses|data_flow', nodeIds: producers, provenance: 'projection' });
-  }
-  const consumers = edges
-    .filter((e) => e.source === nodeId && (e.type === 'produces' || e.type === 'uses' || e.type === 'data_flow'))
-    .map((e) => e.target);
-  if (consumers.length > 0) {
-    out.push({ kind: 'consumer', edgeType: 'produces|uses|data_flow', nodeIds: consumers, provenance: 'projection' });
-  }
-  const deps = edges
-    .filter((e) => e.source === nodeId && e.type === 'dependency')
-    .map((e) => e.target);
-  if (deps.length > 0) {
-    out.push({ kind: 'dependency', edgeType: 'dependency', nodeIds: deps, provenance: 'projection' });
-  }
-  return out;
+  return [...grouped.values()]
+    .map((group) => ({
+      ...group,
+      nodeIds: [...new Set(group.nodeIds)],
+      evidenceAnchors: [...new Set(group.evidenceAnchors)],
+      provenance: 'projection' as const,
+    }))
+    .sort((left, right) => `${left.kind}:${left.edgeType}:${left.label}`.localeCompare(`${right.kind}:${right.edgeType}:${right.label}`));
 }
 
 // ---------------------------------------------------------------------------

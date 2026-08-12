@@ -9,6 +9,7 @@ import { useNodeProjection } from '@/hooks/useNodeProjection';
 import { api } from '@/lib/api';
 import { findFrameForEvent, selectEnvelopeForNode, sequenceNumThroughFrame } from '@/lib/replayFrame';
 import { runtimeActivityInspectorView } from '@/lib/runtimeActivityPresentation';
+import { runtimeRelationshipViews } from '@/lib/runtimeRelationshipPresentation';
 import { useAuditStore } from '@/stores/auditStore';
 import { useGraphStore } from '@/stores/graphStore';
 import { useLayoutStore } from '@/stores/layoutStore';
@@ -118,8 +119,10 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null,
     return auditEvents.find((event) => event.sequence_num === activeEvidenceTarget.sequenceNum) ?? null;
   }, [activeEvidenceTarget, auditEvents]);
 
-  const openEvidence = (sequenceNum: number) => {
-    const envelope = auditEvents.find((event) => event.sequence_num === sequenceNum) ?? null;
+  const openEvidence = (sequenceNum: number, eventId?: string) => {
+    const envelope = (eventId ? auditEvents.find((event) => event.id === eventId) : undefined)
+      ?? auditEvents.find((event) => event.sequence_num === sequenceNum)
+      ?? null;
     setEvidenceTarget({
       sequenceNum,
       eventId: envelope?.id ?? null,
@@ -239,7 +242,17 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null,
                 </div>
               )
             ) : selectedActivity ? (
-              <RuntimeActivityInspector activity={selectedActivity} onViewEvidence={openEvidence} />
+              <RuntimeActivityInspector
+                activity={selectedActivity}
+                explanation={runtimeExplanation!}
+                onViewEvidence={openEvidence}
+                onSelectActivity={(activityId) => {
+                  setSelectedNodeId(null);
+                  setSelectedEventId(null);
+                  setEvidenceTarget(null);
+                  setSelectedActivityId(activityId);
+                }}
+              />
             ) : selectedNode ? (
               <div className="space-y-3">
                 {selectedNode.metadata?.runtime_activity_representation === 'multiple_activities_not_representable' && (
@@ -297,8 +310,19 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null,
   );
 }
 
-function RuntimeActivityInspector({ activity, onViewEvidence }: { activity: RuntimeExplanationActivity; onViewEvidence: (sequenceNum: number) => void }) {
+function RuntimeActivityInspector({
+  activity,
+  explanation,
+  onViewEvidence,
+  onSelectActivity,
+}: {
+  activity: RuntimeExplanationActivity;
+  explanation: RuntimeExplanationProjection;
+  onViewEvidence: (sequenceNum: number, eventId?: string) => void;
+  onSelectActivity: (activityId: string) => void;
+}) {
   const view = runtimeActivityInspectorView(activity);
+  const relationships = runtimeRelationshipViews(explanation, activity.id);
   return (
     <div className="space-y-4 rounded-sm border border-border-subtle bg-bg-tertiary p-4">
       <div>
@@ -314,20 +338,44 @@ function RuntimeActivityInspector({ activity, onViewEvidence }: { activity: Runt
         {view.sourceSpanId && <><dt className="text-text-muted">Source span</dt><dd className="break-all font-mono text-text-secondary">{view.sourceSpanId}</dd></>}
       </dl>
       {view.limitation && <p className="rounded-sm border border-warning/25 p-2 text-[11px] text-text-secondary">{view.limitation}</p>}
+      {relationships.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">Relationships</p>
+          {relationships.map((relationship) => (
+            <div key={relationship.id} className="rounded-sm border border-border-subtle p-2 text-[11px]">
+              <span className="font-medium text-text-secondary">{relationship.label}</span>
+              {relationship.relatedActivityId ? (
+                <button type="button" onClick={() => onSelectActivity(relationship.relatedActivityId!)} className="ml-2 text-accent hover:text-accent-strong">
+                  {relationship.relatedTitle ?? relationship.relatedActivityId}
+                </button>
+              ) : (
+                <span className="ml-2 text-text-muted">target unavailable at this frame</span>
+              )}
+              <div className="mt-1">
+                {relationship.evidenceRefs.map((reference) => (
+                  <button key={`${relationship.id}:${reference.event_id}`} type="button" onClick={() => onViewEvidence(reference.sequence_num, reference.event_id)} className="mr-2 font-mono text-[10px] text-accent hover:text-accent-strong">
+                    {reference.event_id} · sequence #{reference.sequence_num}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="space-y-1.5">
         <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">Supporting evidence</p>
         {(view.lifecycleProvenance?.evidenceRefs ?? []).map((reference, index) => (
-          <button key={`lifecycle:${reference.eventId}:${index}`} type="button" onClick={() => onViewEvidence(reference.sequenceNum)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
+          <button key={`lifecycle:${reference.eventId}:${index}`} type="button" onClick={() => onViewEvidence(reference.sequenceNum, reference.eventId)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
             Lifecycle {reference.eventId} · sequence #{reference.sequenceNum}
           </button>
         ))}
         {(view.outcomeProvenance?.evidenceRefs ?? []).map((reference, index) => (
-          <button key={`outcome:${reference.eventId}:${index}`} type="button" onClick={() => onViewEvidence(reference.sequenceNum)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
+          <button key={`outcome:${reference.eventId}:${index}`} type="button" onClick={() => onViewEvidence(reference.sequenceNum, reference.eventId)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
             Outcome {reference.eventId} · sequence #{reference.sequenceNum}
           </button>
         ))}
         {!view.lifecycleProvenance && !view.outcomeProvenance && view.evidenceRefs.map((reference, index) => (
-          <button key={`${reference.eventId}:${index}`} type="button" onClick={() => onViewEvidence(reference.sequenceNum)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
+          <button key={`${reference.eventId}:${index}`} type="button" onClick={() => onViewEvidence(reference.sequenceNum, reference.eventId)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
             Activity {reference.eventId} · sequence #{reference.sequenceNum}
           </button>
         ))}

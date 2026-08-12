@@ -142,15 +142,17 @@ describe('ROPS provenance — relationship derivation (6.4)', () => {
     { id: 'e3', source: 'agent2', target: 'a1', type: 'produces', status: 'active' },
     { id: 'e4', source: 'a1', target: 'art1', type: 'produces', status: 'active' },
   ];
-  it('derives children/parent/producer/consumer/dependency as projections', () => {
+  it('derives direction-aware neutral relation labels with evidence anchors', () => {
     const rels = deriveRelationships('a1', edges);
-    const kinds = rels.map((r) => r.kind);
-    expect(kinds).toContain('children');
-    expect(kinds).toContain('parent');
-    expect(kinds).toContain('producer');
-    expect(kinds).toContain('consumer');
-    expect(kinds).toContain('dependency');
-    for (const r of rels) expect(r.provenance).toBe('projection');
+    expect(rels).toEqual([
+      expect.objectContaining({ kind: 'incoming', label: 'Produced by', evidenceAnchors: ['e3'] }),
+      expect.objectContaining({ kind: 'outgoing', label: 'Dependency', evidenceAnchors: ['e1'] }),
+      expect.objectContaining({ kind: 'outgoing', label: 'Produces', evidenceAnchors: ['e4'] }),
+      expect.objectContaining({ kind: 'outgoing', label: 'Uses', evidenceAnchors: ['e2'] }),
+    ]);
+    for (const relation of rels) {
+      expect(relation.provenance).toBe('projection');
+    }
   });
   it('returns empty for an isolated node', () => {
     expect(deriveRelationships('lonely', edges)).toEqual([]);

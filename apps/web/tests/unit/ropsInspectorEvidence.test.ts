@@ -73,7 +73,7 @@ describe('ropsInspectorEvidence', () => {
     expect(outputsRow).not.toContain('secret-private-output');
     expect(html).not.toContain('basestation.aiops.llm.output.summary');
     expect(html).not.toContain('secret-private-output');
-    expect(html).toContain('story_sufficiency');
+    expect(html).toContain('operator_context_sufficiency');
     expect(html).not.toContain('evidence_condition');
   });
 
@@ -108,6 +108,26 @@ describe('ropsInspectorEvidence', () => {
 
     expect(html).not.toContain(longOutput);
     expect(html).toContain('y'.repeat(20));
+  });
+
+  it('does not reuse an activity subtitle as trigger evidence', () => {
+    const activity: RuntimeActivity = {
+      id: 'llm:req-3', kind: 'llm', label: 'LLM | test-model',
+      subtitle: 'structural context only', action: 'LLM generated',
+      outcome: 'Completed', status: 'completed', provenance: 'projection',
+      operator_facing_record: operatorRecord({
+        trigger: { condition: 'not_recorded', evidence_refs: [] },
+      }),
+    };
+    const node = graphNode(activity);
+    const html = renderToString(createElement(RopsInspector, {
+      node, agentProjection: null, edges: [], nodes: [node], mission: null,
+      eventEnvelope: null, eventEnvelopes: [], runtimeAgentState: null,
+      interrupt: null, branch: null, snapshot: null,
+    }));
+    const triggerRow = html.split('trigger</span>')[1]?.split('inputs</span>')[0] ?? '';
+
+    expect(triggerRow).not.toContain('structural context only');
   });
 });
 

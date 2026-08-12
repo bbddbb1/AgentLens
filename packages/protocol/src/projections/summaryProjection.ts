@@ -22,7 +22,6 @@ import {
   NOISE_EVENT_TYPES,
   payloadAgentId,
   payloadString,
-  type MissionProjectionScratch,
 } from './projectionScratch.js';
 
 const CONCISE_STORY_LIMIT = 5;
@@ -333,32 +332,6 @@ function classifyEvent(
   }
 }
 
-function buildHeadline(scratch: MissionProjectionScratch, status: string, requiresHuman: boolean): string {
-  if (requiresHuman) return 'Waiting for human intervention';
-  if (status === 'completed') return 'Execution completed';
-  if (status === 'failed') return 'Execution failed';
-  if (scratch.phase === 'planning') return 'Planning execution approach';
-  if (scratch.phase === 'human_review' || scratch.phase === 'waiting_for_human') {
-    return 'Paused for human review';
-  }
-
-  const activeAgents = [...scratch.agents.values()].filter((a) => a.status === 'active');
-  const waitingAgents = [...scratch.agents.values()].filter((a) => a.status === 'waiting');
-  const failedAgents = [...scratch.agents.values()].filter((a) => a.status === 'failed');
-
-  if (failedAgents.length > 0) {
-    return `${failedAgents[0].name} failed - recovery may be needed`;
-  }
-  if (activeAgents.length > 0) {
-    const names = activeAgents.slice(0, 2).map((a) => a.name).join(', ');
-    return activeAgents.length > 2 ? `${names} and others actively executing` : `${names} actively executing`;
-  }
-  if (waitingAgents.length > 0) {
-    return `${waitingAgents[0].name} waiting on upstream work`;
-  }
-  return 'Execution in progress';
-}
-
 function toCompatibilityActivity(activity: import('../types.js').RuntimeExplanationActivity): RuntimeActivity {
   return {
     id: activity.id,
@@ -384,44 +357,15 @@ function toCompatibilityActivity(activity: import('../types.js').RuntimeExplanat
     invocation_id: activity.invocation_id,
     semantic_provenance: activity.semantic_provenance,
     operator_facing_record: activity.operator_facing_record,
-    story_critical: activity.story_critical,
-    story_critical_limitation: activity.story_critical_limitation,
     provenance: 'projection',
   };
-}
-
-function buildPendingWork(scratch: MissionProjectionScratch): RuntimeSummaryPendingWork[] {
-  const pending: RuntimeSummaryPendingWork[] = [];
-
-  for (const [interruptId, interrupt] of scratch.interrupts) {
-    if (interrupt.status === 'pending') {
-      pending.push({
-        kind: 'interrupt',
-        text: interrupt.reason
-          ? `Human decision required: ${truncate(interrupt.reason, 100)}`
-          : `Human decision required (${interruptId})`,
-      });
-    }
-  }
-
-  for (const [, agent] of scratch.agents) {
-    if (agent.status === 'waiting') {
-      pending.push({ kind: 'waiting', text: `${agent.name} waiting for input or handoff` });
-    } else if (agent.status === 'reviewing') {
-      pending.push({ kind: 'review', text: `${agent.name} in review` });
-    } else if (agent.status === 'failed') {
-      pending.push({ kind: 'blocked', text: `${agent.name} blocked after failure` });
-    }
-  }
-
-  return pending;
 }
 
 function buildDeterministicNarrative(summary: Omit<RuntimeSummary, 'narrative' | 'source'>): string {
   const lines: string[] = [summary.headline];
   const recentProgress = summary.progress.slice(-5);
   if (recentProgress.length > 0) {
-    lines.push(recentProgress.map((entry) => entry.text).join(' -> '));
+    lines.push(`Activities observed at this frame: ${recentProgress.map((entry) => entry.text).join('; ')}`);
   }
   if (summary.pending_work.length > 0) {
     lines.push(`Pending: ${summary.pending_work[0].text}`);
@@ -479,12 +423,8 @@ function summaryPendingWork(
         text: reason ? `Human decision required: ${reason}` : `${activity.title} waiting`,
       });
     }
-    if (activity.status === 'failed') {
-      pending.push({
-        kind: 'blocked',
-        text: `${activity.title} failed`,
-      });
-    }
+    // Failure is reported in warnings. It does not, by itself, establish that
+    // another activity or the run is blocked.
   }
   return pending;
 }
@@ -562,7 +502,8 @@ export function projectRuntimeSummary(input: ProjectRuntimeSummaryInput): Runtim
 
   const pending_work = summaryPendingWork(explanation);
   const requires_human = explanation.run_outcome === 'waiting';
-  const is_blocked = explanation.run_outcome === 'failed' || requires_human;
+  // No canonical RuntimeExplanation fact currently establishes blocking.
+  const is_blocked = false;
   const sequence_num = explanation.as_of_sequence_num;
   const frameTimestamp = explanation.as_of_timestamp ?? events[events.length - 1]?.timestamp ?? new Date(0).toISOString();
   const frame = {
