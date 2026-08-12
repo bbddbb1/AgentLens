@@ -162,11 +162,12 @@ function toCompatibilityActivity(
     subtitle: activity.subtitle,
     action: activity.action,
     outcome:
-      activity.status === 'failed' ? 'Failed'
+      activity.outcome
+      ?? (activity.status === 'failed' ? 'Failed'
         : activity.status === 'waiting' ? 'Waiting'
           : activity.status === 'completed' ? 'Completed'
             : activity.status === 'unknown' ? 'Unknown'
-            : 'Active',
+            : 'Active'),
     status: activity.status,
     sequence_num: activity.sequence_num,
     timestamp: activity.started_at ?? activity.ended_at,

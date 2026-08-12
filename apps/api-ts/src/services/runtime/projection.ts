@@ -47,7 +47,7 @@ function canonicalValue(value: unknown): string {
 function stableSpanEventId(spanId: string, event: any, occurrence: number, revision = 1): string {
   const identity = canonicalValue({
     name: event?.name ?? '',
-    timestamp: event?.timestamp ?? event?.time ?? '',
+    timestamp: event?.timestamp ?? event?.time_unix_nano ?? event?.time ?? '',
     attributes: event?.attributes ?? {},
   });
   const revisionSuffix = revision > 1 ? `@r${revision}` : '';
@@ -94,7 +94,7 @@ function runtimeTimestampNanos(value: unknown, fallback: unknown): string {
 }
 
 function eventTimestampIso(event: any, fallback: string): string {
-  const persisted = event?.timestamp;
+  const persisted = event?.timestamp ?? event?.time_unix_nano;
   if (persisted !== undefined && persisted !== null && persisted !== '') {
     if ((typeof persisted === 'string' && /^\d+$/.test(persisted)) || typeof persisted === 'bigint') {
       return nanoToIso(persisted);
@@ -138,22 +138,15 @@ function isExecutionRootCandidate(span: any): boolean {
 
 function indexNormalizedActivities(facts: ReturnType<typeof normalizeSpansToFacts>) {
   const bySpanId = new Map<string, (typeof facts.activities)[number]>();
-  /** Prefer run/correlation keys so repeated same-name events stay distinct. */
-  const byInvocationKey = new Map<string, (typeof facts.activities)[number]>();
   const bySpanEventIndex = new Map<string, (typeof facts.activities)[number]>();
+  const observationBySpanId = new Map<string, (typeof facts.activities)[number]['observations'][number]>();
+  const observationBySpanEventIndex = new Map<string, (typeof facts.activities)[number]['observations'][number]>();
+  const ambiguousSpanIds = new Set<string>();
+  const ambiguousSpanEventIndexes = new Set<string>();
   for (const activity of facts.activities) {
     for (const source of activity.source_references) {
       if (!source.span_id) continue;
       if (source.event_name) {
-        const runId = activity.native_runtime_identity?.run_id ?? activity.correlation.run_id;
-        const correlationId = activity.native_runtime_identity?.activity_correlation_id
-          ?? activity.correlation.activity_correlation_id;
-        if (runId) {
-          byInvocationKey.set(`${source.span_id}:${source.event_name}:run:${runId}`, activity);
-        }
-        if (correlationId) {
-          byInvocationKey.set(`${source.span_id}:${source.event_name}:correlation:${correlationId}`, activity);
-        }
         if (source.event_index !== undefined) {
           bySpanEventIndex.set(`${source.span_id}:${source.event_name}:${source.event_index}`, activity);
         }
@@ -161,8 +154,35 @@ function indexNormalizedActivities(facts: ReturnType<typeof normalizeSpansToFact
         bySpanId.set(source.span_id, activity);
       }
     }
+    for (const observation of activity.observations) {
+      const source = observation.source;
+      if (!source.span_id) continue;
+      if (source.event_name && source.event_index !== undefined) {
+        observationBySpanEventIndex.set(`${source.span_id}:${source.event_name}:${source.event_index}`, observation);
+      } else if (!source.event_name) {
+        observationBySpanId.set(source.span_id, observation);
+      }
+    }
   }
-  return { bySpanId, byInvocationKey, bySpanEventIndex };
+  for (const diagnostic of facts.diagnostics) {
+    if (!diagnostic.ambiguous_activity_identity) continue;
+    for (const source of diagnostic.related_sources ?? (diagnostic.source ? [diagnostic.source] : [])) {
+      if (!source.span_id) continue;
+      if (source.event_name && source.event_index !== undefined) {
+        ambiguousSpanEventIndexes.add(`${source.span_id}:${source.event_name}:${source.event_index}`);
+      } else if (!source.event_name) {
+        ambiguousSpanIds.add(source.span_id);
+      }
+    }
+  }
+  return {
+    bySpanId,
+    bySpanEventIndex,
+    observationBySpanId,
+    observationBySpanEventIndex,
+    ambiguousSpanIds,
+    ambiguousSpanEventIndexes,
+  };
 }
 
 function lookupNormalizedEventActivity(
@@ -176,6 +196,59 @@ function lookupNormalizedEventActivity(
   // projection resolves the already-normalized source reference only.
   void eventAttrs;
   return index.bySpanEventIndex.get(`${spanId}:${eventName}:${eventIndex}`);
+}
+
+function lookupNormalizedEventObservation(
+  index: ReturnType<typeof indexNormalizedActivities>,
+  spanId: string,
+  eventName: string,
+  eventIndex: number,
+) {
+  return index.observationBySpanEventIndex.get(`${spanId}:${eventName}:${eventIndex}`);
+}
+
+const INTERNAL_RUNTIME_ACTIVITY = Symbol.for('agentlens.internal.runtime-activity');
+
+type CanonicalActivitySummary = Pick<
+  ReturnType<typeof normalizeSpansToFacts>['activities'][number],
+  'id' | 'kind' | 'invocation_id' | 'identity_basis' | 'lifecycle' | 'outcome'
+>;
+
+function canonicalActivityMetadata(
+  activity: CanonicalActivitySummary | undefined,
+  observation?: { lifecycle: string; outcome: string },
+  ambiguous = false,
+): Record<PropertyKey, unknown> {
+  const annotation: Record<string, unknown> = { authority: 'normalized' };
+  if (ambiguous) annotation.ambiguity = 'missing_explicit_invocation_identity';
+  if (activity && activity.kind !== 'unknown' && !ambiguous) {
+    annotation.activity = {
+      id: activity.id,
+      kind: activity.kind,
+      ...(activity.invocation_id ? { invocation_id: activity.invocation_id } : {}),
+      identity_basis: activity.identity_basis,
+      lifecycle: activity.lifecycle,
+      outcome: activity.outcome,
+    };
+    annotation.observation = {
+      lifecycle: observation?.lifecycle ?? activity.lifecycle,
+      outcome: observation?.outcome ?? activity.outcome,
+    };
+  }
+  return {
+    [INTERNAL_RUNTIME_ACTIVITY]: annotation,
+  };
+}
+
+function canonicalInterruptActivity(interruptId: string, lifecycle: 'started' | 'completed'): CanonicalActivitySummary {
+  return {
+    id: `human:${interruptId}`,
+    kind: 'human',
+    invocation_id: interruptId,
+    identity_basis: 'explicit_invocation',
+    lifecycle,
+    outcome: 'unknown',
+  };
 }
 
 function parseAttrJson(val: any): any {
@@ -500,7 +573,7 @@ export function projectTraceSnapshot(
         ...span,
         events: Array.isArray(span.events)
           ? span.events.filter((event: any) =>
-              nanoBigInt(event?.timestamp ?? event?.time, span.start_time_unix_nano) <= cutoff)
+              nanoBigInt(event?.timestamp ?? event?.time_unix_nano ?? event?.time, span.start_time_unix_nano) <= cutoff)
           : [],
       }));
   }
@@ -608,11 +681,13 @@ export function projectTraceSnapshot(
     let label = operationName;
     const normalizedActivity = normalizedActivityBySpanId.get(span.span_id);
     const status: any =
-      normalizedActivity?.outcome === 'failure'
+      normalizedActivity?.lifecycle === 'failed' || normalizedActivity?.outcome === 'failure'
         ? 'failed'
-        : normalizedActivity?.outcome === 'success'
+        : normalizedActivity?.lifecycle === 'completed'
           ? 'completed'
-          : span.status_code === 'ERROR' ? 'failed' : span.status_code === 'OK' ? 'completed' : 'active';
+          : normalizedActivity?.lifecycle === 'started'
+            ? 'active'
+            : span.status_code === 'ERROR' ? 'failed' : span.status_code === 'OK' ? 'completed' : 'active';
     let agentId: string | undefined;
     let agentRole: string | undefined;
     let agentTeam: string | undefined;
@@ -927,13 +1002,13 @@ export function projectReplayEvidence(
     || left.admission_seq - right.admission_seq
     || String(left.span_id).localeCompare(String(right.span_id)),
   );
-  const normalizedFacts = normalizeSpansToFacts(sortedSpans);
-  const normalizedActivityIndex = indexNormalizedActivities(normalizedFacts);
+  const normalizedIndexByAdmission = new Map<number, ReturnType<typeof indexNormalizedActivities>>();
+  for (const cursor of [...new Set(admittedSpans.map((span) => span.admission_seq))]) {
+    const frameSpans = scopeSpanIdsForBranchView(materializeSpanRevisions(admittedSpans, cursor), branchId);
+    normalizedIndexByAdmission.set(cursor, indexNormalizedActivities(normalizeSpansToFacts(frameSpans)));
+  }
   const executionRootCandidates = sortedSpans.filter(isExecutionRootCandidate);
   const executionRootCandidateIds = new Set(executionRootCandidates.map((span) => String(span.span_id)));
-  const {
-    bySpanId: normalizedActivityBySpanId,
-  } = normalizedActivityIndex;
 
   // Pre-build a map from span_id to trace_id (PR-4, G14)
   const spanTraceMap = new Map<string, string>();
@@ -950,13 +1025,16 @@ export function projectReplayEvidence(
 
   // Add span-based events
   for (const span of sortedSpans) {
+    const normalizedActivityIndex = normalizedIndexByAdmission.get(span.admission_seq)
+      ?? indexNormalizedActivities(normalizeSpansToFacts([span]));
     const tier = classifySpan(span);
     const startIso = nanoToIso(span.start_time_unix_nano);
     const attrs = span.attributes ?? {};
     const operationName = publicTelemetryName(attrs, span.operation_name ?? span.name ?? 'span');
     const agentId = attrs['gen_ai.agent.id'] ?? attrs['agentlens.agent.id'];
     const eventBranchId = span.branch_id ?? branchId;
-    const normalizedActivity = normalizedActivityBySpanId.get(span.span_id);
+    const normalizedActivity = normalizedActivityIndex.bySpanId.get(span.span_id);
+    const spanIdentityAmbiguous = normalizedActivityIndex.ambiguousSpanIds.has(span.span_id);
     const nativeRuntimeMetadata = publicRuntimeIdentity(normalizedActivity?.native_runtime_identity);
 
     events.push({
@@ -984,6 +1062,13 @@ export function projectReplayEvidence(
         evidence_logical_id: logicalSpanId(span),
         evidence_branch_id: span.branch_id,
         ...nativeRuntimeMetadata,
+        ...canonicalActivityMetadata(
+          normalizedActivity,
+          hasRecordedEnd(span.end_time_unix_nano)
+            ? { lifecycle: 'started', outcome: 'unknown' }
+            : normalizedActivityIndex.observationBySpanId.get(span.span_id),
+          spanIdentityAmbiguous,
+        ),
         ...(executionRootCandidateIds.has(String(span.span_id)) ? {
           runtime_root_candidate: true,
           runtime_lifecycle: 'started',
@@ -1024,10 +1109,18 @@ export function projectReplayEvidence(
           eventAttrs,
           currentEventIndex,
         );
+        const eventObservation = lookupNormalizedEventObservation(
+          normalizedActivityIndex,
+          span.span_id,
+          otelEvent.name,
+          currentEventIndex,
+        );
+        const eventIdentityAmbiguous = normalizedActivityIndex.ambiguousSpanEventIndexes
+          .has(`${span.span_id}:${otelEvent.name}:${currentEventIndex}`);
         const eventNativeRuntimeMetadata = publicRuntimeIdentity(eventActivity?.native_runtime_identity);
         const eventIdentity = canonicalValue({
           name: otelEvent?.name ?? '',
-          timestamp: otelEvent?.timestamp ?? otelEvent?.time ?? '',
+          timestamp: otelEvent?.timestamp ?? otelEvent?.time_unix_nano ?? otelEvent?.time ?? '',
           attributes: otelEvent?.attributes ?? {},
         });
         const occurrence = eventIdentityOccurrences.get(eventIdentity) ?? 0;
@@ -1048,7 +1141,7 @@ export function projectReplayEvidence(
           metadata: {
             maturity_tier: tier,
             runtime_timestamp_unix_nano: runtimeTimestampNanos(
-              otelEvent?.timestamp ?? otelEvent?.time,
+              otelEvent?.timestamp ?? otelEvent?.time_unix_nano ?? otelEvent?.time,
               span.start_time_unix_nano,
             ),
             evidence_admission_seq: span.admission_seq,
@@ -1057,6 +1150,7 @@ export function projectReplayEvidence(
             evidence_logical_id: logicalSpanId(span),
             evidence_branch_id: span.branch_id,
             ...eventNativeRuntimeMetadata,
+            ...canonicalActivityMetadata(eventActivity, eventObservation, eventIdentityAmbiguous),
             ...(runLifecycle ? {
               runtime_lifecycle: runLifecycle,
               runtime_lifecycle_basis: 'explicit_event',
@@ -1104,6 +1198,10 @@ export function projectReplayEvidence(
           evidence_logical_id: logicalSpanId(span),
           evidence_branch_id: span.branch_id,
           ...nativeRuntimeMetadata,
+          ...canonicalActivityMetadata(normalizedActivity, {
+            lifecycle: normalizedActivity?.lifecycle ?? (span.status_code === 'ERROR' ? 'failed' : 'completed'),
+            outcome: normalizedActivity?.outcome ?? (span.status_code === 'ERROR' ? 'failure' : 'unknown'),
+          }, spanIdentityAmbiguous),
           ...(executionRootCandidateIds.has(String(span.span_id)) ? {
             runtime_root_candidate: true,
             runtime_lifecycle: span.status_code === 'ERROR' ? 'failed' : 'completed',
@@ -1161,6 +1259,7 @@ export function projectReplayEvidence(
         runtime_timestamp_unix_nano: String(BigInt(new Date(intr.created_at).getTime()) * 1_000_000n),
         evidence_admission_seq: requestedAdmission,
         evidence_admitted_at: intr.requested_admitted_at ?? createdIso,
+        ...canonicalActivityMetadata(canonicalInterruptActivity(String(intr.interrupt_id), 'started')),
       },
       causal: runtimeSpanId ? { parent_span_id: runtimeSpanId } : undefined,
       source_span_id: intr.span_id ?? undefined,
@@ -1191,6 +1290,7 @@ export function projectReplayEvidence(
           runtime_timestamp_unix_nano: String(BigInt(new Date(intr.decided_at).getTime()) * 1_000_000n),
           evidence_admission_seq: decidedAdmission,
           evidence_admitted_at: intr.decided_admitted_at ?? decidedIso,
+          ...canonicalActivityMetadata(canonicalInterruptActivity(String(intr.interrupt_id), 'completed')),
         },
         causal: {
           parent_span_id: runtimeSpanId,
@@ -1224,6 +1324,7 @@ export function projectReplayEvidence(
           runtime_timestamp_unix_nano: String(BigInt(new Date(intr.resumed_at).getTime()) * 1_000_000n),
           evidence_admission_seq: resumedAdmission,
           evidence_admitted_at: intr.resumed_admitted_at ?? resumedIso,
+          ...canonicalActivityMetadata(canonicalInterruptActivity(String(intr.interrupt_id), 'completed')),
         },
         causal: {
           parent_span_id: runtimeSpanId,

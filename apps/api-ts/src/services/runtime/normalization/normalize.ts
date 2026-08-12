@@ -9,7 +9,7 @@ import {
   isLangGraphRetrieval,
   nativeRuntimeIdentity,
 } from './langgraph.js';
-import { hasMafMarkers, isMafEnrichmentEvent, isMafRequestEvent, isUnknownMafEvent, mafNativeRuntimeIdentity } from './maf.js';
+import { hasMafMarkers, isMafEnrichmentEvent, isUnknownMafEvent, mafNativeRuntimeIdentity } from './maf.js';
 import {
   genAiTokenUsage,
   lifecycleFromEventAttrs,
@@ -93,16 +93,47 @@ interface Candidate {
   attrs: Record<string, any>;
   activityKey: string;
   agentIds: string[];
+  isEvent: boolean;
+  identityAmbiguous: boolean;
 }
 
 const kindRank: Record<NormalizedActivityKind, number> = {
   unknown: 0,
   agent: 6,
+  workflow: 5,
   tool: 2,
   llm: 3,
   retrieval: 4,
-  interrupt: 5,
+  memory: 2,
+  artifact: 2,
+  human: 5,
+  checkpoint: 2,
 };
+
+const NORMALIZED_ACTIVITY_EVENT_NAMES = new Set([
+  'agent.tool.call',
+  'tool.called',
+  'tool.call',
+  'tool.completed',
+  'tool.result',
+  'tool.failed',
+  'tool.error',
+  'gen_ai.call',
+  'gen_ai.error',
+  'agent.interrupt.requested',
+  'agent.interrupt.resumed',
+  'memory.written',
+  'memory.read',
+  'agent.memory.write',
+  'artifact.created',
+  'artifact.updated',
+  'task.started',
+  'task.completed',
+  'task.failed',
+  'workflow.started',
+  'workflow.completed',
+  'workflow.error',
+]);
 
 export function normalizeSpansToFacts(spans: any[]): NormalizedRuntimeFacts {
   const ordered = [...spans].sort(compareSpans);
@@ -125,12 +156,14 @@ export function normalizeSpansToFacts(spans: any[]): NormalizedRuntimeFacts {
       }
     }
   }
-  const candidates = ordered.flatMap((span) => [
+  const rawCandidates = ordered.flatMap((span) => [
     candidateForSpan(span, diagnostics),
     ...(span.events ?? [])
-      .filter((event: any) => ['agent.tool.call', 'gen_ai.call', 'gen_ai.error', 'agent.interrupt.requested', 'agent.interrupt.resumed'].includes(event.name) || isMafEnrichmentEvent(event.name))
+      .filter((event: any) => NORMALIZED_ACTIVITY_EVENT_NAMES.has(event.name) || isMafEnrichmentEvent(event.name))
       .map((event: any) => candidateForSpan(span, diagnostics, event)),
   ]);
+  diagnoseNativeCorrelationConflicts(rawCandidates, diagnostics);
+  const candidates = reconcileFallbackIdentities(rawCandidates, diagnostics);
   const groups = new Map<string, Candidate[]>();
   for (const candidate of candidates) {
     const group = groups.get(candidate.activityKey) ?? [];
@@ -229,12 +262,16 @@ function candidateForSpan(span: any, diagnostics: NormalizationDiagnostics[], ev
   const operationName = event?.name ?? span?.operation_name ?? span?.name;
   const eventIndex = event && Array.isArray(span?.events) ? span.events.indexOf(event) : undefined;
   // Event activities must not inherit parent-span OK/success; only explicit event evidence counts.
-  const lifecycle = event
+  let lifecycle = event
     ? lifecycleFromEventAttrs(event.name, attrs)
     : lifecycleFromOtel(span);
-  const outcome = event
+  let outcome = event
     ? outcomeFromEventAttrs(event.name, attrs)
     : outcomeFromOtel(span);
+  if (event?.name === 'agentlens.maf.response_accepted') {
+    lifecycle = 'completed';
+    outcome = 'unknown';
+  }
   const priorEventIdentityAttrs = event
     ? [...(span.events ?? [])]
       .slice(0, Math.max(0, eventIndex ?? 0))
@@ -263,9 +300,12 @@ function candidateForSpan(span: any, diagnostics: NormalizationDiagnostics[], ev
   );
   const kind: NormalizedActivityKind =
     isLangGraphRetrieval(attrs) ? 'retrieval'
-      : event?.name === 'agent.tool.call' ? 'tool'
+      : event?.name === 'agent.tool.call' || event?.name?.startsWith('tool.') ? 'tool'
       : event?.name === 'gen_ai.call' || event?.name === 'gen_ai.error' ? 'llm'
-        : event?.name === 'agent.interrupt.requested' || event?.name === 'agent.interrupt.resumed' || isMafRequestEvent(event?.name) ? 'interrupt'
+        : event?.name === 'agent.interrupt.requested' || event?.name === 'agent.interrupt.resumed' ? 'human'
+          : event?.name === 'memory.written' || event?.name === 'memory.read' || event?.name === 'agent.memory.write' ? 'memory'
+            : event?.name?.startsWith('artifact.') ? 'artifact'
+              : event?.name?.startsWith('task.') || event?.name?.startsWith('workflow.') ? 'workflow'
           : activityKindFromCompat(attrs, operationName);
   if (kind === 'unknown' && Object.keys(attrs).some((key) => key.startsWith('agentlens.langgraph.'))) {
     diagnostics.push({ code: 'unknown_telemetry', message: `Unsupported LangGraph telemetry on ${span?.span_id ?? 'span'}`, source });
@@ -273,18 +313,26 @@ function candidateForSpan(span: any, diagnostics: NormalizationDiagnostics[], ev
   if (kind === 'unknown' && hasMafMarkers(attrs)) {
     diagnostics.push({ code: 'unknown_telemetry', message: `Unsupported MAF telemetry on ${span?.span_id ?? 'span'}`, source });
   }
-  const activityKey =
-    identity?.run_id
-      ? `run:${identity.run_id}`
-      : identity?.activity_correlation_id
-        ? `correlation:${identity.activity_correlation_id}`
-        : event
-          ? `span:${span?.span_id ?? 'unknown'}:event:${event.name}:${eventIndex ?? 0}`
-          : `span:${span?.span_id ?? `${operationName ?? 'unknown'}:${span?.start_time_unix_nano ?? ''}`}`;
+  const invocation = resolveInvocationIdentity(kind, attrs, identity);
+  if (invocation.ambiguous) {
+    diagnostics.push({
+      code: 'ambiguous_activity_identity',
+      message: `Conflicting explicit invocation identifiers for ${kind} activity on ${span?.span_id ?? 'span'}`,
+      source,
+      related_sources: [source],
+      ambiguous_activity_identity: true,
+    });
+  }
+  const spanFallback = String(span?.span_id ?? `${operationName ?? 'unknown'}:${span?.start_time_unix_nano ?? ''}`);
+  const activityKey = invocation.id
+    ? `${kind}:${invocation.id}`
+    : `${kind}:span:${spanFallback}`;
   return {
     activity: {
       id: activityKey,
       kind,
+      invocation_id: invocation.id,
+      identity_basis: invocation.id ? 'explicit_invocation' : 'span_fallback',
       lifecycle,
       outcome,
       span_id: span?.span_id,
@@ -298,12 +346,161 @@ function candidateForSpan(span: any, diagnostics: NormalizationDiagnostics[], ev
       native_runtime_identity: identity,
       token_usage: genAiTokenUsage(attrs),
       source_references: [source],
+      observations: [{ source, lifecycle, outcome }],
     },
     span,
     attrs,
     activityKey,
     agentIds: [attrs['gen_ai.agent.id'], attrs['agentlens.agent.id']].filter((value): value is string => value !== undefined && value !== null).map(String),
+    isEvent: Boolean(event),
+    identityAmbiguous: invocation.ambiguous,
   };
+}
+
+const INVALID_INVOCATION_IDS = new Set(['unknown', 'unset', 'none', 'null', 'n/a']);
+
+function recordedIdentityValues(attrs: Record<string, any>, keys: string[]): string[] {
+  return [...new Set(keys
+    .map((key) => attrs[key])
+    .filter((value) => value !== undefined && value !== null)
+    .map((value) => String(value).trim())
+    .filter((value) => value.length > 0 && !INVALID_INVOCATION_IDS.has(value.toLowerCase())))];
+}
+
+function resolveInvocationIdentity(
+  kind: NormalizedActivityKind,
+  attrs: Record<string, any>,
+  identity: NativeRuntimeIdentity | undefined,
+): { id?: string; ambiguous: boolean } {
+  const genericKeys: Partial<Record<NormalizedActivityKind, string[]>> = {
+    tool: ['tool_call_id', 'gen_ai.tool.call_id', 'gen_ai.tool.call.id', 'causal.tool_call_id', 'basestation.aiops.tool.call_id'],
+    llm: ['gen_ai.request.id', 'llm.request_id', 'request_id'],
+    retrieval: ['retrieval.request_id', 'retrieval_request_id', 'search.request_id', 'request_id', 'tool_call_id'],
+    human: ['interrupt_id', 'gen_ai.agent.interrupt.id'],
+    agent: ['gen_ai.agent.invocation_id', 'agent.invocation_id', 'invocation_id'],
+    workflow: ['gen_ai.workflow.step_id', 'workflow_step_id'],
+    artifact: ['artifact_id', 'artifact_name', 'name'],
+    checkpoint: ['checkpoint_id'],
+  };
+  const generic = recordedIdentityValues(attrs, genericKeys[kind] ?? []);
+  if (generic.length > 0) return { id: generic[0], ambiguous: generic.length > 1 };
+
+  if (kind === 'human') {
+    const requestValues = [...new Set([identity?.interrupt_request_id, identity?.request_id]
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0 && !INVALID_INVOCATION_IDS.has(value.toLowerCase())))];
+    if (requestValues.length > 0) {
+      return { id: requestValues[0], ambiguous: requestValues.length > 1 };
+    }
+  }
+  const translated = [identity?.activity_correlation_id];
+  const adapterValues = [...new Set(translated
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0 && !INVALID_INVOCATION_IDS.has(value.toLowerCase())))];
+  return { id: adapterValues[0], ambiguous: adapterValues.length > 1 };
+}
+
+function reconcileFallbackIdentities(
+  candidates: Candidate[],
+  diagnostics: NormalizationDiagnostics[],
+): Candidate[] {
+  const bySpanAndKind = new Map<string, Candidate[]>();
+  for (const candidate of candidates) {
+    const key = `${candidate.activity.span_id ?? ''}:${candidate.activity.kind}`;
+    const group = bySpanAndKind.get(key) ?? [];
+    group.push(candidate);
+    bySpanAndKind.set(key, group);
+  }
+
+  const excluded = new Set<Candidate>(candidates.filter((candidate) => candidate.identityAmbiguous));
+  for (const [spanKind, group] of bySpanAndKind) {
+    const events = group.filter((candidate) => candidate.isEvent && !candidate.identityAmbiguous);
+    const fallbackEvents = events.filter((candidate) => !candidate.activity.invocation_id);
+    const explicitEventIds = new Set(events
+      .map((candidate) => candidate.activity.invocation_id)
+      .filter((value): value is string => Boolean(value)));
+    const fallbackSpans = group.filter((candidate) => !candidate.isEvent && !candidate.activity.invocation_id);
+    const unsafeFallback = !hasSafeLifecycleFallback(fallbackEvents)
+      || (fallbackEvents.length > 0 && explicitEventIds.size > 0)
+      || group.some((candidate) => candidate.identityAmbiguous);
+
+    if (unsafeFallback) {
+      for (const candidate of [...fallbackEvents, ...fallbackSpans]) excluded.add(candidate);
+      const source = fallbackEvents[0]?.activity.source_references[0]
+        ?? fallbackSpans[0]?.activity.source_references[0]
+        ?? group[0]?.activity.source_references[0];
+      diagnostics.push({
+        code: 'ambiguous_activity_identity',
+        message: `Unsafe span fallback for ${spanKind}; multiple invocations cannot be distinguished`,
+        source,
+        related_sources: [...fallbackEvents, ...fallbackSpans]
+          .map((candidate) => candidate.activity.source_references[0]),
+        ambiguous_activity_identity: true,
+      });
+      continue;
+    }
+
+    if (explicitEventIds.size === 1 && fallbackEvents.length === 0) {
+      const invocationId = [...explicitEventIds][0];
+      for (const candidate of fallbackSpans) {
+        candidate.activity.invocation_id = invocationId;
+        candidate.activity.identity_basis = 'explicit_invocation';
+        candidate.activity.id = `${candidate.activity.kind}:${invocationId}`;
+        candidate.activityKey = candidate.activity.id;
+      }
+    } else if (explicitEventIds.size > 1) {
+      for (const candidate of fallbackSpans) excluded.add(candidate);
+      if (fallbackSpans.length > 0) {
+        diagnostics.push({
+          code: 'ambiguous_activity_identity',
+          message: `Span-level ${spanKind} evidence cannot be attributed across explicit invocations`,
+          source: fallbackSpans[0].activity.source_references[0],
+          related_sources: fallbackSpans.map((candidate) => candidate.activity.source_references[0]),
+          ambiguous_activity_identity: true,
+        });
+      }
+    }
+  }
+  return candidates.filter((candidate) => !excluded.has(candidate));
+}
+
+function hasSafeLifecycleFallback(events: Candidate[]): boolean {
+  if (events.length <= 1) return true;
+  if (events.length !== 2) return false;
+  const started = events.filter((candidate) => candidate.activity.lifecycle === 'started').length;
+  const terminal = events.filter((candidate) =>
+    candidate.activity.lifecycle === 'completed' || candidate.activity.lifecycle === 'failed',
+  ).length;
+  return started === 1 && terminal === 1;
+}
+
+function diagnoseNativeCorrelationConflicts(
+  candidates: Candidate[],
+  diagnostics: NormalizationDiagnostics[],
+): void {
+  const groups = new Map<string, Candidate[]>();
+  for (const candidate of candidates) {
+    const identity = candidate.activity.native_runtime_identity;
+    const correlationKey = identity?.framework === 'langgraph' && identity.run_id
+      ? `langgraph:run:${identity.run_id}`
+      : identity?.framework === 'ms_agent_framework' && identity.request_id
+        ? `maf:request:${identity.request_id}`
+        : undefined;
+    if (!correlationKey) continue;
+    const group = groups.get(correlationKey) ?? [];
+    group.push(candidate);
+    groups.set(correlationKey, group);
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const result = mergeNativeRuntimeIdentities(group.map((candidate) => ({
+      identity: candidate.activity.native_runtime_identity,
+      source: candidate.activity.source_references[0],
+    })));
+    diagnostics.push(...result.diagnostics);
+  }
 }
 
 function mergeCandidates(id: string, group: Candidate[], diagnostics: NormalizationDiagnostics[]): NormalizedActivity {
@@ -317,6 +514,8 @@ function mergeCandidates(id: string, group: Candidate[], diagnostics: Normalizat
   const bestKind = sorted.map((candidate) => candidate.activity.kind).sort((left, right) => kindRank[right] - kindRank[left])[0];
   const sourceReferences = sorted.flatMap((candidate) => candidate.activity.source_references)
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const observations = sorted.flatMap((candidate) => candidate.activity.observations)
+    .sort((left, right) => JSON.stringify(left.source).localeCompare(JSON.stringify(right.source)));
   const firstWithTokens = sorted.find((candidate) => candidate.activity.token_usage)?.activity.token_usage;
   const { identity: mergedIdentity, diagnostics: identityDiagnostics } = mergeNativeRuntimeIdentities(
     sorted.map((candidate) => ({
@@ -326,6 +525,7 @@ function mergeCandidates(id: string, group: Candidate[], diagnostics: Normalizat
   );
   diagnostics.push(...identityDiagnostics);
   const hasStarted = sorted.some((candidate) => candidate.activity.lifecycle === 'started');
+  const hasCompleted = sorted.some((candidate) => candidate.activity.lifecycle === 'completed');
   return {
     ...primary,
     id,
@@ -335,13 +535,16 @@ function mergeCandidates(id: string, group: Candidate[], diagnostics: Normalizat
       ? 'failed'
       : hasSuccess
         ? 'completed'
-        : hasStarted
-          ? 'started'
-          : primary.lifecycle,
+        : hasCompleted
+          ? 'completed'
+          : hasStarted
+            ? 'started'
+            : primary.lifecycle,
     outcome: hasFailure ? 'failure' : hasSuccess ? 'success' : 'unknown',
     native_runtime_identity: mergedIdentity,
     token_usage: firstWithTokens,
     source_references: sourceReferences,
+    observations,
   };
 }
 

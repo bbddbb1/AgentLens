@@ -321,6 +321,7 @@ describe('LangGraph native-fact conformance', async () => {
             'gen_ai.tool.name': 'web_search',
             'gen_ai.tool.status': 'active',
             'agentlens.langgraph.run_id': 'tool-run-err',
+            'agentlens.langgraph.activity_correlation_id': 'tool-invocation-err',
           },
         },
         {
@@ -329,6 +330,7 @@ describe('LangGraph native-fact conformance', async () => {
             'gen_ai.tool.name': 'web_search',
             'gen_ai.tool.status': 'error',
             'agentlens.langgraph.run_id': 'tool-run-err',
+            'agentlens.langgraph.activity_correlation_id': 'tool-invocation-err',
           },
         },
       ],

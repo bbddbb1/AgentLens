@@ -1,6 +1,17 @@
-export type NormalizedActivityKind = 'agent' | 'llm' | 'tool' | 'retrieval' | 'interrupt' | 'unknown';
+export type NormalizedActivityKind =
+  | 'agent'
+  | 'workflow'
+  | 'tool'
+  | 'llm'
+  | 'retrieval'
+  | 'memory'
+  | 'artifact'
+  | 'human'
+  | 'checkpoint'
+  | 'unknown';
 export type NormalizedLifecycle = 'started' | 'completed' | 'failed' | 'unknown';
 export type NormalizedOutcome = 'success' | 'failure' | 'unknown';
+export type NormalizedActivityIdentityBasis = 'explicit_invocation' | 'span_fallback';
 
 export interface SourceReference {
   trace_id?: string;
@@ -43,12 +54,15 @@ export type NormalizationDiagnosticCode =
   | 'unknown_telemetry'
   | 'unresolved_relationship'
   | 'conflicting_outcome'
-  | 'conflicting_native_identity';
+  | 'conflicting_native_identity'
+  | 'ambiguous_activity_identity';
 
 export interface NormalizationDiagnostics {
   code: NormalizationDiagnosticCode;
   message: string;
   source?: SourceReference;
+  /** All source records affected by one activity-identity ambiguity. */
+  related_sources?: SourceReference[];
   /** Second source when two explicit native-identity values conflict. */
   conflicting_source?: SourceReference;
   /** Native identity field that conflicted, when applicable. */
@@ -58,6 +72,8 @@ export interface NormalizationDiagnostics {
    * True when conflicting explicit native-identity values were observed.
    */
   ambiguous_native_identity?: boolean;
+  /** True when recorded evidence cannot safely identify one activity invocation. */
+  ambiguous_activity_identity?: boolean;
 }
 
 /** True when diagnostics include an unresolved native-identity conflict. */
@@ -74,6 +90,8 @@ export function hasAmbiguousNativeIdentity(
 export interface NormalizedActivity {
   id: string;
   kind: NormalizedActivityKind;
+  invocation_id?: string;
+  identity_basis: NormalizedActivityIdentityBasis;
   lifecycle: NormalizedLifecycle;
   outcome: NormalizedOutcome;
   span_id?: string;
@@ -90,6 +108,11 @@ export interface NormalizedActivity {
     output_tokens?: number;
   };
   source_references: SourceReference[];
+  observations: Array<{
+    source: SourceReference;
+    lifecycle: NormalizedLifecycle;
+    outcome: NormalizedOutcome;
+  }>;
 }
 
 export interface NormalizedRuntimeFacts {

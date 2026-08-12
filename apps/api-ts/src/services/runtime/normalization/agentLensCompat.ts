@@ -6,8 +6,23 @@ export function activityKindFromCompat(
   operationName?: string,
 ): NormalizedActivityKind {
   const spanKind = attrs['agent.span.kind'] ?? attrs['agentlens.node.type'];
-  if (spanKind === 'invoke_agent' || spanKind === 'agent' || spanKind === 'agent.orchestration') return 'agent';
+  if (
+    spanKind === 'invoke_agent'
+    || spanKind === 'agent'
+    || spanKind === 'agent.orchestration'
+  ) return 'agent';
+  // Workload identity on a child invocation is correlation/provenance, not a
+  // stronger activity-kind signal than an explicit tool execution marker.
   if (spanKind === 'execute_tool' || spanKind === 'tool' || genAiToolName(attrs)) return 'tool';
+  if (
+    attrs['gen_ai.agent.id'] !== undefined
+    || attrs['agentlens.agent.id'] !== undefined
+    || attrs['gen_ai.agent.name'] !== undefined
+  ) return 'agent';
+  if (spanKind === 'human' || spanKind === 'agent.human.input') return 'human';
+  if (spanKind === 'memory' || spanKind === 'agent.memory.op' || operationName?.startsWith('memory.') || operationName?.startsWith('agent.memory.')) return 'memory';
+  if (spanKind === 'artifact' || operationName?.startsWith('artifact.')) return 'artifact';
+  if (operationName === 'runtime.checkpoint.save' || operationName === 'runtime.checkpoint.load') return 'checkpoint';
   if (operationName === 'llm.call' || genAiModel(attrs) || attrs['gen_ai.system'] !== undefined) return 'llm';
   if (
     operationName === 'retrieval.search' ||
@@ -16,6 +31,12 @@ export function activityKindFromCompat(
   ) {
     return 'retrieval';
   }
+  if (
+    operationName === 'workflow.step'
+    || operationName === 'workflow.transition'
+    || operationName?.startsWith('task.')
+    || attrs['gen_ai.workflow.step_id'] !== undefined
+  ) return 'workflow';
   return 'unknown';
 }
 

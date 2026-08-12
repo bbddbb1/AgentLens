@@ -8,7 +8,10 @@ export function outcomeFromOtel(span: any): NormalizedOutcome {
 
 export function lifecycleFromOtel(span: any): NormalizedLifecycle {
   if (outcomeFromOtel(span) === 'failure') return 'failed';
-  if (span?.end_time_unix_nano) return 'completed';
+  const end = span?.end_time_unix_nano;
+  if (end !== undefined && end !== null && /^\d+$/.test(String(end)) && BigInt(String(end)) > 0n) {
+    return 'completed';
+  }
   return 'started';
 }
 
@@ -18,7 +21,13 @@ export function lifecycleFromOtel(span: any): NormalizedLifecycle {
  */
 export function outcomeFromEventAttrs(eventName: string | undefined, attrs: Record<string, any>): NormalizedOutcome {
   const toolStatus = attrs['gen_ai.tool.status'];
-  if (toolStatus === 'error' || eventName === 'gen_ai.error') return 'failure';
+  if (
+    toolStatus === 'error'
+    || toolStatus === 'failed'
+    || eventName === 'gen_ai.error'
+    || eventName?.endsWith('.failed')
+    || eventName?.endsWith('.error')
+  ) return 'failure';
   if (toolStatus === 'success') return 'success';
   if (toolStatus === 'active') return 'unknown';
   if (eventName === 'gen_ai.call') {
@@ -43,7 +52,18 @@ export function lifecycleFromEventAttrs(eventName: string | undefined, attrs: Re
   if (outcome === 'failure') return 'failed';
   if (outcome === 'success') return 'completed';
   if (attrs['gen_ai.tool.status'] === 'active') return 'started';
+  if (attrs['gen_ai.tool.status'] === 'completed') return 'completed';
   if (eventName === 'gen_ai.call') return 'started';
+  if (eventName === 'agent.interrupt.resumed') return 'completed';
+  if (
+    eventName?.endsWith('.completed')
+    || eventName?.endsWith('.result')
+    || eventName === 'memory.written'
+    || eventName === 'memory.read'
+    || eventName === 'agent.memory.write'
+    || eventName === 'artifact.created'
+    || eventName === 'artifact.updated'
+  ) return 'completed';
   return 'started';
 }
 

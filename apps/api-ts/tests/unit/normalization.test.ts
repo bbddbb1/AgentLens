@@ -19,7 +19,7 @@ function span(overrides: Record<string, any> = {}) {
 }
 
 describe('normalizeSpansToFacts', () => {
-  it('lets explicit failure dominate success-like telemetry', () => {
+  it('does not merge separate spans merely because a native run id is reused', () => {
     const facts = normalizeSpansToFacts([
       span({
         attributes: {
@@ -37,17 +37,23 @@ describe('normalizeSpansToFacts', () => {
       }),
     ]);
 
-    expect(facts.activities).toHaveLength(1);
-    expect(facts.activities[0]).toMatchObject({ outcome: 'failure', lifecycle: 'failed' });
+    expect(facts.activities).toHaveLength(2);
+    expect(facts.activities).toContainEqual(expect.objectContaining({
+      id: 'tool:span:span-1', outcome: 'failure', lifecycle: 'failed',
+    }));
+    expect(facts.activities).toContainEqual(expect.objectContaining({
+      id: 'tool:span:span-2', outcome: 'success', lifecycle: 'completed',
+    }));
   });
 
-  it('keeps repeated same-name tools distinct by run id', () => {
+  it('keeps repeated same-name tools distinct by safe span fallback while retaining native run provenance', () => {
     const facts = normalizeSpansToFacts([
       span({ attributes: { 'gen_ai.tool.name': 'search', 'agentlens.langgraph.run_id': 'run-1' } }),
       span({ span_id: 'span-2', attributes: { 'gen_ai.tool.name': 'search', 'agentlens.langgraph.run_id': 'run-2' } }),
     ]);
 
-    expect(facts.activities.map((activity) => activity.id)).toEqual(['run:run-1', 'run:run-2']);
+    expect(facts.activities.map((activity) => activity.id)).toEqual(['tool:span:span-1', 'tool:span:span-2']);
+    expect(facts.activities.map((activity) => activity.native_runtime_identity?.run_id)).toEqual(['run-1', 'run-2']);
   });
 
   it('normalizes tool events with their recorded run identity', () => {
@@ -64,8 +70,9 @@ describe('normalizeSpansToFacts', () => {
     ]);
 
     expect(facts.activities).toContainEqual(expect.objectContaining({
-      id: 'run:tool-run',
+      id: 'tool:span:span-1',
       kind: 'tool',
+      identity_basis: 'span_fallback',
       native_runtime_identity: expect.objectContaining({ run_id: 'tool-run' }),
     }));
   });
@@ -105,7 +112,7 @@ describe('normalizeSpansToFacts', () => {
     expect(facts.relationships).toContainEqual(expect.objectContaining({
       kind: 'handoff',
       resolution: 'resolved',
-      target_activity_id: 'run:worker',
+      target_activity_id: 'agent:span:worker-span',
     }));
   });
 
@@ -200,6 +207,7 @@ describe('normalizeSpansToFacts', () => {
               'gen_ai.tool.name': 'search',
               'gen_ai.tool.status': 'active',
               'agentlens.langgraph.run_id': 'tool-err',
+              'agentlens.langgraph.activity_correlation_id': 'tool-invocation-err',
             },
           },
           {
@@ -208,6 +216,7 @@ describe('normalizeSpansToFacts', () => {
               'gen_ai.tool.name': 'search',
               'gen_ai.tool.status': 'error',
               'agentlens.langgraph.run_id': 'tool-err',
+              'agentlens.langgraph.activity_correlation_id': 'tool-invocation-err',
             },
           },
         ],
@@ -241,15 +250,19 @@ describe('normalizeSpansToFacts', () => {
       }),
     ]);
 
-    const activity = facts.activities.find((item) => item.native_runtime_identity?.run_id === 'run-1');
-    expect(activity?.native_runtime_identity).toMatchObject({
+    const spanActivity = facts.activities.find((item) => item.invocation_id === 'corr-1');
+    expect(spanActivity?.native_runtime_identity).toMatchObject({
       framework: 'langgraph',
       thread_id: 'thread-1',
       run_id: 'run-1',
       checkpoint_id: 'ckpt-1',
       activity_correlation_id: 'corr-1',
-      interrupt_request_id: 'interrupt-1',
       native_execution_key: 'obs-key-1',
+    });
+    const interruptActivity = facts.activities.find((item) => item.kind === 'human');
+    expect(interruptActivity).toMatchObject({
+      id: 'human:interrupt-1',
+      native_runtime_identity: expect.objectContaining({ interrupt_request_id: 'interrupt-1' }),
     });
     expect(facts.diagnostics.some((diagnostic) => diagnostic.code === 'conflicting_native_identity')).toBe(false);
   });
@@ -367,10 +380,13 @@ describe('normalizeSpansToFacts', () => {
       },
     }] })]);
 
+    expect(facts.activities.some((activity) => activity.kind === 'human')).toBe(false);
     expect(facts.activities).toContainEqual(expect.objectContaining({
-      kind: 'interrupt',
+      kind: 'unknown',
       native_runtime_identity: expect.objectContaining({ framework: 'ms_agent_framework', request_id: 'request-1' }),
-      source_references: [expect.objectContaining({ translator: 'maf', event_name: 'agentlens.maf.request_info' })],
+      source_references: expect.arrayContaining([
+        expect.objectContaining({ translator: 'maf', event_name: 'agentlens.maf.request_info' }),
+      ]),
     }));
   });
 

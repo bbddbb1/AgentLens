@@ -45,6 +45,7 @@ interface ActivityAccumulator {
   started_at_unix_nano?: string;
   ended_at_unix_nano?: string;
   terminal_status?: RuntimeExplanationRunOutcome;
+  semantic_outcome?: 'success' | 'failure' | 'unknown';
   inputs?: Record<string, RuntimeExplanationValue>;
   outputs?: Record<string, RuntimeExplanationValue>;
   error?: Record<string, RuntimeExplanationValue>;
@@ -55,15 +56,95 @@ interface ActivityAccumulator {
 interface ActivityEventProjection {
   id: string;
   kind: RuntimeExplanationActivityKind;
+  invocation_id?: string;
   title: string;
   subtitle?: string;
   action: string;
   phase: 'start' | 'terminal' | 'instant';
   completed_status: RuntimeExplanationRunOutcome;
+  semantic_outcome?: 'success' | 'failure' | 'unknown';
   inputs?: Record<string, RuntimeExplanationValue>;
   outputs?: Record<string, RuntimeExplanationValue>;
   error?: Record<string, RuntimeExplanationValue>;
   artifacts?: RuntimeExplanationValue[];
+}
+
+interface CanonicalActivityFact {
+  id: string;
+  kind: RuntimeExplanationActivityKind;
+  invocation_id?: string;
+  identity_basis: 'explicit_invocation' | 'span_fallback';
+  lifecycle: 'started' | 'completed' | 'failed' | 'unknown';
+  outcome: 'success' | 'failure' | 'unknown';
+  observation: {
+    lifecycle: 'started' | 'completed' | 'failed' | 'unknown';
+    outcome: 'success' | 'failure' | 'unknown';
+  };
+}
+
+const CANONICAL_ACTIVITY_KINDS = new Set<RuntimeExplanationActivityKind>([
+  'agent',
+  'workflow',
+  'tool',
+  'llm',
+  'retrieval',
+  'memory',
+  'artifact',
+  'human',
+  'checkpoint',
+]);
+const CANONICAL_LIFECYCLES = new Set(['started', 'completed', 'failed', 'unknown']);
+const CANONICAL_OUTCOMES = new Set(['success', 'failure', 'unknown']);
+const INTERNAL_RUNTIME_ACTIVITY = Symbol.for('agentlens.internal.runtime-activity');
+
+function canonicalActivityAnnotation(event: EventEnvelope): Record<string, unknown> | undefined {
+  const metadata = event.metadata as Record<PropertyKey, unknown> | undefined;
+  const raw = metadata?.[INTERNAL_RUNTIME_ACTIVITY];
+  return raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : undefined;
+}
+
+function canonicalActivityFact(event: EventEnvelope): CanonicalActivityFact | undefined {
+  const annotation = canonicalActivityAnnotation(event);
+  const raw = annotation?.activity;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const observationRaw = annotation?.observation;
+  const observation = observationRaw && typeof observationRaw === 'object' && !Array.isArray(observationRaw)
+    ? observationRaw as Record<string, unknown>
+    : record;
+  if (
+    typeof record.id !== 'string'
+    || !CANONICAL_ACTIVITY_KINDS.has(record.kind as RuntimeExplanationActivityKind)
+    || (record.identity_basis !== 'explicit_invocation' && record.identity_basis !== 'span_fallback')
+    || !CANONICAL_LIFECYCLES.has(String(record.lifecycle))
+    || !CANONICAL_OUTCOMES.has(String(record.outcome))
+    || !CANONICAL_LIFECYCLES.has(String(observation.lifecycle))
+    || !CANONICAL_OUTCOMES.has(String(observation.outcome))
+  ) {
+    return undefined;
+  }
+  return {
+    id: record.id,
+    kind: record.kind as RuntimeExplanationActivityKind,
+    invocation_id: typeof record.invocation_id === 'string' ? record.invocation_id : undefined,
+    identity_basis: record.identity_basis,
+    lifecycle: record.lifecycle as CanonicalActivityFact['lifecycle'],
+    outcome: record.outcome as CanonicalActivityFact['outcome'],
+    observation: {
+      lifecycle: observation.lifecycle as CanonicalActivityFact['lifecycle'],
+      outcome: observation.outcome as CanonicalActivityFact['outcome'],
+    },
+  };
+}
+
+function hasCanonicalActivityAuthority(event: EventEnvelope): boolean {
+  return canonicalActivityAnnotation(event)?.authority === 'normalized';
+}
+
+function hasCanonicalActivityAmbiguity(event: EventEnvelope): boolean {
+  return typeof canonicalActivityAnnotation(event)?.ambiguity === 'string';
 }
 
 function stringValue(record: Record<string, unknown>, ...keys: string[]): string | undefined {
@@ -446,7 +527,66 @@ function extractActivityIo(
   return { input: pick(inputKeys), output: pick(outputKeys) };
 }
 
+function classifyCanonicalActivity(
+  event: EventEnvelope,
+  fact: CanonicalActivityFact,
+): ActivityEventProjection {
+  const payload = (event.payload ?? {}) as Record<string, unknown>;
+  const title = buildTitle(fact.kind, payload);
+  const { input: activityInput, output: activityOutput } = extractActivityIo(fact.kind, event, payload);
+  const errorValue = redactableValue(event, event.error?.original_error ?? payload.error ?? payload.reason);
+  const artifactValue = redactableValue(
+    event,
+    fact.kind === 'artifact'
+      ? {
+          artifact_name: stringValue(payload, 'artifact_name', 'name'),
+          artifact_type: stringValue(payload, 'artifact_type', 'type'),
+        }
+      : undefined,
+  );
+  const base = {
+    id: fact.id,
+    kind: fact.kind,
+    invocation_id: fact.invocation_id,
+    title: fact.invocation_id && !title.title.includes(fact.invocation_id)
+      ? `${title.title} | ${fact.invocation_id}`
+      : title.title,
+    subtitle: title.subtitle,
+    action: actionLabel(fact.kind),
+    semantic_outcome: fact.outcome,
+  } satisfies Omit<ActivityEventProjection, 'phase' | 'completed_status'>;
+
+  if (fact.observation.lifecycle === 'failed' || fact.observation.outcome === 'failure') {
+    return {
+      ...base,
+      phase: 'terminal',
+      completed_status: 'failed',
+      error: errorValue === undefined ? undefined : { error: errorValue },
+    };
+  }
+  if (fact.observation.lifecycle === 'completed') {
+    return {
+      ...base,
+      phase: 'terminal',
+      completed_status: 'completed',
+      outputs: activityOutput === undefined ? undefined : { output: activityOutput },
+      artifacts: artifactValue === undefined ? undefined : [artifactValue],
+    };
+  }
+  return {
+    ...base,
+    phase: 'start',
+    completed_status: fact.kind === 'human' ? 'waiting' : 'active',
+    inputs: activityInput === undefined ? undefined : { input: activityInput },
+  };
+}
+
 function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | null {
+  const canonical = canonicalActivityFact(event);
+  if (canonical) return classifyCanonicalActivity(event, canonical);
+  // Production replay envelopes always carry canonical activity authority.
+  // Raw classification remains only for older, unannotated protocol inputs.
+  if (hasCanonicalActivityAuthority(event)) return null;
   const kind = classifyKind(event);
   if (!kind) return null;
   const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -469,6 +609,7 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
   const base = {
     id,
     kind,
+    invocation_id: invocationId,
     title:
       invocationId && !title.title.includes(invocationId)
         ? `${title.title} | ${invocationId}`
@@ -599,6 +740,21 @@ function mergeObject(
   return { ...(current ?? {}), ...update };
 }
 
+function mergeSemanticOutcome(
+  current: ActivityAccumulator['semantic_outcome'],
+  update: ActivityAccumulator['semantic_outcome'],
+): ActivityAccumulator['semantic_outcome'] {
+  if (current === 'failure' || update === 'failure') return 'failure';
+  if (current === 'success' || update === 'success') return 'success';
+  return current ?? update;
+}
+
+function semanticOutcomeLabel(outcome: NonNullable<ActivityAccumulator['semantic_outcome']>): string {
+  if (outcome === 'success') return 'Success';
+  if (outcome === 'failure') return 'Failure';
+  return 'Unknown';
+}
+
 function createFlag(
   code: RuntimeExplanationConsistencyCode,
   severity: RuntimeExplanationConsistencyFlag['severity'],
@@ -627,6 +783,33 @@ function dedupeFlags(flags: RuntimeExplanationConsistencyFlag[]): RuntimeExplana
     existing.evidence_refs = [...refs.values()];
   }
   return [...deduped.values()];
+}
+
+/**
+ * A frame admits revision evidence immutably, while its span representation is
+ * the latest revision known at that exact admission cutoff. Keep superseded
+ * revisions available in Replay evidence, but never interpret them as a second
+ * simultaneous activity revision.
+ */
+function effectiveEvidenceRevisionEvents(events: EventEnvelope[]): EventEnvelope[] {
+  const latestAdmissionByLogicalId = new Map<string, number>();
+  for (const event of events) {
+    const logicalId = event.metadata?.evidence_logical_id;
+    if (typeof logicalId !== 'string') continue;
+    const admission = typeof event.metadata?.evidence_admission_seq === 'number'
+      ? event.metadata.evidence_admission_seq
+      : event.sequence_num;
+    const current = latestAdmissionByLogicalId.get(logicalId);
+    if (current === undefined || admission > current) latestAdmissionByLogicalId.set(logicalId, admission);
+  }
+  return events.filter((event) => {
+    const logicalId = event.metadata?.evidence_logical_id;
+    if (typeof logicalId !== 'string') return true;
+    const admission = typeof event.metadata?.evidence_admission_seq === 'number'
+      ? event.metadata.evidence_admission_seq
+      : event.sequence_num;
+    return latestAdmissionByLogicalId.get(logicalId) === admission;
+  });
 }
 
 function hasPath(relations: RuntimeExplanationRelation[], source: string, target: string): boolean {
@@ -760,7 +943,9 @@ function buildOperatorFacingRecord(
 export function projectRuntimeExplanation(
   input: ProjectRuntimeExplanationInput,
 ): RuntimeExplanationProjection {
-  const filtered = eventsThroughCursor(input.events, input.as_of_sequence_num);
+  const filtered = effectiveEvidenceRevisionEvents(
+    eventsThroughCursor(input.events, input.as_of_sequence_num),
+  );
 
   const frameEvent = filtered.reduce<EventEnvelope | undefined>((latest, event) =>
     !latest || event.sequence_num > latest.sequence_num ? event : latest,
@@ -823,6 +1008,17 @@ export function projectRuntimeExplanation(
       pendingInterrupts.delete(interruptId);
     }
 
+    if (hasCanonicalActivityAmbiguity(event)) {
+      flags.push(
+        createFlag(
+          'shared_span_multiple_invocations',
+          'warning',
+          `Span ${event.span_id ?? 'unknown'} contains activity evidence without a safe invocation identity.`,
+          [evidenceRef(event)],
+        ),
+      );
+    }
+
     const projection = classifyEventActivity(event);
     if (!projection) continue;
 
@@ -839,7 +1035,8 @@ export function projectRuntimeExplanation(
         source_span_id: event.span_id,
         parent_span_id: event.parent_span_id ?? event.causal?.parent_span_id,
         sequence_num: event.sequence_num,
-        invocation_id: rawInvocationIdFromEvent(event, projection.kind),
+        invocation_id: projection.invocation_id,
+        semantic_outcome: projection.semantic_outcome,
         evidence_refs: [ref],
         inputs: projection.inputs,
         outputs: projection.outputs,
@@ -851,6 +1048,7 @@ export function projectRuntimeExplanation(
       existing.inputs = mergeObject(existing.inputs, projection.inputs);
       existing.outputs = mergeObject(existing.outputs, projection.outputs);
       existing.error = mergeObject(existing.error, projection.error);
+      existing.semantic_outcome = mergeSemanticOutcome(existing.semantic_outcome, projection.semantic_outcome);
       if (projection.artifacts?.length) {
         existing.artifacts = [...(existing.artifacts ?? []), ...projection.artifacts];
       }
@@ -887,6 +1085,9 @@ export function projectRuntimeExplanation(
             projection.id,
           ),
         );
+        activity.ended_at = event.timestamp;
+        activity.ended_at_unix_nano = eventTimestampNanos(event);
+        activity.terminal_status = projection.completed_status;
       } else if (activity.ended_at) {
         if (activity.terminal_status !== projection.completed_status) {
           flags.push(
@@ -958,7 +1159,9 @@ export function projectRuntimeExplanation(
         subtitle: activity.subtitle,
         action: activity.action,
         status,
-        outcome: runtimeOutcomeLabel(status),
+        outcome: activity.semantic_outcome
+          ? semanticOutcomeLabel(activity.semantic_outcome)
+          : runtimeOutcomeLabel(status),
         started_at: activity.started_at,
         ended_at: activity.ended_at,
         duration_ms: exactDurationMs(activity.started_at_unix_nano, activity.ended_at_unix_nano)

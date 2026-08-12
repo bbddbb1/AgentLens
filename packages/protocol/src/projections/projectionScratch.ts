@@ -70,6 +70,45 @@ export function payloadValue(payload: Record<string, unknown>, key: string): unk
   return payload[key];
 }
 
+const INTERNAL_RUNTIME_ACTIVITY = Symbol.for('agentlens.internal.runtime-activity');
+
+function canonicalScratchEventType(event: MissionEventRecord): {
+  authoritative: boolean;
+  eventType?: 'span.started' | 'span.completed' | 'span.failed' | 'tool.called' | 'tool.completed' | 'tool.failed';
+} {
+  const metadata = event.metadata as Record<PropertyKey, unknown> | undefined;
+  const rawAnnotation = metadata?.[INTERNAL_RUNTIME_ACTIVITY];
+  if (!rawAnnotation || typeof rawAnnotation !== 'object' || Array.isArray(rawAnnotation)) {
+    return { authoritative: false };
+  }
+  const annotation = rawAnnotation as Record<string, unknown>;
+  if (annotation.authority !== 'normalized') return { authoritative: false };
+  const rawActivity = annotation.activity;
+  const rawObservation = annotation.observation;
+  if (!rawActivity || typeof rawActivity !== 'object' || Array.isArray(rawActivity)) {
+    return { authoritative: true };
+  }
+  const activity = rawActivity as Record<string, unknown>;
+  const observation = rawObservation && typeof rawObservation === 'object' && !Array.isArray(rawObservation)
+    ? rawObservation as Record<string, unknown>
+    : activity;
+  const kind = activity.kind;
+  const lifecycle = observation.lifecycle;
+  if (kind === 'human' || kind === 'memory' || kind === 'artifact' || kind === 'checkpoint') {
+    return { authoritative: true };
+  }
+  if (kind === 'tool') {
+    if (lifecycle === 'failed') return { authoritative: true, eventType: 'tool.failed' };
+    if (lifecycle === 'completed') return { authoritative: true, eventType: 'tool.completed' };
+    if (lifecycle === 'started') return { authoritative: true, eventType: 'tool.called' };
+    return { authoritative: true };
+  }
+  if (lifecycle === 'failed') return { authoritative: true, eventType: 'span.failed' };
+  if (lifecycle === 'completed') return { authoritative: true, eventType: 'span.completed' };
+  if (lifecycle === 'started') return { authoritative: true, eventType: 'span.started' };
+  return { authoritative: true };
+}
+
 function createAgentScratch(agentId: string, name?: string): AgentNodeScratch {
   return {
     name: name ?? agentId,
@@ -172,6 +211,10 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
 
   if (agentId) {
     const agent = ensureAgent(scratch, agentId);
+    const canonicalSemantic = canonicalScratchEventType(event);
+    const semanticEventType: string | undefined = canonicalSemantic.authoritative
+      ? canonicalSemantic.eventType
+      : event.event_type;
 
     // Track identity attributes (PR-1) & lineage (PR-4)
     agent.agent_id = agentId;
@@ -203,14 +246,14 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
       agent.start_time = event.timestamp;
     }
 
-    if (event.event_type === 'task.started' || event.event_type === 'span.started') {
+    if (semanticEventType === 'task.started' || semanticEventType === 'span.started') {
       agent.status = 'active';
-      if (event.event_type === 'task.started') {
+      if (semanticEventType === 'task.started') {
         agent.active_task = payloadString(payload, 'task');
       }
       agent.pending = undefined;
-    } else if (event.event_type === 'task.completed' || event.event_type === 'span.completed') {
-      if (event.event_type === 'task.completed') {
+    } else if (semanticEventType === 'task.completed' || semanticEventType === 'span.completed') {
+      if (semanticEventType === 'task.completed') {
         agent.completed_tasks += 1;
         agent.active_task = undefined;
       }
@@ -219,13 +262,13 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
       if (agent.start_time) {
         agent.duration_ms = new Date(agent.end_time).getTime() - new Date(agent.start_time).getTime();
       }
-    } else if (event.event_type === 'task.failed' || event.event_type === 'span.failed') {
+    } else if (semanticEventType === 'task.failed' || semanticEventType === 'span.failed') {
       agent.status = 'failed';
       agent.active_task = undefined;
       agent.error_count += 1;
       agent.warnings.push({
         code: event.event_type,
-        message: event.event_type === 'task.failed'
+        message: semanticEventType === 'task.failed'
           ? `Task failed: ${payloadString(payload, 'task') ?? 'unknown'}`
           : 'Span execution failed',
         sequence_num: event.sequence_num,
@@ -235,10 +278,10 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
       if (agent.start_time) {
         agent.duration_ms = new Date(agent.end_time).getTime() - new Date(agent.start_time).getTime();
       }
-    } else if (event.event_type === 'tool.called' || event.event_type === 'tool.call') {
+    } else if (semanticEventType === 'tool.called' || semanticEventType === 'tool.call') {
       agent.status = 'active';
       agent.active_tool_input = payloadValue(payload, 'gen_ai.tool.input') ?? payloadValue(payload, 'tool_input') ?? payloadValue(payload, 'input');
-    } else if (event.event_type === 'tool.completed' || event.event_type === 'tool.result') {
+    } else if (semanticEventType === 'tool.completed' || semanticEventType === 'tool.result') {
       const toolName = payloadString(payload, 'tool_name') ?? payloadString(payload, 'gen_ai.tool.name') ?? 'tool';
       const toolOutput = payloadValue(payload, 'tool_output') ?? payloadValue(payload, 'output');
       addProducedOutput(agent, {
@@ -254,7 +297,7 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
         timestamp: event.timestamp,
       });
       agent.active_tool_input = undefined;
-    } else if (event.event_type === 'tool.failed' || event.event_type === 'tool.error') {
+    } else if (semanticEventType === 'tool.failed' || semanticEventType === 'tool.error') {
       agent.error_count += 1;
       agent.warnings.push({
         code: 'tool.failed',
