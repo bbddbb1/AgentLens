@@ -173,6 +173,15 @@ describe('projectRuntimeExplanation', () => {
       ],
     });
     expect(explanation.run_outcome).toBe('unknown');
+    expect(explanation.run_outcome_provenance).toMatchObject({
+      basis: 'unknown', condition: 'inconsistent',
+    });
+    expect(explanation.run_outcome_provenance?.evidence_refs.map(ref => ref.event_id)).toEqual(['e-0', 'e-1']);
+    expect(explanation.run_duration_ms).toBeUndefined();
+    expect(explanation.run_duration_provenance).toMatchObject({
+      basis: 'unknown', condition: 'inconsistent',
+    });
+    expect(explanation.run_duration_provenance?.evidence_refs.map(ref => ref.event_id)).toEqual(['e-0', 'e-1']);
     expect(explanation.consistency_flags.some((flag) => flag.code === 'run_evidence_conflict')).toBe(true);
   });
 
@@ -190,6 +199,10 @@ describe('projectRuntimeExplanation', () => {
       ],
     });
     expect(explanation.run_outcome).toBe('unknown');
+    expect(explanation.run_outcome_provenance).toMatchObject({
+      basis: 'unknown', condition: 'unavailable',
+    });
+    expect(explanation.run_outcome_provenance?.evidence_refs.map(ref => ref.event_id)).toEqual(['e-0', 'e-1']);
     expect(explanation.consistency_flags[0]?.message).toContain('2 execution-root candidates');
   });
 
@@ -653,6 +666,199 @@ describe('projectRuntimeExplanation', () => {
 
     const record = explanation.activities[0]?.operator_facing_record;
     expect(record?.output.condition).toBe('not_recorded');
-    expect(record?.evidence_condition.condition).toBe('recorded');
+    expect(record?.output.basis).toBe('unknown');
+    expect(record?.evidence_condition.condition).toBe('not_recorded');
+  });
+
+  it('distinguishes directly recorded fields from deterministic presentation and uses exact refs', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [
+        event(0, 'tool.called', {
+          'gen_ai.tool.name': 'fetch_logs',
+          'gen_ai.tool.input': '',
+        }, {
+          id: 'tool-start', span_id: 'tool-span', agent_id: 'diagnoser',
+          causal: { tool_call_id: 'call-provenance' },
+        }),
+        event(1, 'tool.completed', {
+          'gen_ai.tool.name': 'fetch_logs',
+          'gen_ai.tool.output': 'two matches',
+        }, {
+          id: 'tool-terminal', span_id: 'tool-span', agent_id: 'diagnoser',
+          causal: { tool_call_id: 'call-provenance' },
+        }),
+      ],
+    });
+
+    const activity = explanation.activities[0]!;
+    const record = activity.operator_facing_record!;
+    expect(record.actor).toMatchObject({ value: 'diagnoser', condition: 'recorded', basis: 'recorded' });
+    expect(record.actor.evidence_refs?.map((ref) => ref.event_id)).toEqual(['tool-start']);
+    expect(record.action).toMatchObject({ value: 'Tool called', condition: 'recorded', basis: 'derived' });
+    expect(record.action.evidence_refs?.map((ref) => ref.event_id)).toEqual(['tool-start']);
+    expect(record.target).toMatchObject({ value: 'fetch_logs', condition: 'recorded', basis: 'recorded' });
+    expect(record.target.evidence_refs?.map((ref) => ref.event_id)).toEqual(['tool-start']);
+    expect(record.input).toMatchObject({ value: '', condition: 'recorded_empty', basis: 'recorded' });
+    expect(record.input.evidence_refs?.map((ref) => ref.event_id)).toEqual(['tool-start']);
+    expect(record.output).toMatchObject({ value: 'two matches', condition: 'recorded', basis: 'recorded' });
+    expect(record.output.evidence_refs?.map((ref) => ref.event_id)).toEqual(['tool-terminal']);
+    expect(activity.semantic_provenance?.lifecycle).toMatchObject({ basis: 'derived', condition: 'recorded' });
+    expect(activity.semantic_provenance?.lifecycle.evidence_refs.map((ref) => ref.event_id)).toEqual(['tool-terminal']);
+  });
+
+  it('keeps redaction evidence field-specific', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1',
+      branch_id: 'main',
+      events: [event(0, 'tool.called', {
+        'gen_ai.tool.name': 'secret_lookup',
+        'gen_ai.tool.input': 'sensitive query',
+      }, {
+        id: 'redacted-input', span_id: 'secret-span', causal: { tool_call_id: 'call-secret' },
+        policy: { decision: 'redact', reason: 'restricted' },
+      })],
+    });
+
+    const input = explanation.activities[0]?.operator_facing_record?.input;
+    expect(input).toMatchObject({ condition: 'redacted', basis: 'derived' });
+    expect(input?.evidence_refs?.map((ref) => ref.event_id)).toEqual(['redacted-input']);
+    expect(explanation.activities[0]?.operator_facing_record?.target).toMatchObject({
+      value: undefined, condition: 'redacted', basis: 'unknown',
+    });
+    expect(explanation.activities[0]?.title).toBe('Tool');
+  });
+
+  it('marks normalized source text derived when the displayed value is not verbatim', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main',
+      events: [event(0, 'tool.called', { 'gen_ai.tool.name': '  fetch_logs  ' }, {
+        id: 'trimmed-target', span_id: 'trimmed-span', causal: { tool_call_id: 'trimmed-call' },
+      })],
+    });
+    expect(explanation.activities[0]?.operator_facing_record?.target).toMatchObject({
+      value: 'fetch_logs', condition: 'recorded', basis: 'derived',
+    });
+  });
+
+  it('distinguishes an explicitly absent value from uncaptured evidence', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main',
+      events: [event(0, 'tool.called', {
+        'gen_ai.tool.name': 'lookup', 'gen_ai.tool.input': null,
+      }, {
+        id: 'absent-input', span_id: 'absent-span', causal: { tool_call_id: 'absent-call' },
+      })],
+    });
+    expect(explanation.activities[0]?.operator_facing_record?.input).toMatchObject({
+      value: null, condition: 'absent', basis: 'recorded',
+    });
+    expect(explanation.activities[0]?.operator_facing_record?.input.evidence_refs?.map(ref => ref.event_id))
+      .toEqual(['absent-input']);
+  });
+
+  it('marks conflicting terminal lifecycle evidence inconsistent with both refs', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main',
+      events: [
+        event(0, 'tool.called', { 'gen_ai.tool.name': 'deploy' }, {
+          id: 'deploy-start', span_id: 'deploy-span', causal: { tool_call_id: 'deploy-1' },
+        }),
+        event(1, 'tool.completed', { 'gen_ai.tool.name': 'deploy' }, {
+          id: 'deploy-completed', span_id: 'deploy-span', causal: { tool_call_id: 'deploy-1' },
+        }),
+        event(2, 'tool.failed', { 'gen_ai.tool.name': 'deploy' }, {
+          id: 'deploy-failed', span_id: 'deploy-span', causal: { tool_call_id: 'deploy-1' },
+        }),
+      ],
+    });
+    expect(explanation.activities[0]?.semantic_provenance?.lifecycle).toMatchObject({
+      basis: 'unknown', condition: 'inconsistent',
+    });
+    expect(explanation.activities[0]?.semantic_provenance?.lifecycle.evidence_refs.map((ref) => ref.event_id))
+      .toEqual(['deploy-completed', 'deploy-failed']);
+    expect(explanation.activities[0]?.semantic_provenance?.duration).toMatchObject({
+      basis: 'unknown', condition: 'inconsistent',
+    });
+  });
+
+  it('does not hide conflicting recorded actor identity behind first-wins projection', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main',
+      events: [
+        event(0, 'tool.called', { 'gen_ai.tool.name': 'lookup' }, {
+          id: 'actor-a', agent_id: 'agent-a', span_id: 'actor-span', causal: { tool_call_id: 'actor-call' },
+        }),
+        event(1, 'tool.completed', { 'gen_ai.tool.name': 'lookup' }, {
+          id: 'actor-b', agent_id: 'agent-b', span_id: 'actor-span', causal: { tool_call_id: 'actor-call' },
+        }),
+      ],
+    });
+    expect(explanation.activities[0]?.operator_facing_record?.actor).toMatchObject({
+      value: 'agent-a', basis: 'unknown', condition: 'inconsistent',
+    });
+    expect(explanation.activities[0]?.operator_facing_record?.actor.evidence_refs?.map(ref => ref.event_id))
+      .toEqual(['actor-a', 'actor-b']);
+  });
+
+  it('uses only actual run-lifecycle evidence for run status and phase', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main',
+      events: [
+        event(0, 'tool.called', { 'gen_ai.tool.name': 'unrelated' }, {
+          id: 'unrelated-activity', span_id: 'unrelated-span', causal: { tool_call_id: 'unrelated' },
+        }),
+        event(1, 'framework.interaction', {}, {
+          id: 'run-terminal',
+          metadata: { runtime_lifecycle: 'completed', runtime_lifecycle_basis: 'explicit_event' },
+        }),
+      ],
+    });
+    expect(explanation.run_outcome_provenance).toMatchObject({ basis: 'derived', condition: 'recorded' });
+    expect(explanation.run_outcome_provenance?.evidence_refs.map((ref) => ref.event_id)).toEqual(['run-terminal']);
+    expect(explanation.run_status_provenance?.evidence_refs.map((ref) => ref.event_id)).toEqual(['run-terminal']);
+    expect(explanation.runtime_phase).toMatchObject({ label: 'Completed', basis: 'derived', condition: 'recorded' });
+    expect(explanation.runtime_phase?.evidence_refs.map((ref) => ref.event_id)).toEqual(['run-terminal']);
+  });
+
+  it('uses only the selected run start and terminal evidence for derived duration', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main',
+      events: [
+        event(0, 'framework.interaction', {}, {
+          id: 'run-start',
+          metadata: { runtime_lifecycle: 'started', runtime_lifecycle_basis: 'explicit_event' },
+        }),
+        event(1, 'framework.interaction', {}, {
+          id: 'run-terminal',
+          metadata: { runtime_lifecycle: 'completed', runtime_lifecycle_basis: 'explicit_event' },
+        }),
+      ],
+    });
+    expect(explanation.run_duration_ms).toBe(1_000);
+    expect(explanation.run_duration_provenance).toMatchObject({ basis: 'derived', condition: 'recorded' });
+    expect(explanation.run_duration_provenance?.evidence_refs.map((ref) => ref.event_id))
+      .toEqual(['run-start', 'run-terminal']);
+  });
+
+  it('keeps historical field provenance inside the selected frame', () => {
+    const events = [
+      event(0, 'tool.called', { 'gen_ai.tool.name': 'lookup' }, {
+        id: 'lookup-start', span_id: 'lookup-span', causal: { tool_call_id: 'lookup-1' },
+      }),
+      event(1, 'tool.completed', { 'gen_ai.tool.name': 'lookup', 'gen_ai.tool.output': 'late result' }, {
+        id: 'lookup-terminal', span_id: 'lookup-span', causal: { tool_call_id: 'lookup-1' },
+      }),
+    ];
+    const historical = projectRuntimeExplanation({ mission_id: 'm1', branch_id: 'main', events, as_of_sequence_num: 0 });
+    const later = projectRuntimeExplanation({ mission_id: 'm1', branch_id: 'main', events, as_of_sequence_num: 1 });
+    expect(historical.activities[0]?.operator_facing_record?.output).toMatchObject({
+      condition: 'not_recorded', basis: 'unknown', evidence_refs: [],
+    });
+    expect(historical.activities[0]?.semantic_provenance?.lifecycle.evidence_refs.map((ref) => ref.event_id))
+      .toEqual(['lookup-start']);
+    expect(later.activities[0]?.operator_facing_record?.output.evidence_refs?.map((ref) => ref.event_id))
+      .toEqual(['lookup-terminal']);
   });
 });

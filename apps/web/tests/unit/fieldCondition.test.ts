@@ -61,4 +61,17 @@ describe('fieldCondition', () => {
     expect(isRedactionValue({ kind: 'redaction', policy_decision: 'redact' })).toBe(true);
     expect(isRedactionValue('plain')).toBe(false);
   });
+
+  it.each([
+    ['unavailable', 'unavailable'],
+    ['encrypted', 'encrypted'],
+    ['permission_denied', 'permission denied'],
+    ['oversized', 'oversized'],
+    ['absent', 'absent'],
+    ['recorded_empty', 'recorded empty'],
+    ['inconsistent', 'inconsistent'],
+  ] as const)('preserves the %s evidence condition in presentation', (condition, expected) => {
+    expect(resolveNormalizedIoDisplay({ condition, basis: 'unknown', evidence_refs: [] }, 'output').text)
+      .toBe(expected);
+  });
 });

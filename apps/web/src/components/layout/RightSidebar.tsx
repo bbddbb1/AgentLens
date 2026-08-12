@@ -307,18 +307,28 @@ function RuntimeActivityInspector({ activity, onViewEvidence }: { activity: Runt
         <p className="mt-1 text-[11px] capitalize text-text-muted">{view.kind}</p>
       </div>
       <dl className="grid grid-cols-[90px_1fr] gap-x-3 gap-y-2 text-[11px]">
-        <dt className="text-text-muted">Lifecycle</dt><dd className="text-text-primary">{view.lifecycle}</dd>
-        <dt className="text-text-muted">Outcome</dt><dd className="text-text-primary">{view.outcome}</dd>
+        <dt className="text-text-muted">Lifecycle</dt><dd className="text-text-primary">{view.lifecycle}{view.lifecycleProvenance && <span className="ml-1 text-text-muted">· {view.lifecycleProvenance.basis} · {view.lifecycleProvenance.condition.replace(/_/g, ' ')}</span>}</dd>
+        <dt className="text-text-muted">Outcome</dt><dd className="text-text-primary">{view.outcome}{view.outcomeProvenance && <span className="ml-1 text-text-muted">· {view.outcomeProvenance.basis} · {view.outcomeProvenance.condition.replace(/_/g, ' ')}</span>}</dd>
         <dt className="text-text-muted">Activity ID</dt><dd className="break-all font-mono text-text-secondary">{view.id}</dd>
         {view.invocationId && <><dt className="text-text-muted">Invocation ID</dt><dd className="break-all font-mono text-text-secondary">{view.invocationId}</dd></>}
         {view.sourceSpanId && <><dt className="text-text-muted">Source span</dt><dd className="break-all font-mono text-text-secondary">{view.sourceSpanId}</dd></>}
       </dl>
       {view.limitation && <p className="rounded-sm border border-warning/25 p-2 text-[11px] text-text-secondary">{view.limitation}</p>}
       <div className="space-y-1.5">
-        <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">Recorded evidence</p>
-        {view.evidenceSequences.map((sequenceNum, index) => (
-          <button key={`${sequenceNum}:${index}`} type="button" onClick={() => onViewEvidence(sequenceNum)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
-            View sequence #{sequenceNum}
+        <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted">Supporting evidence</p>
+        {(view.lifecycleProvenance?.evidenceRefs ?? []).map((reference, index) => (
+          <button key={`lifecycle:${reference.eventId}:${index}`} type="button" onClick={() => onViewEvidence(reference.sequenceNum)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
+            Lifecycle {reference.eventId} · sequence #{reference.sequenceNum}
+          </button>
+        ))}
+        {(view.outcomeProvenance?.evidenceRefs ?? []).map((reference, index) => (
+          <button key={`outcome:${reference.eventId}:${index}`} type="button" onClick={() => onViewEvidence(reference.sequenceNum)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
+            Outcome {reference.eventId} · sequence #{reference.sequenceNum}
+          </button>
+        ))}
+        {!view.lifecycleProvenance && !view.outcomeProvenance && view.evidenceRefs.map((reference, index) => (
+          <button key={`${reference.eventId}:${index}`} type="button" onClick={() => onViewEvidence(reference.sequenceNum)} className="mr-2 text-[11px] text-accent hover:text-accent-strong">
+            Activity {reference.eventId} · sequence #{reference.sequenceNum}
           </button>
         ))}
       </div>

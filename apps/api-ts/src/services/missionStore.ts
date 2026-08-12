@@ -176,6 +176,7 @@ function toCompatibilityActivity(
     source_span_id: activity.source_span_id,
     parent_span_id: activity.parent_span_id,
     invocation_id: activity.invocation_id,
+    semantic_provenance: activity.semantic_provenance,
     operator_facing_record: activity.operator_facing_record,
     story_critical: activity.story_critical,
     story_critical_limitation: activity.story_critical_limitation,
@@ -257,7 +258,9 @@ function annotateReplayWithExplanation(
           edges: lastSnapshot?.edges ?? replay.current_state.edges,
           sequence_num: lastSnapshot?.sequence_num ?? replay.current_state.sequence_num,
           status: lastExplanation?.run_outcome ?? 'unknown',
+          status_provenance: lastExplanation?.run_outcome_provenance,
           phase: lastExplanation?.runtime_phase?.label ?? 'Unknown',
+          runtime_phase: lastExplanation?.runtime_phase,
         }
       : null,
   };

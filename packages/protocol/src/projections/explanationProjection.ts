@@ -14,6 +14,8 @@ import type {
   RuntimeExplanationRedaction,
   RuntimeExplanationRunOutcome,
   RuntimeExplanationValue,
+  RuntimeFactBasis,
+  RuntimeFactProvenance,
   RuntimeOperatorActivityRecord,
   RuntimePhaseLabel,
   RuntimePhaseSummary,
@@ -36,6 +38,10 @@ interface ActivityAccumulator {
   subtitle?: string;
   action: string;
   actor?: string;
+  target?: string;
+  target_basis?: RuntimeFactBasis;
+  target_condition?: RuntimeOperatorActivityRecord['target']['condition'];
+  trigger?: string;
   source_span_id?: string;
   parent_span_id?: string;
   sequence_num?: number;
@@ -51,6 +57,23 @@ interface ActivityAccumulator {
   error?: Record<string, RuntimeExplanationValue>;
   artifacts?: RuntimeExplanationValue[];
   evidence_refs: RuntimeExplanationEvidenceRef[];
+  kind_refs: RuntimeExplanationEvidenceRef[];
+  actor_refs: RuntimeExplanationEvidenceRef[];
+  target_refs: RuntimeExplanationEvidenceRef[];
+  trigger_refs: RuntimeExplanationEvidenceRef[];
+  input_refs: RuntimeExplanationEvidenceRef[];
+  output_refs: RuntimeExplanationEvidenceRef[];
+  artifact_refs: RuntimeExplanationEvidenceRef[];
+  start_refs: RuntimeExplanationEvidenceRef[];
+  terminal_refs: RuntimeExplanationEvidenceRef[];
+  actor_conflict?: boolean;
+  target_conflict?: boolean;
+  lifecycle_conflict?: boolean;
+  outcome_observations: Array<{
+    outcome: 'success' | 'failure' | 'unknown';
+    phase: ActivityEventProjection['phase'];
+    ref: RuntimeExplanationEvidenceRef;
+  }>;
 }
 
 interface ActivityEventProjection {
@@ -59,6 +82,9 @@ interface ActivityEventProjection {
   invocation_id?: string;
   title: string;
   subtitle?: string;
+  target?: string;
+  target_basis?: RuntimeFactBasis;
+  target_condition?: RuntimeOperatorActivityRecord['target']['condition'];
   action: string;
   phase: 'start' | 'terminal' | 'instant';
   completed_status: RuntimeExplanationRunOutcome;
@@ -195,6 +221,14 @@ function evidenceRef(event: EventEnvelope): RuntimeExplanationEvidenceRef {
   };
 }
 
+function dedupeRefs(refs: RuntimeExplanationEvidenceRef[]): RuntimeExplanationEvidenceRef[] {
+  const unique = new Map<string, RuntimeExplanationEvidenceRef>();
+  for (const ref of refs) {
+    unique.set(`${ref.branch_id ?? ''}:${ref.sequence_num}:${ref.event_id}`, ref);
+  }
+  return [...unique.values()];
+}
+
 function redactionFromEvent(event: EventEnvelope): RuntimeExplanationRedaction {
   return {
     kind: 'redaction',
@@ -306,9 +340,20 @@ function rawInvocationIdFromEvent(event: EventEnvelope, kind: RuntimeExplanation
 
 function valueCondition(value: RuntimeExplanationValue | undefined): RuntimeOperatorActivityRecord['actor']['condition'] {
   if (value === undefined) return 'not_recorded';
+  if (value === null) return 'absent';
   if (typeof value === 'string' && value.length === 0) return 'recorded_empty';
+  if (Array.isArray(value) && value.length === 0) return 'recorded_empty';
   if (value && typeof value === 'object' && 'kind' in value && value.kind === 'redaction') {
     return 'redacted';
+  }
+  if (value && typeof value === 'object' && Object.keys(value).length === 0) return 'recorded_empty';
+  return 'recorded';
+}
+
+function sourceValueBasis(value: RuntimeExplanationValue | undefined): RuntimeFactBasis {
+  if (value === undefined) return 'unknown';
+  if (value && typeof value === 'object' && 'kind' in value && value.kind === 'redaction') {
+    return 'derived';
   }
   return 'recorded';
 }
@@ -316,13 +361,23 @@ function valueCondition(value: RuntimeExplanationValue | undefined): RuntimeOper
 function field<T = RuntimeExplanationValue>(
   value: T | undefined,
   refs: RuntimeExplanationEvidenceRef[],
+  basis: RuntimeFactBasis,
   fallbackCondition?: RuntimeOperatorActivityRecord['actor']['condition'],
 ): RuntimeActivityField<T> {
   return {
     value,
     condition: fallbackCondition ?? valueCondition(value as RuntimeExplanationValue | undefined),
-    evidence_refs: refs,
+    basis,
+    evidence_refs: dedupeRefs(refs),
   };
+}
+
+function factProvenance(
+  refs: RuntimeExplanationEvidenceRef[],
+  basis: RuntimeFactBasis,
+  condition: RuntimeFactProvenance['condition'],
+): RuntimeFactProvenance {
+  return { basis, condition, evidence_refs: dedupeRefs(refs) };
 }
 
 function runtimeOutcomeLabel(status: RuntimeExplanationRunOutcome): string {
@@ -394,27 +449,43 @@ function classifyKind(event: EventEnvelope): RuntimeExplanationActivityKind | nu
   return null;
 }
 
-function displayName(kind: RuntimeExplanationActivityKind, payload: Record<string, unknown>): string | undefined {
-  switch (kind) {
-    case 'agent':
-      return stringValue(payload, 'gen_ai.agent.name', 'agentlens.agent.name', 'gen_ai.agent.id', 'agentlens.agent.id', 'name');
-    case 'workflow':
-      return stringValue(payload, 'gen_ai.workflow.step_id', 'task', 'gen_ai.agent.task.description');
-    case 'tool':
-      return stringValue(payload, 'gen_ai.tool.name', 'tool_name');
-    case 'llm':
-      return stringValue(payload, 'gen_ai.request.model');
-    case 'retrieval':
-      return stringValue(payload, 'retrieval.backend', 'search.query');
-    case 'memory':
-      return stringValue(payload, 'memory_key', 'gen_ai.agent.memory.key', 'key');
-    case 'artifact':
-      return stringValue(payload, 'artifact_name', 'artifact_id', 'name');
-    case 'human':
-      return stringValue(payload, 'reason', 'gen_ai.agent.interrupt.reason');
-    case 'checkpoint':
-      return stringValue(payload, 'checkpoint_id') ?? stringValue(payload, 'operation_name');
+function displayNameFact(
+  kind: RuntimeExplanationActivityKind,
+  payload: Record<string, unknown>,
+): { value?: string; basis: RuntimeFactBasis } {
+  const keys = (() => {
+    switch (kind) {
+      case 'agent':
+        return ['gen_ai.agent.name', 'agentlens.agent.name', 'gen_ai.agent.id', 'agentlens.agent.id', 'name'];
+      case 'workflow':
+        return ['gen_ai.workflow.step_id', 'task', 'gen_ai.agent.task.description'];
+      case 'tool':
+        return ['gen_ai.tool.name', 'tool_name'];
+      case 'llm':
+        return ['gen_ai.request.model'];
+      case 'retrieval':
+        return ['retrieval.backend', 'search.query'];
+      case 'memory':
+        return ['memory_key', 'gen_ai.agent.memory.key', 'key'];
+      case 'artifact':
+        return ['artifact_name', 'artifact_id', 'name'];
+      case 'human':
+        return ['reason', 'gen_ai.agent.interrupt.reason'];
+      case 'checkpoint':
+        return ['checkpoint_id', 'operation_name'];
+    }
+  })();
+  for (const key of keys) {
+    const raw = payload[key];
+    if (typeof raw !== 'string' || !raw.trim()) continue;
+    const value = raw.trim();
+    return { value, basis: value === raw ? 'recorded' : 'derived' };
   }
+  return { basis: 'unknown' };
+}
+
+function displayName(kind: RuntimeExplanationActivityKind, payload: Record<string, unknown>): string | undefined {
+  return displayNameFact(kind, payload).value;
 }
 
 function buildTitle(kind: RuntimeExplanationActivityKind, payload: Record<string, unknown>): { title: string; subtitle?: string } {
@@ -515,13 +586,18 @@ function extractActivityIo(
       : (['gen_ai.tool.output', 'tool_output', 'output'] as const);
 
   const pick = (keys: readonly string[]): RuntimeExplanationValue | undefined => {
+    let explicitlyAbsent = false;
     for (const key of keys) {
       const raw = payload[key];
-      if (raw === undefined || raw === null) continue;
+      if (raw === undefined) continue;
+      if (raw === null) {
+        explicitlyAbsent = true;
+        continue;
+      }
       const value = redactableValue(event, raw);
       if (value !== undefined) return value;
     }
-    return undefined;
+    return explicitlyAbsent ? redactableValue(event, null) : undefined;
   };
 
   return { input: pick(inputKeys), output: pick(outputKeys) };
@@ -532,7 +608,11 @@ function classifyCanonicalActivity(
   fact: CanonicalActivityFact,
 ): ActivityEventProjection {
   const payload = (event.payload ?? {}) as Record<string, unknown>;
-  const title = buildTitle(fact.kind, payload);
+  const redacted = event.policy?.decision === 'redact';
+  const title = redacted ? { title: kindLabel(fact.kind) } : buildTitle(fact.kind, payload);
+  const target = redacted
+    ? { value: undefined, basis: 'unknown' as const, condition: 'redacted' as const }
+    : { ...displayNameFact(fact.kind, payload), condition: undefined };
   const { input: activityInput, output: activityOutput } = extractActivityIo(fact.kind, event, payload);
   const errorValue = redactableValue(event, event.error?.original_error ?? payload.error ?? payload.reason);
   const artifactValue = redactableValue(
@@ -548,12 +628,15 @@ function classifyCanonicalActivity(
     id: fact.id,
     kind: fact.kind,
     invocation_id: fact.invocation_id,
-    title: fact.invocation_id && !title.title.includes(fact.invocation_id)
+    title: !redacted && fact.invocation_id && !title.title.includes(fact.invocation_id)
       ? `${title.title} | ${fact.invocation_id}`
       : title.title,
     subtitle: title.subtitle,
+    target: target.value,
+    target_basis: target.basis,
+    target_condition: target.condition,
     action: actionLabel(fact.kind),
-    semantic_outcome: fact.outcome,
+    semantic_outcome: fact.observation.outcome,
   } satisfies Omit<ActivityEventProjection, 'phase' | 'completed_status'>;
 
   if (fact.observation.lifecycle === 'failed' || fact.observation.outcome === 'failure') {
@@ -592,7 +675,11 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
   const payload = (event.payload ?? {}) as Record<string, unknown>;
   const id = resolveActivityId(event, kind);
   if (!id) return null;
-  const title = buildTitle(kind, payload);
+  const redacted = event.policy?.decision === 'redact';
+  const title = redacted ? { title: kindLabel(kind) } : buildTitle(kind, payload);
+  const target = redacted
+    ? { value: undefined, basis: 'unknown' as const, condition: 'redacted' as const }
+    : { ...displayNameFact(kind, payload), condition: undefined };
   const invocationId = rawInvocationIdFromEvent(event, kind);
   const { input: activityInput, output: activityOutput } = extractActivityIo(kind, event, payload);
   const errorValue = redactableValue(event, event.error?.original_error ?? payload.error ?? payload.reason);
@@ -611,10 +698,13 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
     kind,
     invocation_id: invocationId,
     title:
-      invocationId && !title.title.includes(invocationId)
+      !redacted && invocationId && !title.title.includes(invocationId)
         ? `${title.title} | ${invocationId}`
         : title.title,
     subtitle: title.subtitle,
+    target: target.value,
+    target_basis: target.basis,
+    target_condition: target.condition,
     action: actionLabel(kind),
   } satisfies Omit<ActivityEventProjection, 'phase' | 'completed_status'>;
 
@@ -738,6 +828,16 @@ function mergeObject(
 ): Record<string, RuntimeExplanationValue> | undefined {
   if (!update) return current;
   return { ...(current ?? {}), ...update };
+}
+
+function preferredActivityValue(
+  record: Record<string, RuntimeExplanationValue> | undefined,
+  primary: string,
+  fallback: string,
+): RuntimeExplanationValue | undefined {
+  if (!record) return undefined;
+  if (Object.prototype.hasOwnProperty.call(record, primary)) return record[primary];
+  return record[fallback];
 }
 
 function mergeSemanticOutcome(
@@ -866,7 +966,7 @@ function deriveRunStatus(runOutcome: RuntimeExplanationRunOutcome): RunStatus {
 function deriveRuntimePhase(
   runOutcome: RuntimeExplanationRunOutcome,
   sequenceNum: number,
-  refs: RuntimeExplanationEvidenceRef[],
+  provenance: RuntimeFactProvenance,
 ): RuntimePhaseSummary {
   const label: RuntimePhaseLabel =
     runOutcome === 'completed'
@@ -877,46 +977,66 @@ function deriveRuntimePhase(
           ? 'Waiting'
           : runOutcome === 'unknown'
             ? 'Unknown'
-          : refs.length === 0
-            ? 'Unknown'
-            : 'Active Work';
-  const basis = refs.length === 0 ? 'unknown' : 'derived';
+          : runOutcome === 'active'
+            ? 'Active Work'
+            : 'Unknown';
   return {
-    id: `${basis}:${label}:${sequenceNum}`,
+    id: `${provenance.basis}:${label}:${sequenceNum}`,
     label,
-    basis,
+    basis: provenance.basis,
+    condition: provenance.condition,
     start_sequence_num: sequenceNum,
     end_sequence_num: sequenceNum,
-    evidence_refs: refs,
+    evidence_refs: provenance.evidence_refs,
   };
 }
 
 function buildOperatorFacingRecord(
   activity: RuntimeExplanationActivity,
-  downstreamEffect: string | undefined,
-  fieldRefs: RuntimeExplanationEvidenceRef[],
+  source: ActivityAccumulator,
+  downstreamEffect: { value: string; refs: RuntimeExplanationEvidenceRef[] } | undefined,
 ): RuntimeOperatorActivityRecord {
-  const target = activity.title
-    .split(' | ')
-    .slice(1)
-    .filter(Boolean)
-    .join(' | ');
-  const actorField = field(activity.actor, fieldRefs);
-  const actionField = field(activity.action, fieldRefs);
-  const targetField = field(target || undefined, fieldRefs);
-  const outcomeField = field(activity.outcome ?? runtimeOutcomeLabel(activity.status), fieldRefs);
-  const triggerField = field(activity.subtitle ?? activity.parent_span_id ?? undefined, fieldRefs);
-  const inputValue = activity.inputs?.input ?? activity.inputs?.reason;
-  const outputValue = activity.outputs?.output ?? activity.outputs?.decision;
+  const actorField = field(
+    activity.actor,
+    source.actor_refs,
+    source.actor_conflict ? 'unknown' : activity.actor === undefined ? 'unknown' : 'recorded',
+    source.actor_conflict ? 'inconsistent' : undefined,
+  );
+  const actionField = field(activity.action, source.kind_refs, 'derived');
+  const targetField = field(
+    source.target,
+    source.target_refs,
+    source.target_conflict ? 'unknown' : source.target_basis ?? 'unknown',
+    source.target_conflict ? 'inconsistent' : source.target_condition,
+  );
+  const outcomeProvenance = activity.semantic_provenance?.outcome
+    ?? factProvenance([], 'unknown', 'not_recorded');
+  const outcomeField = field(
+    activity.outcome ?? runtimeOutcomeLabel(activity.status),
+    outcomeProvenance.evidence_refs,
+    outcomeProvenance.basis,
+    outcomeProvenance.condition,
+  );
+  const triggerField = field(
+    source.trigger,
+    source.trigger_refs,
+    source.trigger === undefined ? 'unknown' : 'derived',
+  );
+  const inputValue = preferredActivityValue(activity.inputs, 'input', 'reason');
+  const outputValue = preferredActivityValue(activity.outputs, 'output', 'decision');
   const missingParts = [
     actorField.condition !== 'recorded' ? 'actor' : null,
-    actionField.condition !== 'recorded' ? 'action' : null,
     targetField.condition !== 'recorded' ? 'target' : null,
     outcomeField.condition !== 'recorded' ? 'outcome' : null,
   ].filter(Boolean) as string[];
+  const conflicting = [actorField, targetField, outcomeField]
+    .some((candidate) => candidate.condition === 'inconsistent');
+  const conflictingRefs = [actorField, targetField, outcomeField]
+    .filter((candidate) => candidate.condition === 'inconsistent')
+    .flatMap((candidate) => candidate.evidence_refs ?? []);
   const limitation =
     missingParts.length > 0
-      ? `Incomplete story-critical context: ${missingParts.join(', ')} not fully recorded`
+      ? `Incomplete story-critical context: ${missingParts.join(', ')} not fully available`
       : undefined;
 
   return {
@@ -926,14 +1046,23 @@ function buildOperatorFacingRecord(
     target: targetField,
     status_or_outcome: outcomeField,
     trigger: triggerField,
-    input: field(inputValue, fieldRefs),
-    output: field(outputValue, fieldRefs),
-    downstream_effect: field(downstreamEffect, fieldRefs),
-    artifacts: field(activity.artifacts, fieldRefs),
+    input: field(inputValue, inputValue === undefined ? [] : source.input_refs, sourceValueBasis(inputValue)),
+    output: field(outputValue, outputValue === undefined ? [] : source.output_refs, sourceValueBasis(outputValue)),
+    downstream_effect: field(
+      downstreamEffect?.value,
+      downstreamEffect?.refs ?? [],
+      downstreamEffect ? 'derived' : 'unknown',
+    ),
+    artifacts: field(
+      activity.artifacts,
+      activity.artifacts === undefined ? [] : source.artifact_refs,
+      activity.artifacts === undefined ? 'unknown' : 'derived',
+    ),
     evidence_condition: field(
       missingParts.length > 0 ? limitation ?? 'incomplete' : 'recorded',
-      fieldRefs,
-      missingParts.length > 0 ? 'inconsistent' : 'recorded',
+      conflictingRefs,
+      'derived',
+      conflicting ? 'inconsistent' : missingParts.length > 0 ? 'not_recorded' : 'recorded',
     ),
     story_critical_sufficient: missingParts.length === 0,
     limitation,
@@ -957,15 +1086,23 @@ export function projectRuntimeExplanation(
   const eventToActivityId = new Map<string, string>();
   const spanToActivityIds = new Map<string, Set<string>>();
   const flags: RuntimeExplanationConsistencyFlag[] = [];
-  const pendingInterrupts = new Set<string>();
+  const pendingInterrupts = new Map<string, RuntimeExplanationEvidenceRef>();
   let runStartAt: string | undefined;
   let runCompletedAt: string | undefined;
   let runFailedAt: string | undefined;
+  let runStartRef: RuntimeExplanationEvidenceRef | undefined;
+  let runCompletedRef: RuntimeExplanationEvidenceRef | undefined;
+  let runFailedRef: RuntimeExplanationEvidenceRef | undefined;
   let runStartNano: string | undefined;
   let runCompletedNano: string | undefined;
   let runFailedNano: string | undefined;
   const runtimeRootCandidateIds = new Set<string>();
   let explicitRunStartedAt: string | undefined;
+  const runStartEvidence: Array<{
+    basis: string;
+    ref: RuntimeExplanationEvidenceRef;
+    root_id?: string;
+  }> = [];
   const runTerminalEvidence: Array<{
     state: 'completed' | 'failed';
     basis: string;
@@ -986,6 +1123,14 @@ export function projectRuntimeExplanation(
     ) {
       runStartAt = event.timestamp;
       runStartNano = eventTimestampNanos(event);
+      runStartRef = evidenceRef(event);
+    }
+    if (lifecycle === 'started') {
+      runStartEvidence.push({
+        basis: lifecycleBasis,
+        ref: evidenceRef(event),
+        root_id: metadata.runtime_root_candidate === true ? event.span_id : undefined,
+      });
     }
     if (lifecycle === 'started' && lifecycleBasis !== 'execution_root_span' && !explicitRunStartedAt) {
       explicitRunStartedAt = event.timestamp;
@@ -994,16 +1139,24 @@ export function projectRuntimeExplanation(
       const ref = evidenceRef(event);
       runTerminalEvidence.push({ state: lifecycle, basis: lifecycleBasis, ref });
       if (lifecycle === 'completed') {
-        runCompletedAt ??= event.timestamp;
-        runCompletedNano ??= eventTimestampNanos(event);
+        if (!runCompletedAt) {
+          runCompletedAt = event.timestamp;
+          runCompletedNano = eventTimestampNanos(event);
+          runCompletedRef = ref;
+        }
       }
       if (lifecycle === 'failed') {
-        runFailedAt ??= event.timestamp;
-        runFailedNano ??= eventTimestampNanos(event);
+        if (!runFailedAt) {
+          runFailedAt = event.timestamp;
+          runFailedNano = eventTimestampNanos(event);
+          runFailedRef = ref;
+        }
       }
     }
     const interruptId = stringValue(payload, 'interrupt_id', 'gen_ai.agent.interrupt.id');
-    if (event.event_type === 'interrupt.requested' && interruptId) pendingInterrupts.add(interruptId);
+    if (event.event_type === 'interrupt.requested' && interruptId) {
+      pendingInterrupts.set(interruptId, evidenceRef(event));
+    }
     if ((event.event_type === 'interrupt.decision' || event.event_type === 'interrupt.resumed') && interruptId) {
       pendingInterrupts.delete(interruptId);
     }
@@ -1023,6 +1176,8 @@ export function projectRuntimeExplanation(
     if (!projection) continue;
 
     const ref = evidenceRef(event);
+    const actor = event.agent_id ?? event.actor_id;
+    const trigger = projection.subtitle ?? event.parent_span_id ?? event.causal?.parent_span_id;
     const existing = activityMap.get(projection.id);
     if (!existing) {
       activityMap.set(projection.id, {
@@ -1031,13 +1186,29 @@ export function projectRuntimeExplanation(
         title: projection.title,
         subtitle: projection.subtitle,
         action: projection.action,
-        actor: event.agent_id ?? event.actor_id,
+        actor,
+        target: projection.target,
+        target_basis: projection.target_basis,
+        target_condition: projection.target_condition,
+        trigger,
         source_span_id: event.span_id,
         parent_span_id: event.parent_span_id ?? event.causal?.parent_span_id,
         sequence_num: event.sequence_num,
         invocation_id: projection.invocation_id,
         semantic_outcome: projection.semantic_outcome,
         evidence_refs: [ref],
+        kind_refs: [ref],
+        actor_refs: actor === undefined ? [] : [ref],
+        target_refs: projection.target === undefined && projection.target_condition === undefined ? [] : [ref],
+        trigger_refs: trigger === undefined ? [] : [ref],
+        input_refs: projection.inputs === undefined ? [] : [ref],
+        output_refs: projection.outputs === undefined ? [] : [ref],
+        artifact_refs: projection.artifacts === undefined ? [] : [ref],
+        start_refs: [],
+        terminal_refs: [],
+        outcome_observations: projection.semantic_outcome === undefined
+          ? []
+          : [{ outcome: projection.semantic_outcome, phase: projection.phase, ref }],
         inputs: projection.inputs,
         outputs: projection.outputs,
         error: projection.error,
@@ -1045,12 +1216,60 @@ export function projectRuntimeExplanation(
       });
     } else {
       existing.evidence_refs.push(ref);
+      const priorInputValue = preferredActivityValue(existing.inputs, 'input', 'reason');
+      const priorOutputValue = preferredActivityValue(existing.outputs, 'output', 'decision');
       existing.inputs = mergeObject(existing.inputs, projection.inputs);
       existing.outputs = mergeObject(existing.outputs, projection.outputs);
       existing.error = mergeObject(existing.error, projection.error);
       existing.semantic_outcome = mergeSemanticOutcome(existing.semantic_outcome, projection.semantic_outcome);
+      if (existing.actor === undefined && actor !== undefined) {
+        existing.actor = actor;
+        existing.actor_refs = [ref];
+      } else if (actor !== undefined && existing.actor !== actor) {
+        existing.actor_conflict = true;
+        existing.actor_refs.push(ref);
+      }
+      if (existing.target === undefined && projection.target !== undefined) {
+        existing.target = projection.target;
+        existing.target_basis = projection.target_basis;
+        existing.target_condition = projection.target_condition;
+        existing.target_refs = [ref];
+      } else if (existing.target === undefined && projection.target_condition !== undefined) {
+        existing.target_basis = projection.target_basis;
+        existing.target_condition = projection.target_condition;
+        existing.target_refs.push(ref);
+      } else if (projection.target !== undefined && existing.target !== projection.target) {
+        existing.target_conflict = true;
+        existing.target_refs.push(ref);
+      }
+      if (existing.trigger === undefined && trigger !== undefined) {
+        existing.trigger = trigger;
+        existing.trigger_refs = [ref];
+      }
+      if (
+        (projection.inputs !== undefined && Object.prototype.hasOwnProperty.call(projection.inputs, 'input'))
+        || (priorInputValue === undefined && projection.inputs !== undefined
+          && Object.prototype.hasOwnProperty.call(projection.inputs, 'reason'))
+      ) {
+        existing.input_refs = [ref];
+      }
+      if (
+        (projection.outputs !== undefined && Object.prototype.hasOwnProperty.call(projection.outputs, 'output'))
+        || (priorOutputValue === undefined && projection.outputs !== undefined
+          && Object.prototype.hasOwnProperty.call(projection.outputs, 'decision'))
+      ) {
+        existing.output_refs = [ref];
+      }
+      if (projection.semantic_outcome !== undefined) {
+        existing.outcome_observations.push({
+          outcome: projection.semantic_outcome,
+          phase: projection.phase,
+          ref,
+        });
+      }
       if (projection.artifacts?.length) {
         existing.artifacts = [...(existing.artifacts ?? []), ...projection.artifacts];
+        existing.artifact_refs.push(ref);
       }
     }
 
@@ -1063,18 +1282,22 @@ export function projectRuntimeExplanation(
     }
 
     if (projection.phase === 'start') {
+      activity.start_refs.push(ref);
       if (!activity.started_at) {
         activity.started_at = event.timestamp;
         activity.started_at_unix_nano = eventTimestampNanos(event);
       }
       activity.sequence_num ??= event.sequence_num;
     } else if (projection.phase === 'instant') {
+      activity.start_refs.push(ref);
+      activity.terminal_refs.push(ref);
       activity.started_at ??= event.timestamp;
       activity.ended_at ??= event.timestamp;
       activity.started_at_unix_nano ??= eventTimestampNanos(event);
       activity.ended_at_unix_nano ??= eventTimestampNanos(event);
       activity.terminal_status = projection.completed_status;
     } else {
+      activity.terminal_refs.push(ref);
       if (!activity.started_at) {
         flags.push(
           createFlag(
@@ -1090,6 +1313,7 @@ export function projectRuntimeExplanation(
         activity.terminal_status = projection.completed_status;
       } else if (activity.ended_at) {
         if (activity.terminal_status !== projection.completed_status) {
+          activity.lifecycle_conflict = true;
           flags.push(
             createFlag(
               'duplicate_terminal',
@@ -1152,6 +1376,51 @@ export function projectRuntimeExplanation(
           ),
         );
       }
+      const lifecycleRefs = dedupeRefs(
+        activity.lifecycle_conflict
+          ? activity.terminal_refs
+          : activity.terminal_status
+            ? activity.terminal_refs
+            : activity.start_refs,
+      );
+      const lifecycleProvenance = activity.lifecycle_conflict
+        ? factProvenance(lifecycleRefs, 'unknown', 'inconsistent')
+        : lifecycleRefs.length > 0
+          ? factProvenance(lifecycleRefs, 'derived', 'recorded')
+          : factProvenance([], 'unknown', 'not_recorded');
+      const observedOutcomes = new Set(
+        activity.outcome_observations
+          .map((observation) => observation.outcome)
+          .filter((outcome) => outcome !== 'unknown'),
+      );
+      const outcomeConflict = observedOutcomes.has('success') && observedOutcomes.has('failure');
+      const terminalOutcomeObservations = activity.outcome_observations
+        .filter((observation) => observation.phase !== 'start');
+      const relevantOutcomeObservations = terminalOutcomeObservations.length > 0
+        ? terminalOutcomeObservations
+        : activity.outcome_observations;
+      const outcomeRefs = activity.semantic_outcome === undefined
+        ? lifecycleRefs
+        : dedupeRefs(relevantOutcomeObservations
+          .filter((observation) =>
+            outcomeConflict
+            || observation.outcome === activity.semantic_outcome
+            || (activity.semantic_outcome === 'unknown' && observation.outcome === 'unknown'))
+          .map((observation) => observation.ref));
+      const outcomeProvenance = outcomeConflict || (activity.semantic_outcome === undefined && activity.lifecycle_conflict)
+        ? factProvenance(outcomeConflict ? outcomeRefs : lifecycleRefs, 'unknown', 'inconsistent')
+        : outcomeRefs.length > 0
+          ? factProvenance(outcomeRefs, 'derived', 'recorded')
+          : factProvenance([], 'unknown', 'not_recorded');
+      const durationMs = exactDurationMs(activity.started_at_unix_nano, activity.ended_at_unix_nano)
+        ?? (startedAtMs !== undefined && endedAtMs !== undefined && endedAtMs >= startedAtMs
+          ? endedAtMs - startedAtMs
+          : undefined);
+      const durationProvenance = durationMs === undefined
+        ? factProvenance([], 'unknown', 'not_recorded')
+        : activity.lifecycle_conflict
+          ? factProvenance([...activity.start_refs, ...activity.terminal_refs], 'unknown', 'inconsistent')
+          : factProvenance([...activity.start_refs, ...activity.terminal_refs], 'derived', 'recorded');
       return {
         id: activity.id,
         kind: activity.kind,
@@ -1164,10 +1433,7 @@ export function projectRuntimeExplanation(
           : runtimeOutcomeLabel(status),
         started_at: activity.started_at,
         ended_at: activity.ended_at,
-        duration_ms: exactDurationMs(activity.started_at_unix_nano, activity.ended_at_unix_nano)
-          ?? (startedAtMs !== undefined && endedAtMs !== undefined && endedAtMs >= startedAtMs
-            ? endedAtMs - startedAtMs
-            : undefined),
+        duration_ms: durationMs,
         actor: activity.actor,
         source_span_id: activity.source_span_id,
         parent_span_id: activity.parent_span_id,
@@ -1177,6 +1443,13 @@ export function projectRuntimeExplanation(
         outputs: activity.outputs,
         error: activity.error,
         artifacts: activity.artifacts,
+        semantic_provenance: {
+          identity: factProvenance(activity.kind_refs.slice(0, 1), 'derived', 'recorded'),
+          kind: factProvenance(activity.kind_refs.slice(0, 1), 'derived', 'recorded'),
+          lifecycle: lifecycleProvenance,
+          outcome: outcomeProvenance,
+          duration: durationProvenance,
+        },
         evidence_refs: [...activity.evidence_refs],
       };
     })
@@ -1392,24 +1665,27 @@ export function projectRuntimeExplanation(
     });
   }
 
-  const downstreamByActivityId = new Map<string, string>();
+  const downstreamByActivityId = new Map<string, {
+    value: string;
+    refs: RuntimeExplanationEvidenceRef[];
+  }>();
   for (const relation of relations) {
     const target = activityById.get(relation.target_activity_id);
     if (!target) continue;
     const current = downstreamByActivityId.get(relation.source_activity_id);
     const next = target.title;
-    downstreamByActivityId.set(
-      relation.source_activity_id,
-      current ? `${current}, ${next}` : next,
-    );
+    downstreamByActivityId.set(relation.source_activity_id, {
+      value: current ? `${current.value}, ${next}` : next,
+      refs: dedupeRefs([...(current?.refs ?? []), ...relation.evidence_refs]),
+    });
   }
 
   const activitiesWithRecords = activities.map((activity, index) => {
     const storyCritical = index < 5 || activity.status === 'failed' || activity.status === 'waiting';
     const operatorFacingRecord = buildOperatorFacingRecord(
       activity,
+      activityMap.get(activity.id)!,
       downstreamByActivityId.get(activity.id),
-      activity.evidence_refs,
     );
     return {
       ...activity,
@@ -1424,46 +1700,96 @@ export function projectRuntimeExplanation(
     (entry) => entry.basis !== 'execution_root_span' || runtimeRootCandidateCount === 1,
   );
   const terminalStates = new Set(effectiveTerminalEvidence.map((entry) => entry.state));
-  const terminalRefs = effectiveTerminalEvidence.map((entry) => entry.ref);
+  const terminalRefs = dedupeRefs(effectiveTerminalEvidence.map((entry) => entry.ref));
+  const pendingInterruptRefs = dedupeRefs([...pendingInterrupts.values()]);
+  const explicitRunStartRefs = dedupeRefs(runStartEvidence
+    .filter((entry) => entry.basis !== 'execution_root_span')
+    .map((entry) => entry.ref));
+  const uniqueRootStartRefs = runtimeRootCandidateCount === 1
+    ? dedupeRefs(runStartEvidence
+      .filter((entry) => entry.basis === 'execution_root_span')
+      .map((entry) => entry.ref))
+    : [];
+  const ambiguousRootRefs = runtimeRootCandidateCount > 1
+    ? dedupeRefs(runStartEvidence
+      .filter((entry) => entry.basis === 'execution_root_span')
+      .map((entry) => entry.ref))
+    : [];
   const hasTerminalConflict = terminalStates.size > 1;
   const hasWaitingTerminalConflict = pendingInterrupts.size > 0 && terminalStates.size > 0;
   let runOutcome: RuntimeExplanationRunOutcome;
+  let runOutcomeProvenance: RuntimeFactProvenance;
   if (hasTerminalConflict || hasWaitingTerminalConflict) {
     runOutcome = 'unknown';
+    const conflictRefs = dedupeRefs([...terminalRefs, ...pendingInterruptRefs]);
+    runOutcomeProvenance = factProvenance(conflictRefs, 'unknown', 'inconsistent');
     flags.push(createFlag(
       'run_evidence_conflict',
       'error',
       hasWaitingTerminalConflict
         ? 'Terminal run evidence conflicts with an unresolved waiting interaction at this frame.'
         : 'Recorded run-terminal evidence contains conflicting outcomes.',
-      terminalRefs,
+      conflictRefs,
     ));
   } else if (terminalStates.has('failed')) {
     runOutcome = 'failed';
+    runOutcomeProvenance = factProvenance(
+      effectiveTerminalEvidence.filter((entry) => entry.state === 'failed').map((entry) => entry.ref),
+      'derived',
+      'recorded',
+    );
   } else if (terminalStates.has('completed')) {
     runOutcome = 'completed';
+    runOutcomeProvenance = factProvenance(
+      effectiveTerminalEvidence.filter((entry) => entry.state === 'completed').map((entry) => entry.ref),
+      'derived',
+      'recorded',
+    );
   } else if (pendingInterrupts.size > 0) {
     runOutcome = 'waiting';
+    runOutcomeProvenance = factProvenance(pendingInterruptRefs, 'derived', 'recorded');
   } else if (explicitRunStartedAt || (runStartAt && runtimeRootCandidateCount === 1)) {
     runOutcome = 'active';
+    runOutcomeProvenance = factProvenance(
+      explicitRunStartRefs.length > 0 ? explicitRunStartRefs : uniqueRootStartRefs,
+      'derived',
+      'recorded',
+    );
   } else {
     runOutcome = 'unknown';
+    runOutcomeProvenance = runtimeRootCandidateCount > 1
+      ? factProvenance(ambiguousRootRefs, 'unknown', 'unavailable')
+      : factProvenance([], 'unknown', 'not_recorded');
     flags.push(createFlag(
       'run_evidence_insufficient',
       'warning',
       runtimeRootCandidateCount > 1
         ? `Run outcome is unknown because ${runtimeRootCandidateCount} execution-root candidates were recorded.`
         : 'Run outcome is unknown because no explicit lifecycle or unique execution-root evidence was recorded.',
-      [],
+      runOutcomeProvenance.evidence_refs,
     ));
   }
   const runDurationMs = (() => {
+    if (runOutcome !== 'completed' && runOutcome !== 'failed') return undefined;
     const exact = exactDurationMs(runStartNano, runFailedNano ?? runCompletedNano);
     if (exact !== undefined) return exact;
     const start = parseTimestamp(runStartAt);
     const end = parseTimestamp(runFailedAt ?? runCompletedAt);
     return start !== undefined && end !== undefined && end >= start ? end - start : undefined;
   })();
+  const runDurationRefs = [runStartRef, runFailedRef ?? runCompletedRef]
+    .filter((ref): ref is RuntimeExplanationEvidenceRef => Boolean(ref));
+  const runDurationProvenance = runDurationMs !== undefined
+    ? factProvenance(runDurationRefs, 'derived', 'recorded')
+    : runOutcomeProvenance.condition === 'inconsistent'
+      || runOutcomeProvenance.condition === 'unavailable'
+      ? factProvenance(
+        [runStartRef, ...runOutcomeProvenance.evidence_refs]
+          .filter((ref): ref is RuntimeExplanationEvidenceRef => Boolean(ref)),
+        'unknown',
+        runOutcomeProvenance.condition,
+      )
+      : factProvenance(runDurationRefs, 'unknown', 'not_recorded');
 
   return {
     mission_id: input.mission_id,
@@ -1472,6 +1798,7 @@ export function projectRuntimeExplanation(
     as_of_timestamp: asOfTimestamp,
     projection_version: 'runtime_explanation.v1',
     run_outcome: runOutcome,
+    run_outcome_provenance: runOutcomeProvenance,
     frame: {
       mission_id: input.mission_id,
       branch_id: input.branch_id,
@@ -1480,7 +1807,8 @@ export function projectRuntimeExplanation(
       projection_version: 'runtime_explanation.v1',
     },
     run_status: deriveRunStatus(runOutcome),
-    runtime_phase: deriveRuntimePhase(runOutcome, asOfSequenceNum, filtered.flatMap((event) => [evidenceRef(event)]).slice(0, 4)),
+    run_status_provenance: runOutcomeProvenance,
+    runtime_phase: deriveRuntimePhase(runOutcome, asOfSequenceNum, runOutcomeProvenance),
     progress_markers: activitiesWithRecords.map((activity) => ({
       sequence_num: activity.sequence_num ?? 0,
       timestamp: activity.started_at ?? activity.ended_at ?? asOfTimestamp ?? new Date(0).toISOString(),
@@ -1490,6 +1818,7 @@ export function projectRuntimeExplanation(
     })),
     selected_activity_state: deriveSelectedActivityState(activitiesWithRecords),
     run_duration_ms: runDurationMs,
+    run_duration_provenance: runDurationProvenance,
     activities: activitiesWithRecords,
     relations,
     parallel_groups: parallelGroups.sort((left, right) => left.id.localeCompare(right.id)),

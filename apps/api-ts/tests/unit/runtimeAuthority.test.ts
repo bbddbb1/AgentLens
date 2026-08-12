@@ -252,6 +252,8 @@ describe('captured mission runtime authority', () => {
 
     expect(explanation.run_outcome).toBe('completed');
     expect(replay.current_state?.status).toBe(explanation.run_outcome);
+    expect(replay.current_state?.status_provenance).toEqual(explanation.run_outcome_provenance);
     expect(replay.current_state?.phase).toBe(explanation.runtime_phase?.label);
+    expect(replay.current_state?.runtime_phase).toEqual(explanation.runtime_phase);
   });
 });

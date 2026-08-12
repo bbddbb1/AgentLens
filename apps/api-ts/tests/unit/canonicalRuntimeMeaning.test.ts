@@ -54,6 +54,16 @@ describe('canonical runtime meaning', () => {
 
     expect(success).toMatchObject({ status: 'completed', outcome: 'Success' });
     expect(failure).toMatchObject({ status: 'failed', outcome: 'Failure' });
+    expect(success?.semantic_provenance).toMatchObject({
+      lifecycle: { basis: 'derived', condition: 'recorded' },
+      outcome: { basis: 'derived', condition: 'recorded' },
+    });
+    expect(failure?.semantic_provenance).toMatchObject({
+      lifecycle: { basis: 'derived', condition: 'recorded' },
+      outcome: { basis: 'derived', condition: 'recorded' },
+    });
+    expect(success?.semantic_provenance?.outcome.evidence_refs.length).toBeGreaterThan(0);
+    expect(failure?.semantic_provenance?.outcome.evidence_refs.length).toBeGreaterThan(0);
     expect(success?.id).toBe(`tool:${success?.invocation_id}`);
     expect(failure?.id).toBe(`tool:${failure?.invocation_id}`);
   });
@@ -89,10 +99,18 @@ describe('canonical runtime meaning', () => {
         outcome: 'unknown',
       }),
     );
-    expect(explanation.activities.find(activity => activity.kind === 'tool')).toMatchObject({
+    const explainedTool = explanation.activities.find(activity => activity.kind === 'tool');
+    expect(explainedTool).toMatchObject({
       status: 'completed',
       outcome: 'Unknown',
+      semantic_provenance: {
+        lifecycle: { basis: 'derived', condition: 'recorded' },
+        outcome: { basis: 'derived', condition: 'recorded' },
+      },
     });
+    expect(explainedTool?.semantic_provenance?.lifecycle.evidence_refs).toHaveLength(1);
+    expect(explainedTool?.semantic_provenance?.outcome.evidence_refs)
+      .toEqual(explainedTool?.semantic_provenance?.lifecycle.evidence_refs);
     expect(snapshot.nodes.find(node => node.source_span_id === 'span-1')).toMatchObject({ status: 'completed' });
   });
 
@@ -307,16 +325,64 @@ describe('canonical runtime meaning', () => {
     };
     expect(neutral([langGraph])).toEqual(neutral([generic]));
     expect(neutral([maf])).toEqual(neutral([generic]));
+
+    const neutralProvenance = (spans: any[]) => {
+      const activity = explanationFor(spans).explanation.activities.find(candidate => candidate.kind === 'tool');
+      return activity && {
+        lifecycle: {
+          value: activity.status,
+          basis: activity.semantic_provenance?.lifecycle.basis,
+          condition: activity.semantic_provenance?.lifecycle.condition,
+        },
+        outcome: {
+          value: activity.outcome,
+          basis: activity.semantic_provenance?.outcome.basis,
+          condition: activity.semantic_provenance?.outcome.condition,
+        },
+        action: {
+          basis: activity.operator_facing_record?.action.basis,
+          condition: activity.operator_facing_record?.action.condition,
+        },
+        target: {
+          value: activity.operator_facing_record?.target.value,
+          basis: activity.operator_facing_record?.target.basis,
+          condition: activity.operator_facing_record?.target.condition,
+        },
+      };
+    };
+    const genericProvenance = neutralProvenance([generic])!;
+    const langGraphProvenance = neutralProvenance([langGraph])!;
+    const mafProvenance = neutralProvenance([maf])!;
+    expect(langGraphProvenance).toEqual(genericProvenance);
+    expect({ ...mafProvenance, target: genericProvenance.target }).toEqual(genericProvenance);
+    expect(mafProvenance.target).toEqual({
+      value: undefined,
+      basis: 'unknown',
+      condition: 'not_recorded',
+    });
   });
 
   it('keeps sparse captured MAF tool evidence partial instead of forcing success', () => {
-    const facts = normalizeSpansToFacts(mafFixture('agent_tool'));
+    const captured = mafFixture('agent_tool');
+    const facts = normalizeSpansToFacts(captured);
     const tool = facts.activities.find(activity => activity.kind === 'tool');
     expect(tool).toMatchObject({
       lifecycle: 'completed',
       outcome: 'unknown',
       invocation_id: undefined,
       identity_basis: 'span_fallback',
+    });
+    const explained = explanationFor(captured).explanation.activities.find(activity => activity.kind === 'tool');
+    expect(explained).toMatchObject({
+      status: 'completed',
+      outcome: 'Unknown',
+      semantic_provenance: {
+        lifecycle: { basis: 'derived', condition: 'recorded' },
+        outcome: { basis: 'derived', condition: 'recorded' },
+      },
+      operator_facing_record: {
+        target: { basis: 'recorded', condition: 'recorded' },
+      },
     });
   });
 
@@ -393,6 +459,10 @@ describe('canonical runtime meaning', () => {
       id: 'tool:call-1',
       status: 'completed',
     });
+    expect(historical.activities.find(activity => activity.kind === 'tool')
+      ?.semantic_provenance?.lifecycle.evidence_refs.every(ref => ref.sequence_num === 1)).toBe(true);
+    expect(current.activities.find(activity => activity.kind === 'tool')
+      ?.semantic_provenance?.lifecycle.evidence_refs.every(ref => ref.sequence_num === 2)).toBe(true);
     expect(replay.snapshots.find(snapshot => snapshot.sequence_num === 1)?.nodes[0]?.status).toBe('active');
     expect(replay.snapshots.find(snapshot => snapshot.sequence_num === 2)?.nodes[0]?.status).toBe('completed');
 

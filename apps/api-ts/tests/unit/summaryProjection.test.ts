@@ -54,6 +54,9 @@ describe('projectRuntimeSummary', () => {
       mission_id: 'm1', branch_id: 'main', objective: 'Test', status: 'active', phase: 'executing', events: [completed],
     });
     expect(summary).toMatchObject({ status: 'completed', run_status: 'Completed', phase: 'Completed' });
+    expect(summary.run_outcome_provenance).toMatchObject({ basis: 'derived', condition: 'recorded' });
+    expect(summary.run_outcome_provenance?.evidence_refs.map(ref => ref.event_id)).toEqual(['e-0']);
+    expect(summary.run_status_provenance).toEqual(summary.run_outcome_provenance);
     expect(summary.current_phase?.label).toBe('Completed');
     expect(summary.runtime_phase?.label).toBe('Completed');
   });
@@ -64,6 +67,9 @@ describe('projectRuntimeSummary', () => {
       events: [event('mission.created', {}, 0)],
     });
     expect(summary).toMatchObject({ status: 'unknown', run_status: 'Unknown', phase: 'Unknown' });
+    expect(summary.run_status_provenance).toMatchObject({
+      basis: 'unknown', condition: 'not_recorded', evidence_refs: [],
+    });
     expect(summary.headline).toBe('Execution outcome unknown');
   });
 

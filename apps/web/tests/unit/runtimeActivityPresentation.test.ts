@@ -16,6 +16,17 @@ describe('canonical activity Inspector presentation', () => {
       outcome: 'Unknown',
       invocation_id: 'call-1',
       source_span_id: 'span-1',
+      semantic_provenance: {
+        kind: { basis: 'derived', condition: 'recorded', evidence_refs: [] },
+        lifecycle: {
+          basis: 'derived', condition: 'recorded',
+          evidence_refs: [{
+            event_id: 'event-terminal', sequence_num: 8,
+            timestamp: '2026-01-01T00:00:01.000Z', branch_id: 'main',
+          }],
+        },
+        outcome: { basis: 'unknown', condition: 'not_recorded', evidence_refs: [] },
+      },
       evidence_refs: [{
         event_id: 'event-1',
         sequence_num: 7,
@@ -32,7 +43,14 @@ describe('canonical activity Inspector presentation', () => {
       outcome: 'Unknown',
       invocationId: 'call-1',
       sourceSpanId: 'span-1',
-      evidenceSequences: [7],
+      evidenceRefs: [{ eventId: 'event-1', sequenceNum: 7 }],
+      lifecycleProvenance: {
+        basis: 'derived', condition: 'recorded',
+        evidenceRefs: [{ eventId: 'event-terminal', sequenceNum: 8 }],
+      },
+      outcomeProvenance: {
+        basis: 'unknown', condition: 'not_recorded', evidenceRefs: [],
+      },
       limitation: undefined,
     });
   });

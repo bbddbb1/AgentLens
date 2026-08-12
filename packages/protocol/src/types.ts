@@ -48,6 +48,7 @@ export type RuntimeExplanationConsistencyCode =
   | 'run_evidence_insufficient'
   | 'run_evidence_conflict';
 export type RuntimeExplanationConsistencySeverity = 'info' | 'warning' | 'error';
+export type RuntimeFactBasis = 'recorded' | 'derived' | 'unknown';
 
 export interface RuntimeExplanationEvidenceRef {
   event_id: string;
@@ -112,6 +113,22 @@ export interface RuntimeExplanationConsistencyFlag {
   evidence_refs: RuntimeExplanationEvidenceRef[];
 }
 
+export interface RuntimeFactProvenance {
+  /** `recorded` means the exposed value is verbatim; `derived` means deterministic L1 projection. */
+  basis: RuntimeFactBasis;
+  /** Availability/access/conflict state of the evidence supporting this fact. */
+  condition: RuntimeEvidenceFieldCondition;
+  evidence_refs: RuntimeExplanationEvidenceRef[];
+}
+
+export interface RuntimeExplanationActivitySemanticProvenance {
+  identity?: RuntimeFactProvenance;
+  kind: RuntimeFactProvenance;
+  lifecycle: RuntimeFactProvenance;
+  outcome: RuntimeFactProvenance;
+  duration?: RuntimeFactProvenance;
+}
+
 export interface RuntimeExplanationActivity {
   id: string;
   kind: RuntimeExplanationActivityKind;
@@ -132,6 +149,8 @@ export interface RuntimeExplanationActivity {
   outputs?: Record<string, RuntimeExplanationValue>;
   error?: Record<string, RuntimeExplanationValue>;
   artifacts?: RuntimeExplanationValue[];
+  /** Exact evidence and derivation class for canonical L1 semantic fields. */
+  semantic_provenance?: RuntimeExplanationActivitySemanticProvenance;
   operator_facing_record?: RuntimeOperatorActivityRecord;
   story_critical?: boolean;
   story_critical_limitation?: string;
@@ -145,12 +164,15 @@ export interface RuntimeExplanationProjection {
   as_of_timestamp?: string;
   projection_version: RuntimeExplanationProjectionVersion;
   run_outcome: RuntimeExplanationRunOutcome;
+  run_outcome_provenance?: RuntimeFactProvenance;
   frame?: RuntimeFrame;
   run_status?: RunStatus;
+  run_status_provenance?: RuntimeFactProvenance;
   runtime_phase?: RuntimePhaseSummary;
   progress_markers?: RuntimeProgressMarker[];
   selected_activity_state?: RuntimeSelectedActivityState;
   run_duration_ms?: number;
+  run_duration_provenance?: RuntimeFactProvenance;
   activities: RuntimeExplanationActivity[];
   relations: RuntimeExplanationRelation[];
   parallel_groups: RuntimeExplanationParallelGroup[];
@@ -169,7 +191,8 @@ export interface RuntimeFrame {
 export interface RuntimePhaseSummary {
   id: string;
   label: string;
-  basis: 'recorded' | 'derived' | 'unknown';
+  basis: RuntimeFactBasis;
+  condition?: RuntimeEvidenceFieldCondition;
   start_sequence_num?: number;
   end_sequence_num?: number;
   evidence_refs: RuntimeExplanationEvidenceRef[];
@@ -198,7 +221,10 @@ export type RuntimeEvidenceFieldCondition =
 
 export interface RuntimeActivityField<T = RuntimeExplanationValue> {
   value?: T;
+  /** Availability/access/conflict state; combine with basis to distinguish verbatim from derived values. */
   condition: RuntimeEvidenceFieldCondition;
+  /** Whether value is verbatim evidence, a deterministic projection, or unsupported. */
+  basis?: RuntimeFactBasis;
   evidence_refs?: RuntimeExplanationEvidenceRef[];
 }
 
@@ -253,6 +279,7 @@ export interface RuntimeActivity {
   source_span_id?: string;
   parent_span_id?: string;
   invocation_id?: string;
+  semantic_provenance?: RuntimeExplanationActivitySemanticProvenance;
   operator_facing_record?: RuntimeOperatorActivityRecord;
   story_critical?: boolean;
   story_critical_limitation?: string;
@@ -566,6 +593,8 @@ export interface RuntimeSummary {
   objective: string;
   status: string;
   run_status?: RunStatus;
+  run_outcome_provenance?: RuntimeFactProvenance;
+  run_status_provenance?: RuntimeFactProvenance;
   phase: string;
   current_phase?: RuntimePhaseSummary;
   runtime_phase?: RuntimePhaseSummary;
@@ -801,7 +830,9 @@ export interface RuntimeState {
   mission_id: string;
   branch_id: string;
   status: string;
+  status_provenance?: RuntimeFactProvenance;
   phase: string;
+  runtime_phase?: RuntimePhaseSummary;
   sequence_num: number;
   last_event_id?: string;
   last_event_type?: string;

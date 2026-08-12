@@ -8,8 +8,21 @@ export interface RuntimeActivityInspectorView {
   outcome: string;
   invocationId?: string;
   sourceSpanId?: string;
-  evidenceSequences: number[];
+  evidenceRefs: RuntimeActivityEvidenceRefView[];
+  lifecycleProvenance?: RuntimeActivityFieldProvenanceView;
+  outcomeProvenance?: RuntimeActivityFieldProvenanceView;
   limitation?: string;
+}
+
+export interface RuntimeActivityFieldProvenanceView {
+  basis: string;
+  condition: string;
+  evidenceRefs: RuntimeActivityEvidenceRefView[];
+}
+
+export interface RuntimeActivityEvidenceRefView {
+  eventId: string;
+  sequenceNum: number;
 }
 
 function titleCase(value: string): string {
@@ -27,7 +40,26 @@ export function runtimeActivityInspectorView(
     outcome: activity.outcome ?? 'Unknown',
     invocationId: activity.invocation_id,
     sourceSpanId: activity.source_span_id,
-    evidenceSequences: activity.evidence_refs.map((reference) => reference.sequence_num),
+    evidenceRefs: activity.evidence_refs.map((reference) => ({
+      eventId: reference.event_id,
+      sequenceNum: reference.sequence_num,
+    })),
+    lifecycleProvenance: activity.semantic_provenance?.lifecycle && {
+      basis: activity.semantic_provenance.lifecycle.basis,
+      condition: activity.semantic_provenance.lifecycle.condition,
+      evidenceRefs: activity.semantic_provenance.lifecycle.evidence_refs.map((reference) => ({
+        eventId: reference.event_id,
+        sequenceNum: reference.sequence_num,
+      })),
+    },
+    outcomeProvenance: activity.semantic_provenance?.outcome && {
+      basis: activity.semantic_provenance.outcome.basis,
+      condition: activity.semantic_provenance.outcome.condition,
+      evidenceRefs: activity.semantic_provenance.outcome.evidence_refs.map((reference) => ({
+        eventId: reference.event_id,
+        sequenceNum: reference.sequence_num,
+      })),
+    },
     limitation: activity.story_critical_limitation,
   };
 }

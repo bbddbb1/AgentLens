@@ -1434,7 +1434,9 @@ export function projectReplay(
       ? {
           ...replay.current_state,
           status: explanation.run_outcome,
+          status_provenance: explanation.run_outcome_provenance,
           phase: explanation.runtime_phase?.label ?? 'Unknown',
+          runtime_phase: explanation.runtime_phase,
           agents: buildRuntimeAgentsFromEvents(
             replay.events,
             explanation.runtime_phase?.label ?? 'Unknown',
