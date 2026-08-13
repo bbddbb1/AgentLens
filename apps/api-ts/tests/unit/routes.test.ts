@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { RUNTIME_EXPLANATION_VERSION, type RuntimeExplanationV1 } from '@agentlens/protocol';
 import { GovernanceControlError } from '../../src/services/interrupts/controlAuthority.js';
 
 // Mock module-level dependencies
@@ -50,7 +51,26 @@ vi.mock('../../src/services/missionStore.js', () => ({
 
 vi.mock('../../src/realtime/events.js', () => ({
   publishMissionEvent: (...args: unknown[]) => mockPublishEvent(...args),
+  publishRuntimeExplanationEvent: (...args: unknown[]) => mockPublishEvent(...args),
 }));
+
+function frozenExplanation(): RuntimeExplanationV1 {
+  const provenance = { basis: 'unknown' as const, condition: 'not_recorded' as const, evidence_refs: [] };
+  return {
+    mission_id: 'm1', branch_id: 'main', as_of_sequence_num: 0,
+    as_of_timestamp: '1970-01-01T00:00:00.000Z', projection_version: RUNTIME_EXPLANATION_VERSION,
+    run_outcome: 'unknown', run_outcome_provenance: provenance,
+    frame: {
+      mission_id: 'm1', branch_id: 'main', sequence_num: 0,
+      as_of_timestamp: '1970-01-01T00:00:00.000Z', projection_version: RUNTIME_EXPLANATION_VERSION,
+    },
+    run_status: 'Unknown', run_status_provenance: provenance,
+    runtime_phase: { id: 'phase:unknown', label: 'Unknown', basis: 'unknown', condition: 'not_recorded', evidence_refs: [] },
+    progress_markers: [], selected_activity_state: { kind: 'no_activity', reason: 'no_selectable_activity' },
+    run_duration_provenance: provenance, activities: [], relations: [], parallel_groups: [], merge_groups: [],
+    consistency_flags: [],
+  };
+}
 
 vi.mock('../../src/services/artifacts.js', () => ({
   artifactBucket: () => 'test-bucket',
@@ -436,6 +456,24 @@ describe('POST /api/v1/missions/:missionId/replay/branches', () => {
     // Schema has all optional fields, so it should pass validation
     mockStore.createReplayBranch.mockResolvedValueOnce(null);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /api/v1/missions/:missionId/explanation', () => {
+  it('rejects negative, fractional, and unsupported-version frame queries', async () => {
+    expect((await request(app).get('/api/v1/missions/m1/explanation?sequence_num=-1')).status).toBe(400);
+    expect((await request(app).get('/api/v1/missions/m1/explanation?sequence_num=1.5')).status).toBe(400);
+    expect((await request(app).get('/api/v1/missions/m1/explanation?projection_version=runtime_explanation.v2')).status).toBe(400);
+    expect(mockStore.getMission).not.toHaveBeenCalled();
+  });
+
+  it('returns only a schema-valid frozen v1 payload', async () => {
+    const explanation = frozenExplanation();
+    mockStore.getMission.mockResolvedValueOnce({ id: 'm1' });
+    mockStore.getRuntimeExplanation.mockResolvedValueOnce(explanation);
+    const res = await request(app).get(`/api/v1/missions/m1/explanation?projection_version=${RUNTIME_EXPLANATION_VERSION}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(explanation);
   });
 });
 

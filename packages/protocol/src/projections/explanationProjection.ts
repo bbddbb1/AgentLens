@@ -22,6 +22,7 @@ import type {
   RuntimeProgressMarker,
   RuntimeSelectedActivityState,
 } from '../types.js';
+import { RUNTIME_EXPLANATION_VERSION } from '../runtimeContract.js';
 import { eventsThroughCursor } from './runtimeProjection.js';
 
 export interface ProjectRuntimeExplanationInput {
@@ -1724,8 +1725,8 @@ export function projectRuntimeExplanation(
     mission_id: input.mission_id,
     branch_id: input.branch_id,
     as_of_sequence_num: asOfSequenceNum,
-    as_of_timestamp: asOfTimestamp,
-    projection_version: 'runtime_explanation.v1',
+    as_of_timestamp: asOfTimestamp ?? filtered[filtered.length - 1]?.timestamp ?? new Date(0).toISOString(),
+    projection_version: RUNTIME_EXPLANATION_VERSION,
     run_outcome: runOutcome,
     run_outcome_provenance: runOutcomeProvenance,
     frame: {
@@ -1733,7 +1734,7 @@ export function projectRuntimeExplanation(
       branch_id: input.branch_id,
       sequence_num: asOfSequenceNum,
       as_of_timestamp: asOfTimestamp ?? filtered[filtered.length - 1]?.timestamp ?? new Date(0).toISOString(),
-      projection_version: 'runtime_explanation.v1',
+      projection_version: RUNTIME_EXPLANATION_VERSION,
     },
     run_status: deriveRunStatus(runOutcome),
     run_status_provenance: runOutcomeProvenance,

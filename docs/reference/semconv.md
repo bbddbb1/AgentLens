@@ -1,8 +1,8 @@
-# AgentLens Semantic Conventions (Frozen Reference)
+# AgentLens Semantic Conventions (Input Reference)
 
 AgentLens SDKs and adapters emit telemetry according to these semantic conventions to maintain a stable contract with the Express control plane.
 
-Version: 0.1 (frozen)
+Version: 0.1 (evolving input contract; not the frozen Runtime Core output contract)
 
 ## Goals
 
@@ -18,11 +18,11 @@ All AgentLens adapters must follow these conventions when emitting OpenTelemetry
 
 Adapters must set these attributes on every AgentLens span:
 
-- `agent.id` (required)
+- `gen_ai.agent.id` (required)
 - `agent.span.kind` (required)
-- `agent.framework` (recommended)
-- `agent.name` (recommended)
-- `agent.role` (recommended)
+- `gen_ai.agent.framework` (recommended)
+- `gen_ai.agent.name` (recommended)
+- `gen_ai.agent.role` (recommended)
 
 ## Span Kinds
 
@@ -46,11 +46,11 @@ The `agent.span.kind` attribute is required on telemetry spans. Supported enum v
 Tool invocations can be represented as standalone spans or events on an existing span:
 
 - Span attribute: `agent.span.kind = agent.tool.call`
-- Required attribute: `agent.tool.name`
+- Required attribute: `gen_ai.tool.name`
 - Optional events:
-  - `agent.tool.call` with `agent.tool.input`
-  - `agent.tool.result` with `agent.tool.output`
-  - `agent.tool.error` with `agent.tool.status = error`
+  - `agent.tool.call` with `gen_ai.tool.input`
+  - `agent.tool.result` with `gen_ai.tool.output`
+  - `agent.tool.error` with `gen_ai.tool.status = error`
 
 ### Handoff
 
@@ -62,11 +62,11 @@ Emit handoff events when control transitions between agents or shifts to a human
 
 Required attributes:
 
-- `agent.handoff.target`
+- `gen_ai.agent.handoff.target`
 
 Recommended attributes:
 
-- `agent.handoff.reason`
+- `gen_ai.agent.handoff.reason`
 
 Legacy alias: `agent.delegation` and `agent.delegation.*` are supported for backwards compatibility but should be replaced by `agent.handoff.*` in new integrations.
 
@@ -79,21 +79,21 @@ Interrupts represent human-in-the-loop review gates or automated runtime policy 
 
 Required attributes on `agent.interrupt.requested`:
 
-- `agent.interrupt.id`
-- `agent.interrupt.reason`
+- `gen_ai.agent.interrupt.id`
+- `gen_ai.agent.interrupt.reason`
 
 Recommended attributes:
 
-- `agent.interrupt.resume_url`
-- `agent.resume.token`
-- `agent.timeout_at`
-- `agent.policy.required_review`
+- `gen_ai.agent.interrupt.resume_url`
+- `gen_ai.agent.resume.token`
+- `gen_ai.agent.timeout_at`
+- `gen_ai.agent.policy.required_review`
 
 When a human override decision is recorded, emit:
 
 - `agent.human.decision` containing:
-  - `agent.human.decision` (approve, reject, revise, resume)
-  - `agent.human.input` (optional comments or parameters)
+  - `gen_ai.agent.human.decision` (approve, reject, revise, resume)
+  - `gen_ai.agent.human.input` (optional comments or parameters)
 
 ### Review
 

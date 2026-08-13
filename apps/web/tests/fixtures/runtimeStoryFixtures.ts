@@ -49,6 +49,16 @@ function baseExplanation(
   sequenceNum: number,
   runOutcome: RuntimeExplanationProjection['run_outcome'],
 ): RuntimeExplanationProjection {
+  const provenance = { basis: 'unknown' as const, condition: 'not_recorded' as const, evidence_refs: [] };
+  const status = runOutcome === 'active'
+    ? 'Active'
+    : runOutcome === 'waiting'
+      ? 'Waiting'
+      : runOutcome === 'completed'
+        ? 'Completed'
+        : runOutcome === 'failed'
+          ? 'Failed'
+          : 'Unknown';
   return {
     mission_id: `${id}-mission`,
     branch_id: 'main',
@@ -56,6 +66,17 @@ function baseExplanation(
     as_of_timestamp: timestamp(sequenceNum),
     projection_version: 'runtime_explanation.v1',
     run_outcome: runOutcome,
+    run_outcome_provenance: provenance,
+    frame: {
+      mission_id: `${id}-mission`, branch_id: 'main', sequence_num: sequenceNum,
+      as_of_timestamp: timestamp(sequenceNum), projection_version: 'runtime_explanation.v1',
+    },
+    run_status: status,
+    run_status_provenance: provenance,
+    runtime_phase: { id: `phase:${status}`, label: status === 'Active' ? 'Active Work' : status, basis: 'unknown', evidence_refs: [] },
+    progress_markers: [],
+    selected_activity_state: { kind: 'no_activity', reason: 'no_selectable_activity' },
+    run_duration_provenance: provenance,
     activities: [],
     relations: [],
     parallel_groups: [],

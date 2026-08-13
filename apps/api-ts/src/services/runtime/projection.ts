@@ -1,4 +1,4 @@
-import { eventsThroughCursor, SPAN_PROJECTION_VERSION } from '@agentlens/protocol';
+import { SPAN_PROJECTION_VERSION } from '@agentlens/protocol';
 import type {
   GraphSnapshot,
   GraphNode,
@@ -10,7 +10,7 @@ import type {
   ReplayStateResponse,
   RuntimeAgentState,
 } from '@agentlens/protocol';
-import { projectRuntimeExplanation, scanEventsToScratch } from '@agentlens/protocol';
+import { eventsThroughCursor, projectRuntimeExplanation, scanEventsToScratch } from '@agentlens/protocol/internal';
 import { applyHierarchicalLayout } from '../graphLayout.js';
 import { normalizeSpansToFacts } from './normalization/index.js';
 import { originFrameworkFromAttrs } from './normalization/agentLensCompat.js';

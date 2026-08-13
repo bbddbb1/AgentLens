@@ -3,8 +3,8 @@ import {
   eventsThroughCursor,
   projectRuntimeExplanation,
   projectRuntimeSummary,
-  type EventEnvelope,
-} from '@agentlens/protocol';
+} from '@agentlens/protocol/internal';
+import type { EventEnvelope } from '@agentlens/protocol';
 import { attachExplanationToNodes } from '../../src/services/missionStore.js';
 import { projectReplay, projectReplayEvidence, projectRuntimeStateAtFrame } from '../../src/services/runtime/projection.js';
 

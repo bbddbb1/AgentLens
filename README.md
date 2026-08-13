@@ -86,7 +86,9 @@ agentlens/
 ## Architecture
 
 AgentLens is built on a high-throughput **control-plane / data-plane** split.
-For a detailed architectural overview, including our event ledger, replay mechanism, and timeline branching, see [Architecture](docs/explanation/architecture.md).
+For a detailed architectural overview of the current span-backed evidence store,
+derived replay compatibility shape, and timeline branching, see
+[Architecture](docs/explanation/architecture.md).
 
 For broader maintainer documentation (design constraints, roadmap), see [docs/README.md](docs/README.md).
 
@@ -106,7 +108,9 @@ POST http://localhost:8001/api/v1/ingest/otlp
 Content-Type: application/json
 ```
 
-Both endpoints accept spans with AgentLens semantic convention attributes (`agent.id`, `agent.role`, `agent.task`, etc.) and project them into run state graphs.
+Both endpoints accept spans with AgentLens/OpenTelemetry semantic convention
+attributes (`gen_ai.agent.id`, `gen_ai.agent.role`, `gen_ai.agent.task`, etc.)
+and project them into run state graphs.
 
 ## Developer Workflows
 

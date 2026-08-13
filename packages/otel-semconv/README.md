@@ -21,7 +21,7 @@ span.add_event(AgentEvents.HANDOFF_REQUESTED, {
 
 ## Exported Constants
 
-See [`docs/semconv.md`](../../docs/semconv.md) for the full frozen reference.
+See [`docs/reference/semconv.md`](../../docs/reference/semconv.md) for the input reference.
 
 ### Attributes
 

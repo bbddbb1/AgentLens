@@ -4,42 +4,18 @@ Next.js 16 review dashboard for observing and steering multi-agent AI systems.
 
 ## Architecture
 
-```
-apps/web/
-├── src/
-│   ├── app/
-│   │   ├── layout.tsx          # Root layout (Tailwind, fonts, metadata)
-│   │   ├── page.tsx            # Home — mission list
-│   │   ├── missions/[id]/
-│   │   │   └── page.tsx        # Mission detail — graph + review panel
-│   │   └── api/
-│   │       ├── assistant/
-│   │       │   └── route.ts    # "Ask Pi" AI assistant endpoint
-│   │       └── why-this-state/
-│   │           └── route.ts    # State explanation endpoint
-│   └── components/
-│       ├── graph/
-│       │   ├── MissionGraph.tsx # XYFlow-based graph visualization
-│       │   ├── AgentNode.tsx    # Custom agent node renderer
-│       │   └── TaskNode.tsx     # Custom task node renderer
-│       ├── ai/
-│       │   └── AiAssistant.tsx  # Embedded "Ask Pi" chat panel
-│       └── common/
-│           └── Tooltip.tsx      # Shared tooltip component
-├── tests/
-│   ├── unit/stores.test.ts      # Store unit tests
-│   └── e2e/ui-flow.test.ts      # End-to-end UI flow tests
-├── next.config.ts
-└── package.json
-```
+The App Router mission workspace uses Zustand stores for replay, graph, audit,
+and selection state. Summary, Graph, Timeline, Inspector, and current-event
+focus consume the same frame-scoped RuntimeExplanation meaning. The web client
+validates REST and realtime v1 payloads before changing state and rejects
+mission, branch, version, or frame mismatches.
 
 ## State Management
 
-The app uses React Context + `useReducer` for client-side state:
+The app uses Zustand for client-side state:
 - Mission list state (fetch, filter, sort)
 - Active mission detail + graph data
-- WebSocket connection state and event buffering
-- AI assistant session state
+- frame-scoped RuntimeExplanation and Summary responses
 
 ## Graph Rendering
 
@@ -69,8 +45,7 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8001
 - Mission list with status filtering
 - Interactive mission graph with real-time updates via WebSockets
 - HITL interrupt and decision panel (approve / reject / revise)
-- Embedded "Ask Pi" AI assistant (`@earendil-works/pi-coding-agent`)
-- Demo-only "why this state" explanations
+- Evidence-bounded "why this state" explanations
 
 ## Tests
 

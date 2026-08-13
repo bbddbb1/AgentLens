@@ -92,7 +92,7 @@ export interface RuntimeExplanationRelation {
 export interface RuntimeExplanationParallelGroup {
   id: string;
   activity_ids: string[];
-  basis: 'explicit' | 'parent_overlap';
+  basis: 'explicit';
   evidence_refs: RuntimeExplanationEvidenceRef[];
 }
 
@@ -163,18 +163,18 @@ export interface RuntimeExplanationProjection {
   mission_id: string;
   branch_id: string;
   as_of_sequence_num: number;
-  as_of_timestamp?: string;
+  as_of_timestamp: string;
   projection_version: RuntimeExplanationProjectionVersion;
   run_outcome: RuntimeExplanationRunOutcome;
-  run_outcome_provenance?: RuntimeFactProvenance;
-  frame?: RuntimeFrame;
-  run_status?: RunStatus;
-  run_status_provenance?: RuntimeFactProvenance;
-  runtime_phase?: RuntimePhaseSummary;
-  progress_markers?: RuntimeProgressMarker[];
-  selected_activity_state?: RuntimeSelectedActivityState;
+  run_outcome_provenance: RuntimeFactProvenance;
+  frame: RuntimeFrame;
+  run_status: RunStatus;
+  run_status_provenance: RuntimeFactProvenance;
+  runtime_phase: RuntimePhaseSummary;
+  progress_markers: RuntimeProgressMarker[];
+  selected_activity_state: RuntimeSelectedActivityState;
   run_duration_ms?: number;
-  run_duration_provenance?: RuntimeFactProvenance;
+  run_duration_provenance: RuntimeFactProvenance;
   activities: RuntimeExplanationActivity[];
   relations: RuntimeExplanationRelation[];
   parallel_groups: RuntimeExplanationParallelGroup[];
@@ -187,12 +187,12 @@ export interface RuntimeFrame {
   branch_id: string;
   sequence_num: number;
   as_of_timestamp: string;
-  projection_version: string;
+  projection_version: RuntimeExplanationProjectionVersion;
 }
 
 export interface RuntimePhaseSummary {
   id: string;
-  label: string;
+  label: RuntimePhaseLabel;
   basis: RuntimeFactBasis;
   condition?: RuntimeEvidenceFieldCondition;
   start_sequence_num?: number;
@@ -233,7 +233,7 @@ export interface RuntimeActivityField<T = RuntimeExplanationValue> {
 export interface RuntimeProgressMarker {
   sequence_num: number;
   timestamp: string;
-  kind: string;
+  kind: RuntimeExplanationActivityKind;
   text: string;
   actor?: string;
 }

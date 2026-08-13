@@ -1,8 +1,15 @@
 import { Router, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { CreateInterruptSchema, CreateReplayBranchSchema, DecideInterruptSchema, ResumeInterruptSchema } from '@agentlens/protocol';
-import { publishMissionEvent } from '../realtime/events.js';
+import {
+  CreateInterruptSchema,
+  CreateReplayBranchSchema,
+  DecideInterruptSchema,
+  ResumeInterruptSchema,
+  RuntimeExplanationQueryV1Schema,
+  serializeRuntimeExplanationV1,
+} from '@agentlens/protocol';
+import { publishMissionEvent, publishRuntimeExplanationEvent } from '../realtime/events.js';
 import { missionStore } from '../services/missionStore.js';
 import { artifactBucket, presignArtifactDownload, presignArtifactUpload } from '../services/artifacts.js';
 import { GovernanceControlError, governanceErrorStatus } from '../services/interrupts/controlAuthority.js';
@@ -119,19 +126,19 @@ extrasRouter.get('/api/v1/missions/:missionId/runtime-summary', async (req, res)
 
 extrasRouter.get('/api/v1/missions/:missionId/explanation', async (req, res) => {
   try {
+    const query = RuntimeExplanationQueryV1Schema.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ detail: query.error.flatten() });
     const mission = await missionStore.getMission(req.params.missionId);
     if (!mission) return res.status(404).json({ detail: 'Mission not found' });
 
-    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
-    const sequenceNum = req.query.sequence_num !== undefined ? Number(req.query.sequence_num) : undefined;
     const explanation = await missionStore.getRuntimeExplanation(
       req.params.missionId,
-      branchId,
-      Number.isFinite(sequenceNum) ? sequenceNum : undefined,
+      query.data.branch_id,
+      query.data.sequence_num,
     );
     if (!explanation) return res.status(404).json({ detail: 'Mission not found' });
 
-    return res.json(explanation);
+    return res.json(serializeRuntimeExplanationV1(explanation));
   } catch (error) {
     return respondRouteError(res, error, 'Failed to load runtime explanation');
   }
@@ -146,7 +153,7 @@ extrasRouter.post('/api/v1/missions/:missionId/runtime-summary/enhance', async (
 
     await publishMissionEvent(req.params.missionId, 'runtime.summary.updated', { runtime_summary: summary });
     if (explanation) {
-      await publishMissionEvent(req.params.missionId, 'runtime.explanation.updated', { runtime_explanation: explanation });
+      await publishRuntimeExplanationEvent(req.params.missionId, explanation);
     }
     return res.status(201).json(summary);
   } catch (error) {

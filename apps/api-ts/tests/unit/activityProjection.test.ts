@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   projectRuntimeActivities,
   projectRuntimeActivity,
-  type MissionEventRecord,
-} from '@agentlens/protocol';
+} from '@agentlens/protocol/internal';
+import type { MissionEventRecord } from '@agentlens/protocol';
 
 function event(
   sequence_num: number,

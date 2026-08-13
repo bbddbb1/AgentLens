@@ -19,7 +19,7 @@
 
 import { useState } from 'react';
 import type { EventEnvelope, GraphEdge, GraphNode, ProducedOutput, ProjectionProfile, RuntimeEventRef, RuntimeNodeProjection } from '@agentlens/protocol';
-import { renderRuntimeEventRef } from '@agentlens/protocol';
+import { renderRuntimeEventRef } from '@agentlens/protocol/internal';
 import { buildAgentView, buildGraphNodeView, buildInterruptView, buildInterruptViewFromState, buildBranchView, buildCheckpointView, buildMissionView, buildProfileEvidenceRows, buildRuntimeAgentStateView, deriveRelationships, envelopeProvenance, formatDurationMs, formatTimestamp, packEvidence, resolveRelationshipTargets, splitPayload, type AgentView, type EnvelopeProvenance, type MissionView, type RopsField } from '@/lib/rops/provenance';
 import { collectNodeEvidence } from '@/lib/rops/nodeEvidence';
 import { isRedactionValue, resolveNormalizedIoDisplay } from '@/lib/rops/fieldCondition';

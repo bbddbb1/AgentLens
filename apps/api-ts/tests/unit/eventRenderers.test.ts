@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderRuntimeEventRef } from '@agentlens/protocol';
+import { renderRuntimeEventRef } from '@agentlens/protocol/internal';
 import type { RuntimeEventRef } from '@agentlens/protocol';
 
 describe('renderRuntimeEventRef', () => {

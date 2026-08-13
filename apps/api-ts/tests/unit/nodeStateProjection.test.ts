@@ -6,7 +6,7 @@ import {
   isNodeProjectionCacheValid,
   projectNodeState,
   renderRuntimeEventRef,
-} from '@agentlens/protocol';
+} from '@agentlens/protocol/internal';
 import type { MissionEventRecord } from '@agentlens/protocol';
 
 function event(

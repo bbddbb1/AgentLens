@@ -61,6 +61,19 @@ def _error_code(exc: Exception) -> str:
     return exc.__class__.__name__
 
 
+def _http_failure(exc: Exception) -> dict[str, object]:
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return {}
+    try:
+        payload = exc.response.json()
+    except ValueError:
+        payload = {}
+    return {
+        "http_status": exc.response.status_code,
+        "http_detail": str(payload.get("detail") or payload.get("reason") or "unspecified"),
+    }
+
+
 def _api_url() -> str:
     return os.environ.get("AGENTLENS_API_URL", "http://localhost:8001").rstrip("/")
 
@@ -107,14 +120,51 @@ def _assert_public_safety(views: dict[str, Any]) -> None:
 
 def _find_interrupt(client: httpx.Client, mission_id: str, branch_id: str) -> dict[str, Any]:
     deadline = time.monotonic() + float(os.environ.get("CONFORMANCE_READINESS_TIMEOUT_SECONDS", "30"))
+    last: dict[str, Any] | None = None
     while time.monotonic() < deadline:
         response = client.get(f"/api/v1/missions/{mission_id}/interrupts", params={"branch_id": branch_id})
         response.raise_for_status()
         interrupts = response.json().get("interrupts", [])
-        if isinstance(interrupts, list) and interrupts:
-            return interrupts[0]
+        if isinstance(interrupts, list):
+            for candidate in interrupts:
+                if not isinstance(candidate, dict):
+                    continue
+                last = candidate
+                supported = candidate.get("supported_decision_types")
+                if isinstance(supported, list) and "approve" in supported:
+                    return candidate
         time.sleep(0.25)
-    raise AssertionError("LangGraph interrupt was not visible after real telemetry ingestion")
+    raise AssertionError(f"LangGraph native interrupt capability was not visible after real telemetry ingestion: {last!r}")
+
+
+def _wait_for_actionable_interrupt(
+    client: httpx.Client,
+    mission_id: str,
+    branch_id: str,
+    interrupt_id: str,
+) -> dict[str, Any]:
+    """Wait only for the persisted adapter capability/binding revision.
+
+    OTLP span revisions and bridge registration are separate HTTP commits. The
+    decision must not race the later revision that carries the explicit
+    supported-decision vocabulary.
+    """
+    deadline = time.monotonic() + float(os.environ.get("CONFORMANCE_READINESS_TIMEOUT_SECONDS", "30"))
+    last: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        response = client.get(
+            f"/api/v1/missions/{mission_id}/interrupts",
+            params={"branch_id": branch_id},
+        )
+        response.raise_for_status()
+        for candidate in response.json().get("interrupts", []):
+            if str(candidate.get("interrupt_id")) == interrupt_id or last is None:
+                last = candidate
+            supported = candidate.get("supported_decision_types")
+            if candidate.get("actionability") == "actionable" and isinstance(supported, list) and "approve" in supported:
+                return candidate
+        time.sleep(0.25)
+    raise AssertionError(f"LangGraph interrupt did not become explicitly actionable for approve: {last!r}")
 
 
 def _wait_for_public_state(
@@ -212,6 +262,11 @@ def _scenario(scenario: str) -> dict[str, str]:
                 ),
                 interrupt_id=interrupt_id,
             )
+            interrupt = _wait_for_actionable_interrupt(client, mission_id, branch_id, interrupt_id)
+            # If the callback exporter admitted a coarse compatibility
+            # observation before the native interrupt revision, continue with
+            # the explicit native request identity selected by the adapter.
+            interrupt_id = str(interrupt["interrupt_id"])
             if scenario in {"positive", "accepted_without_terminal", "wrong_scope", "public_output"}:
                 _decision(client, mission_id, branch_id, interrupt_id)
             claim = bridge.claim_pending(interrupt_id=interrupt_id)
@@ -278,7 +333,13 @@ def _scenario(scenario: str) -> dict[str, str]:
             _assert_public_safety(views)
             result.update({"scenario": scenario, "result": "passed"})
     except Exception as exc:
-        result = {"scenario": scenario, "result": "failed", "error_code": _error_code(exc)}
+        result = {
+            "scenario": scenario,
+            "result": "failed",
+            "error_code": _error_code(exc),
+            "error_detail": str(exc)[:500],
+            **_http_failure(exc),
+        }
     finally:
         if bridge is not None:
             bridge.close()
@@ -337,6 +398,7 @@ def run_gate(scenarios: tuple[str, ...]) -> dict[str, Any]:
                     "scenario": scenario,
                     "result": "failed",
                     "error_code": _error_code(exc),
+                    "error_detail": str(exc)[:500],
                     "cleanup": "not_attempted",
                 }
             results.append(result)

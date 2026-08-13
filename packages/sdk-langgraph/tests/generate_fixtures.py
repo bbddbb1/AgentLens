@@ -437,7 +437,7 @@ def generate_all() -> list[str]:
 
     manifest = {
         "fixtures": generated,
-        "root": str(FIXTURES_ROOT.as_posix()),
+        "root": "packages/sdk-langgraph/tests/fixtures/otlp",
         "fixture_generator": "packages/sdk-langgraph/tests/generate_fixtures.py",
         "framework_version_context": recorded_library_versions(),
         "native_evidence_source": "AgentLensLangGraphCallbackHandler callbacks and LangGraph-native graph/checkpointer facts",

@@ -1,5 +1,6 @@
 import type {
   ProjectNodeStateInput,
+  ProjectRuntimeSummaryInput,
   RuntimeNodeProjection,
   RuntimeSummary,
 } from '@agentlens/protocol';
@@ -8,8 +9,7 @@ import {
   isNodeProjectionCacheValid,
   projectNodeState,
   projectRuntimeSummary,
-  type ProjectRuntimeSummaryInput,
-} from '@agentlens/protocol';
+} from '@agentlens/protocol/internal';
 
 export function buildRuntimeSummary(input: ProjectRuntimeSummaryInput): RuntimeSummary {
   return projectRuntimeSummary(input);

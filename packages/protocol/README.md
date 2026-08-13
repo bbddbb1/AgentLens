@@ -7,6 +7,8 @@ Shared TypeScript schemas and semantic convention constants for the AgentLens co
 - **schemas.ts** — Zod schemas for OTLP span validation, agent events, interrupts, and API request/response types.
 - **semconv.ts** — TypeScript constants for AgentLens semantic convention attributes and event names (mirrors the Python `agentlens-otel-semconv` package).
 - **types.ts** — TypeScript type definitions for missions, agents, graph nodes/edges, snapshots, and HITL interrupts.
+- **runtimeContract.ts** — Frozen RuntimeExplanation v1, frame, provenance, and Governance contract schemas.
+- **internal.ts** — Repository-internal deterministic projector exports; not a public wire contract.
 
 ## Usage
 
@@ -35,6 +37,9 @@ pnpm --filter protocol build
   or replay semantic; version and migrate any unavoidable contract change.
 - Validate runtime contract behavior with both a domain-specific workload and at least one
   generic/non-domain fixture.
+- Public consumers import schemas, constants, and DTOs from the package root. Projection
+  implementations are available only through `@agentlens/protocol/internal` and must not
+  be treated as a serializable public input contract.
 
 ## Runtime Story Validation Notes
 

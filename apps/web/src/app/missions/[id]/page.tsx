@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, CircleHelp, GitBranch, PauseCircle, XCircle } from 'lucide-react';
-import type { ReplayStateResponse, RuntimeExplanationProjection, RuntimeSummary } from '@agentlens/protocol';
+import type { ReplayStateResponse, RuntimeExplanationV1, RuntimeSummary } from '@agentlens/protocol';
 import { MissionGraph } from '@/components/graph/MissionGraph';
 import { RightSidebar } from '@/components/layout/RightSidebar';
 import { StatusBar } from '@/components/layout/StatusBar';
@@ -12,6 +12,7 @@ import { WorkspaceShell } from '@/components/layout/WorkspaceShell';
 import { MissionTimeline } from '@/components/timeline/MissionTimeline';
 import { api } from '@/lib/api';
 import { selectedFrameAuthority } from '@/lib/runtimeAuthority';
+import { runtimeExplanationFromRealtime } from '@/lib/runtimeExplanationContract';
 import { matchNodeToActivity, resolveSelectedActivity } from '@/lib/runtimeFocus';
 import { sequenceNumThroughFrame } from '@/lib/replayFrame';
 import { shouldReloadReplayForRealtimeMessage } from '@/lib/replayRealtime';
@@ -77,7 +78,7 @@ export default function MissionWorkspacePage() {
   const [missionLoadError, setMissionLoadError] = useState<string | null>(null);
   const [isMissionLoading, setIsMissionLoading] = useState(true);
   const [runtimeSummary, setRuntimeSummary] = useState<RuntimeSummary | null>(null);
-  const [runtimeExplanation, setRuntimeExplanation] = useState<RuntimeExplanationProjection | null>(null);
+  const [runtimeExplanation, setRuntimeExplanation] = useState<RuntimeExplanationV1 | null>(null);
 
   const frameSequenceNum = useMemo(() => sequenceNumThroughFrame(snapshots, events, currentFrame), [snapshots, events, currentFrame]);
   const runtimeContextReady = Boolean(missionId && currentBranchId && frameSequenceNum !== undefined);
@@ -221,14 +222,24 @@ export default function MissionWorkspacePage() {
         };
         if (message.type === 'mission.updated' && message.mission) setMission(message.mission);
         if (message.type === 'runtime.summary.updated' && (message.runtime_summary as RuntimeSummary | undefined)?.sequence_num === frameSequenceNum) setRuntimeSummary(message.runtime_summary as RuntimeSummary);
-        if (message.type === 'runtime.explanation.updated' && (message.runtime_explanation as RuntimeExplanationProjection | undefined)?.as_of_sequence_num === frameSequenceNum) setRuntimeExplanation(message.runtime_explanation as RuntimeExplanationProjection);
+        if (message.type === 'runtime.explanation.updated') {
+          const expectedBranchId = currentBranchId ?? snapshots[currentFrame]?.branch_id ?? 'main';
+          const explanation = frameSequenceNum === undefined
+            ? null
+            : runtimeExplanationFromRealtime(message, {
+                missionId,
+                branchId: expectedBranchId,
+                sequenceNum: frameSequenceNum,
+              });
+          if (explanation) setRuntimeExplanation(explanation);
+        }
         if (shouldReloadReplayForRealtimeMessage(message, currentBranchId)) void loadReplay(currentBranchId ?? undefined);
       } catch {
         // Ignore malformed realtime messages.
       }
     };
     return () => ws.close();
-  }, [currentBranchId, frameSequenceNum, loadReplay, missionId]);
+  }, [currentBranchId, currentFrame, frameSequenceNum, loadReplay, missionId, snapshots]);
 
   const authority = selectedFrameAuthority(activeRuntimeSummary);
   const runtimeStatus = authority.status?.toLowerCase() ?? 'unknown';

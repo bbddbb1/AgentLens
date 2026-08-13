@@ -1,5 +1,15 @@
 # Data Model: Coherent Runtime Execution Story
 
+> **R0 status (2026-08-13):** This document contains pre-freeze design input and
+> is non-normative where it differs from
+> `packages/protocol/src/runtimeContract.ts`. The executable v1 wire uses
+> `runtime_phase` (not `phase`), the emitted progress-marker shape is
+> `{sequence_num,timestamp,kind,text,actor?}`, and the operator-facing record is
+> nested on its owning activity rather than repeating `activity_id` or aggregate
+> evidence refs. There is no `compatibility_mode` field because R0-D established
+> the corrected contract as the first stable v1. L2 story relevance/ranking is
+> outside the frozen L1 contract.
+
 ## Runtime Frame
 
 Represents the single immutable point of view that every Run UI surface must share.

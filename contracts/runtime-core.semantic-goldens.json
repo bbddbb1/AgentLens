@@ -1,0 +1,38 @@
+{
+  "generic_terminal_unset": {
+    "kind": "tool",
+    "status": "completed",
+    "outcome": "Unknown",
+    "lifecycle_basis": "derived",
+    "lifecycle_condition": "recorded",
+    "outcome_basis": "derived",
+    "outcome_condition": "recorded"
+  },
+  "langgraph_tool_success": {
+    "kind": "tool",
+    "status": "completed",
+    "outcome": "Success",
+    "lifecycle_basis": "derived",
+    "lifecycle_condition": "recorded",
+    "outcome_basis": "derived",
+    "outcome_condition": "recorded"
+  },
+  "langgraph_tool_failure": {
+    "kind": "tool",
+    "status": "failed",
+    "outcome": "Failure",
+    "lifecycle_basis": "derived",
+    "lifecycle_condition": "recorded",
+    "outcome_basis": "derived",
+    "outcome_condition": "recorded"
+  },
+  "maf_sparse_tool": {
+    "kind": "tool",
+    "status": "completed",
+    "outcome": "Unknown",
+    "lifecycle_basis": "derived",
+    "lifecycle_condition": "recorded",
+    "outcome_basis": "derived",
+    "outcome_condition": "recorded"
+  }
+}

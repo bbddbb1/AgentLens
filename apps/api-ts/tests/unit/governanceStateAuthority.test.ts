@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { projectRuntimeExplanation } from '@agentlens/protocol';
+import { projectRuntimeExplanation } from '@agentlens/protocol/internal';
 import {
   governanceTransition,
   materializeGovernanceState,

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { projectRuntimeExplanation, type EventEnvelope } from '@agentlens/protocol';
+import type { EventEnvelope } from '@agentlens/protocol';
+import { projectRuntimeExplanation } from '@agentlens/protocol/internal';
 import { normalizeSpansToFacts } from '../../src/services/runtime/normalization/index.js';
 import { projectReplay, projectTraceSnapshot } from '../../src/services/runtime/projection.js';
 

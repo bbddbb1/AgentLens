@@ -21,9 +21,8 @@ import {
   type RuntimeSummary,
   type RuntimeNodeProjection,
   SPAN_PROJECTION_VERSION,
-  eventsThroughCursor,
-  projectRuntimeExplanation,
 } from '@agentlens/protocol';
+import { eventsThroughCursor, projectRuntimeExplanation } from '@agentlens/protocol/internal';
 import { BuiltInRules, PolicyEngine } from './policyEngine.js';
 
 function deterministicStringify(obj: any): string {

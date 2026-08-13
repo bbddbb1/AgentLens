@@ -334,7 +334,7 @@ describe('projectReplay', () => {
   });
 
   it('does not leak a later execution-root candidate into an earlier frame', async () => {
-    const { projectRuntimeExplanation } = await import('@agentlens/protocol');
+    const { projectRuntimeExplanation } = await import('@agentlens/protocol/internal');
     const replay = projectReplay('m-roots', 'main', [
       {
         span_id: 'run-1', trace_id: 'trace-1', parent_span_id: null, operation_name: 'workflow.run',

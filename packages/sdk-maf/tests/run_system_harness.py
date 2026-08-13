@@ -348,9 +348,16 @@ async def _run_scenario(scenario: str) -> dict[str, object]:
                 f"outcome={interrupt.get('runtime_outcome')!r}; expected accepted/{expected_outcome}"
             )
         if scenario == "positive":
-            restarted = MafGovernanceClient(api_url, mission_id, branch_id, bridge.control_ref).claim(request.request_id)
-            if restarted.claimed or restarted.delivery_id != claim_data.delivery_id:
-                raise AssertionError(f"Core reissued claimed delivery after bridge restart: {restarted!r}")
+            # Explicit Runtime continuation resolves the request. A restarted
+            # bridge must therefore be rejected instead of receiving even a
+            # read-like claim response for an obsolete mutation target.
+            try:
+                MafGovernanceClient(api_url, mission_id, branch_id, bridge.control_ref).claim(request.request_id)
+            except RuntimeError as exc:
+                if " 409:" not in str(exc) or "request_resolved" not in str(exc):
+                    raise AssertionError(f"resolved request returned an unexpected restart result: {exc}") from exc
+            else:
+                raise AssertionError("Core accepted a bridge claim after explicit Runtime continuation")
         return {
             "scenario": scenario,
             "mission_id": mission_id,
@@ -379,6 +386,16 @@ async def run(scenario: str) -> dict[str, object]:
         result["result"] = "passed"
     except Exception as exc:
         result["error_code"] = _error_code(exc)
+        result["error_detail"] = str(exc)[:300]
+        if isinstance(exc, httpx.HTTPStatusError):
+            result["http_status"] = exc.response.status_code
+            try:
+                payload = exc.response.json()
+            except ValueError:
+                payload = {}
+            result["http_detail"] = str(
+                payload.get("detail") or payload.get("reason") or "unspecified"
+            )
     finally:
         cleanup = "not_attempted"
         if _last_mission_id:

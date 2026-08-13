@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import type { RuntimeNodeProjection } from '@agentlens/protocol';
-import { getRuntimeNodeProjection } from '@agentlens/protocol';
+import { getRuntimeNodeProjection } from '@agentlens/protocol/internal';
 import { api } from '@/lib/api';
 import type { RuntimeSummary } from '@agentlens/protocol';
 

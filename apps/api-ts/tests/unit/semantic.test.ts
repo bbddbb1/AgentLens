@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { projectRuntimeExplanation, type EventEnvelope } from '@agentlens/protocol';
+import type { EventEnvelope } from '@agentlens/protocol';
+import { projectRuntimeExplanation } from '@agentlens/protocol/internal';
 import { generateMissionSummary, generateWhyThisState } from '../../src/services/semantic.js';
 import type { MissionAggregate } from '../../src/types/mission.js';
 

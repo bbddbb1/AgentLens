@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   projectRuntimeExplanation,
   projectRuntimeSummary,
-  type EventEnvelope,
-} from '@agentlens/protocol';
+} from '@agentlens/protocol/internal';
+import type { EventEnvelope } from '@agentlens/protocol';
 import { generateWhyThisState } from '../../src/services/semantic.js';
 import {
   buildNodeProjection,

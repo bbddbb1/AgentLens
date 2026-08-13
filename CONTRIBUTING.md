@@ -44,11 +44,11 @@ Changes to protocol, replay, governance, or branch semantics must respect AgentL
   instead of inferring hidden intent or domain meaning.
 - The L0 raw evidence, L1 universal deterministic projection, and L2 optional lens
   boundaries remain one-way; L2 cannot alter core runtime facts.
-- Canonical history is append-only; corrections are new events.
-- Replay must be deterministic from canonical events (gaps → explicit markers).
+- Canonical span and Governance history is revision-preserving; corrections receive new evidence admissions.
+- Replay must be deterministic from immutable frame evidence (gaps → explicit diagnostics).
 - Branches are isolated histories with lineage, not UI filters.
-- Semantic conventions (`EventEnvelope`, `semconv`) are the compatibility boundary.
-- Governance decisions (policy, HITL) are ledger events, not side channels.
+- Semantic conventions are an input boundary; the frozen RuntimeExplanation schema is the public L1 output boundary.
+- Governance request, decision, delivery, and Runtime outcome are independent append-only frame facts.
 - Existing evidence and runtime concepts are reused before proposing new schemas, node
   kinds, or replay semantics.
 - Runtime-affecting behavior is specified first and validated with a domain-specific

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { eventsThroughCursor, MissionEventRecord, orderFrameEvents, ReplayBranch } from '@agentlens/protocol';
+import type { MissionEventRecord, ReplayBranch } from '@agentlens/protocol';
+import { eventsThroughCursor, orderFrameEvents } from '@agentlens/protocol/internal';
 import { ROOT_BRANCH_ID } from './types.js';
 import { materializeGovernanceState, parseGovernanceStateHistory } from '../interrupts/governanceState.js';
 

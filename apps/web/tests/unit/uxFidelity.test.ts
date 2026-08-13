@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { useGraphStore } from '../../src/stores/graphStore.js';
-import { projectNodeState } from '@agentlens/protocol';
+import { projectNodeState } from '@agentlens/protocol/internal';
 import type { GraphSnapshot, MissionEventRecord } from '@agentlens/protocol';
 
 describe('Runtime UX Fidelity Refinement', () => {

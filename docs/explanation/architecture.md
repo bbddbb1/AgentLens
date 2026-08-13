@@ -17,8 +17,8 @@ The UI is a projection over runtime truth — not the architecture. For current 
 | Span/control evidence and semantic conventions | Agent framework schedulers or orchestration |
 | Derived `EventEnvelope` compatibility shape | End-to-end agent framework |
 | Replay, branch lineage, state reconstruction | Workflow authoring / low-code builders |
-| Policy and HITL as runtime events | Vector memory backends |
-| Adapter translation into canonical events | Mutable UI state as source of truth |
+| Independent Governance evidence and fail-closed control | Vector memory backends |
+| Framework translation into neutral runtime facts | Mutable UI state as source of truth |
 
 ### Data plane vs control plane
 
@@ -64,9 +64,9 @@ The maintenance task is to **harden these primitives** so adapters stay thin and
 
 We optimized for the following outcomes:
 
-1. Events from LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, or custom loops normalize to the same `EventEnvelope`.
+1. Supported framework telemetry normalizes into the same workload-neutral Runtime facts; unsupported meaning remains partial or raw evidence.
 2. Given mission ID + branch ID + sequence, replay produces the same runtime state deterministically.
-3. Policy actions, human decisions, replay forks, and resumes appear as auditable ledger events.
+3. Governance requests, decisions, deliveries, Runtime outcomes, replay forks, and resumes remain independent auditable frame evidence.
 4. A branch exposes parent, fork point, inherited prefix, divergent suffix, and integrity status.
 5. "Why is this state true?" is answerable from the ledger without trusting UI-local state.
 6. Adapter authors can pass a conformance suite without reading control-plane internals.
@@ -77,8 +77,8 @@ We explicitly avoid building a graph UI over traces, relying on hidden framework
 
 - **Integrate with OpenTelemetry** — do not replace it.
 - **Adapters translate** — they do not define platform truth.
-- **Snapshots and summaries are projections** — the ledger is authoritative.
-- **Governance is execution semantics** — not comments or alert metadata.
+- **Snapshots and summaries are projections** — admitted span/control evidence is authoritative.
+- **Governance control is independent evidence** — decision and delivery do not imply Runtime continuation.
 
 ## Runtime mental model
 
@@ -98,13 +98,13 @@ Each recorded action should answer: who acted, what happened, what caused it, wh
 
 ### State
 
-Runtime state is a **projection from events**.
+Runtime state is a **projection from selected immutable frame evidence**.
 
 | Source | Role |
 |---|---|
-| Canonical events | Source of truth |
-| Checkpoints | Replay acceleration; must match event semantics |
-| Graph snapshots | UI cache; rebuildable from events |
+| Admitted span revisions and Governance transitions | Source of truth |
+| Derived `EventEnvelope` values | Replay compatibility input; rebuildable from evidence |
+| Graph snapshots | UI cache; rebuildable from selected evidence |
 | UI layout / filters | Ephemeral; never authoritative |
 
 State includes graph topology and non-visual facts: active agents, pending tasks, tool calls, memory reads/writes, artifacts, policy decisions, interrupts, branch lineage, model/tool provenance, errors, and external dependency status.
@@ -113,7 +113,10 @@ State includes graph topology and non-visual facts: active agents, pending tasks
 
 ### Events
 
-`EventEnvelope` is the main abstraction boundary. All ingestion paths should target the same envelope shape.
+`EventEnvelope` is a derived compatibility shape used by replay and internal
+projection. It is not a separately persisted authoritative ledger. The public
+frozen L1 output boundary is `runtime_explanation.v1`; semantic conventions are
+the telemetry input boundary.
 
 Minimum dimensions:
 
@@ -266,19 +269,22 @@ These outlive feature categories like dashboards, playgrounds, or workflow build
 
 These rules are **non-negotiable**. If a proposed change violates one, reject or redesign it.
 
-### 1. Append-only ledger
+### 1. Revision-preserving evidence
 
-Canonical execution history is append-only. Corrections, redactions, decisions, and derived observations are **new events**, not in-place edits.
+Canonical span and Governance history is revision-preserving. Corrections,
+redactions, decisions, deliveries, and Runtime outcomes receive new admissions;
+published frame membership is never changed in place.
 
 | Allowed | Rejected |
 |---|---|
-| Correction, redaction, integrity marker events | Rewriting old payloads as normal behavior |
-| Rebuilding projections from ledger | Treating snapshots as canonical state |
+| Admitted corrections and Governance transitions | Rewriting evidence visible to a published frame |
+| Rebuilding projections from frame evidence | Treating snapshots as canonical state |
 | | UI edits that alter history |
 
-### 2. Deterministic replay from canonical events
+### 2. Deterministic replay from immutable frame evidence
 
-Same canonical event stream → same replayed state. Uncaptured state → explicit gap marker, not silent best-effort.
+Same evidence membership, branch, frame, and projection version yields the same
+Runtime meaning. Uncaptured state becomes unknown or an explicit diagnostic.
 
 | Allowed | Rejected |
 |---|---|
@@ -296,13 +302,14 @@ A branch has parent, fork point, inherited prefix, divergent suffix, and integri
 | Branch-local sequences and decisions | Forking from mutable snapshots without lineage |
 | | Branch names as execution identity |
 
-### 4. Semantic conventions are the compatibility boundary
+### 4. Input and output compatibility boundaries
 
-Frameworks differ; AgentLens normalizes through versioned semantic conventions and `EventEnvelope`. The boundary is not the UI, database schema, or one adapter.
+Frameworks differ; semantic conventions bound telemetry input and
+`runtime_explanation.v1` bounds the public universal Runtime output.
 
 | Allowed | Rejected |
 |---|---|
-| Versioned semconv, extension fields | LangGraph-specific concepts in core semantics |
+| Versioned semconv, extension fields, executable Runtime schema | LangGraph-specific concepts in core semantics |
 | Adapter conformance profiles | Projections that require adapter internals |
 | | New runtime behavior from raw span attrs without protocol review |
 
@@ -316,15 +323,16 @@ Adapters emit canonical events. They are not authoritative for replay, policy, a
 | Framework span capture | Policy logic inside adapters |
 | Conformance profiles | UI that only works with one adapter's private metadata |
 
-### 6. Policy decisions are runtime events
+### 6. Governance axes remain independent
 
-Every meaningful allow, deny, redact, or require-review decision is durable and replayable with rule ID and version.
+Request, decision, delivery, and Runtime outcome are separately durable and
+frame-local. Control mutation requires explicit current actionable authority.
 
 | Allowed | Rejected |
 |---|---|
-| Policy summaries as projections | Silent policy side effects |
-| Policy DSL compiled to evaluators | Decisions stored only in logs |
-| | Recomputing old decisions with new rules without recording original |
+| Decision recorded while Runtime remains waiting | Delivery success treated as resume |
+| Delivery failure with unchanged Runtime state | Disabled control falling through to legacy mutation |
+| Explicit Runtime continuation evidence | Synthetic continuation from HTTP success |
 
 ### 7. HITL is a state transition
 
@@ -394,7 +402,10 @@ Before merging protocol, replay, or governance changes:
 
 ## Planned evolution (Gen 1–4)
 
-Our generational plan for the control plane. Milestones and scheduling are detailed in the [Roadmap](../project/roadmap.md). Current code reflects **early Gen 1** with Gen 2 work started.
+Historical target-state planning follows. It is not a description of the
+post-R0 production authority and does not override the frozen contract.
+Milestones and scheduling in the old [Roadmap](../project/roadmap.md) are
+non-authoritative until they are re-planned after R0.
 
 ### Gen 1: Canonical runtime record
 

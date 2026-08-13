@@ -10,11 +10,12 @@ import type {
   MissionEventRecord,
   ReplayBranch,
   ReplayStateResponse,
-  RuntimeExplanationProjection,
+  RuntimeExplanationV1,
   RuntimeSummary,
   RuntimeNodeProjection,
   MissionAuditEventResponse,
 } from '@agentlens/protocol';
+import { decodeRuntimeExplanationV1 } from './runtimeExplanationContract';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
 
@@ -125,12 +126,13 @@ export const api = {
   },
 
   runtimeExplanation: {
-    get: (missionId: string, options?: { branchId?: string; sequenceNum?: number }) => {
+    get: async (missionId: string, options?: { branchId?: string; sequenceNum?: number }): Promise<RuntimeExplanationV1> => {
       const params = new URLSearchParams();
       if (options?.branchId) params.append('branch_id', options.branchId);
       if (options?.sequenceNum !== undefined) params.append('sequence_num', String(options.sequenceNum));
       const query = params.toString();
-      return request<RuntimeExplanationProjection>(`/api/v1/missions/${missionId}/explanation${query ? `?${query}` : ''}`);
+      const response = await request<unknown>(`/api/v1/missions/${missionId}/explanation${query ? `?${query}` : ''}`);
+      return decodeRuntimeExplanationV1(response);
     },
   },
 

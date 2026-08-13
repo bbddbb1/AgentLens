@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeRuntimeEvent, projectRuntimeSummary } from '@agentlens/protocol';
+import { describeRuntimeEvent, projectRuntimeSummary } from '@agentlens/protocol/internal';
 import type { MissionEventRecord } from '@agentlens/protocol';
 
 function event(

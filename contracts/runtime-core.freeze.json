@@ -1,0 +1,120 @@
+{
+  "contract_id": "agentlens.runtime_core.r0",
+  "status": "frozen",
+  "runtime_explanation": {
+    "version": "runtime_explanation.v1",
+    "version_policy": "first_stable_post_r0_baseline",
+    "rest_route": "GET /api/v1/missions/:missionId/explanation",
+    "realtime_event": "runtime.explanation.updated",
+    "schema_source": "packages/protocol/src/runtimeContract.ts",
+    "producer": "serializeRuntimeExplanationV1",
+    "consumers": [
+      "apps/web/src/lib/api.ts",
+      "apps/web/src/app/missions/[id]/page.tsx",
+      "packages/sdk-langgraph/tests/run_system_harness.py",
+      "packages/sdk-maf/tests/run_system_harness.py"
+    ]
+  },
+  "frozen_semantics": {
+    "activity_kinds": [
+      "agent",
+      "workflow",
+      "tool",
+      "llm",
+      "retrieval",
+      "memory",
+      "artifact",
+      "human",
+      "checkpoint"
+    ],
+    "lifecycle_and_run_outcomes": ["active", "waiting", "completed", "failed", "unknown"],
+    "run_statuses": ["Active", "Waiting", "Completed", "Failed", "Unknown"],
+    "runtime_phases": ["Queued", "Active Work", "Waiting", "Converging", "Completed", "Failed", "Unknown"],
+    "relationship_bases": ["explicit_link", "trigger_reference", "decision_reference", "parent_span"],
+    "parallel_group_bases": ["explicit"],
+    "provenance_bases": ["recorded", "derived", "unknown"],
+    "evidence_conditions": [
+      "recorded",
+      "not_recorded",
+      "unavailable",
+      "redacted",
+      "encrypted",
+      "permission_denied",
+      "oversized",
+      "absent",
+      "recorded_empty",
+      "inconsistent"
+    ]
+  },
+  "evidence_frame": {
+    "source_time": "exact decimal nanoseconds",
+    "admission_cursor": "mission-local nonnegative integer",
+    "revision_rule": "latest admitted revision at or before selected cutoff",
+    "frame_tuple": ["mission_id", "branch_id", "sequence_num", "as_of_timestamp", "projection_version"],
+    "branch_rule": "immutable inherited parent admission prefix"
+  },
+  "governance": {
+    "axes": ["request_lifecycle", "decision_state", "delivery_state", "runtime_outcome"],
+    "request_lifecycle": ["pending", "resolved", "expired", "stale", "unsupported"],
+    "decision_state": ["none", "recorded"],
+    "delivery_state": ["not_requested", "pending", "accepted", "failed", "stale", "unknown"],
+    "runtime_outcome": ["awaiting_interaction", "resumed", "continued_with_input", "rejected_or_terminated", "failed", "unknown"],
+    "control_modes": ["framework_binding", "legacy_token", "unavailable"],
+    "authority_rule": "mutation requires current explicit unambiguous actionable control authority"
+  },
+  "classification": {
+    "public_stable": [
+      "RuntimeExplanationV1Schema",
+      "RuntimeExplanationQueryV1Schema",
+      "RuntimeExplanationUpdatedV1Schema",
+      "RuntimeFrameV1Schema",
+      "RuntimeExplanationEvidenceRefSchema",
+      "RuntimeFactProvenanceSchema",
+      "RuntimeGovernanceAxesV1Schema"
+    ],
+    "internal_implementation": [
+      "normalized runtime fact annotations",
+      "projector accumulators",
+      "projection scratch state",
+      "ranking and narrative helpers",
+      "span revision and admission storage columns"
+    ],
+    "compatibility_legacy": [
+      "RuntimeSummary REST and realtime payload",
+      "legacy_token control records",
+      "pre-R0-A migrated frames"
+    ],
+    "l2_product": ["story ranking", "narrative", "graph wording", "operator presentation"]
+  },
+  "architecture_guards": {
+    "contract_shape_and_semantics": "apps/api-ts/tests/unit/runtimeContractFreeze.test.ts",
+    "framework_and_downstream_boundaries": "apps/api-ts/tests/unit/runtimeArchitectureFreeze.test.ts",
+    "immutable_frames": "apps/api-ts/tests/integration/evidenceFramePersistence.test.ts",
+    "governance_state_authority": "apps/api-ts/tests/integration/evidenceFramePersistence.test.ts#persists-independent-Governance-axes",
+    "fail_closed_control": "apps/api-ts/tests/integration/evidenceFramePersistence.test.ts#fails-closed-on-exact-current-control-authority",
+    "web_wire_decoder": "apps/web/tests/unit/runtimeExplanationContract.test.ts",
+    "release_conformance": "pnpm conformance:release"
+  },
+  "legacy_boundary": {
+    "pre_r0_a": "deterministically migrated; original historical immutability cannot be retroactively guaranteed",
+    "post_r0_a": "immutable admission and revision based evidence membership",
+    "runtime_explanation_v1": "first stable post-R0 baseline; earlier repository uses were experimental and unreleased",
+    "runtime_summary": "transitional derivative compatibility surface, not a second semantic authority"
+  },
+  "change_policy": {
+    "compatible": "additive presentation or adapter translation that preserves every frozen semantic golden",
+    "breaking": "changes to identity, lifecycle, outcome, relationship, evidence, frame, provenance, or Governance authority require explicit successor-contract review",
+    "future_adapter_rule": "translate into the frozen Core; prefer framework extension, L2 lens, or partial/unknown before changing Core"
+  },
+  "outside_frozen_core": [
+    "framework-native IDs and metadata",
+    "Problems",
+    "Reliability Visibility",
+    "Assurance",
+    "A2A product semantics",
+    "retry and message-flow semantics",
+    "execution replay",
+    "future adapters",
+    "scale and data plane"
+  ]
+}

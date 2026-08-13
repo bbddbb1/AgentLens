@@ -47,5 +47,5 @@
   "native_evidence_source": "AgentLensLangGraphCallbackHandler callbacks and LangGraph-native graph/checkpointer facts",
   "primary_oracle": "native_facts",
   "regeneration_command": "uv run --directory packages/sdk-langgraph pytest tests/test_generate_fixtures.py -q",
-  "root": "D:/code/AgentLens/packages/sdk-langgraph/tests/fixtures/otlp"
+  "root": "packages/sdk-langgraph/tests/fixtures/otlp"
 }

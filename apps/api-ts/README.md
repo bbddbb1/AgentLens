@@ -8,6 +8,7 @@ Canonical AgentLens control-plane backend.
 - Ingest OTLP/HTTP JSON at `POST /v1/traces`.
 - Ingest compatibility AgentLens span JSON at `POST /api/v1/ingest/otlp`.
 - Project spans/events into temporal graph snapshots.
+- Validate and serve the frozen `runtime_explanation.v1` REST/realtime contract.
 - Persist missions, snapshots, reviews, comments, shares, and HITL interrupts.
 - Store artifact metadata and issue MinIO presigned URLs.
 - Broadcast mission events through Redis-backed WebSockets.
@@ -53,6 +54,8 @@ Mission graph and replay:
 - `GET /api/v1/missions/:id/replay?branch_id=...`
 - `GET /api/v1/missions/:id/replay/branches`
 - `POST /api/v1/missions/:id/replay/branches`
+- `GET /api/v1/missions/:id/explanation?branch_id=...&sequence_num=...`
+- `GET /api/v1/missions/:id/runtime-summary?branch_id=...&sequence_num=...` (derivative compatibility view)
 
 HITL interrupts:
 
@@ -94,6 +97,6 @@ pnpm --filter api-ts test
 
 ## Design rules
 
-- Keep framework-specific logic in adapter packages, not in this service.
+- Keep framework-specific translation in private normalization modules; universal projection remains framework-neutral.
 - Add protocol fields in `packages/protocol` before using them here.
 - Treat OTel spans/events as the execution-framework boundary.

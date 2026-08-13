@@ -4,7 +4,13 @@
 
 **Created**: 2026-06-29
 
-**Status**: Draft
+**Status**: Implemented; R0 contract frozen at `runtime_explanation.v1`
+
+**R0 interpretation**: The executable schema and manifest in
+`packages/protocol/src/runtimeContract.ts` and `contracts/runtime-core.freeze.json`
+are normative where older design wording differs. Concise-story selection,
+ranking, and narrative are L2 product behavior; they do not define L1 Runtime
+truth. `RuntimeSummary` remains a derivative compatibility view.
 
 **Input**: User description: "Improve AgentLens so that operators can more easily understand and debug complex multi-agent runtime executions. Make the Run UI feel like a coherent execution story across summary, graph, timeline, and inspector, using BSOps update/diagnosis runs as the primary golden scenario while preserving AgentLens as a generic runtime observability and debugging product."
 

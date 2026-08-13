@@ -3,6 +3,15 @@
 Status: draft  
 Last updated: 2026-06-11
 
+> **Superseded direction:** This is a pre-R0 roadmap and is not authoritative
+> for the current Runtime Core. AgentLens retained a span-backed evidence
+> architecture; it did not replace it with a persisted EventEnvelope ledger.
+> The frozen post-R0 boundary is documented in
+> `docs/project/r0-runtime-core-freeze.md`. Reliability Visibility is the next
+> permissible product phase; EventEnvelope-ledger, policy-DSL, Assurance, A2A,
+> retry/message, and execution-replay ideas below remain future options rather
+> than current guarantees.
+
 Prioritized engineering milestones for the runtime control plane. For generational context, see [architecture.md#planned-evolution-gen-1-4](architecture.md#planned-evolution-gen-1-4).
 
 ## Priority order

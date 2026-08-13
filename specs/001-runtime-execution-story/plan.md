@@ -8,6 +8,22 @@
 
 Unify the Run UI around one evidence-backed runtime frame so summary, graph, timeline, and inspector all describe the same execution moment, authoritative run status, authoritative workload-neutral runtime phase and basis, and one authoritative activity context that is either a clearly disclosed frame overview or exactly one authoritative selected activity. When the UI chooses a default selected activity, it must disclose the selection basis; when it does not, it must preserve the truthful frame-overview state and clear any stale prior selection. The implementation should extend the shared `RuntimeExplanationProjection` and `RuntimeSummary` pipeline in `packages/protocol`, tighten frame-aware API delivery in `apps/api-ts`, and align the `apps/web` selection/state flow so every surface consumes the same `{ mission_id, branch_id, sequence_num, as_of_timestamp, projection_version }` frame identity, deterministic story-selection rules, subordinate progress-marker rules, explicit terminal-status semantics that do not depend on displayable I/O, evidence-backed fan-out and convergence rules, and one deterministic operator-facing activity record for every authoritative selected activity and every activity promoted as story-critical, without introducing BSOps-specific core concepts or AI-generated core summaries.
 
+## R0 Closure Amendment (2026-08-13)
+
+This amendment supersedes older plan language where it conflicts with the
+implemented R0 boundary. L0 authority is the span-backed PostgreSQL evidence
+store plus append-only Governance history, immutable admission cursors,
+revision selection, and branch cutoffs. `EventEnvelope` is a derived replay
+compatibility shape, not a separately persisted authoritative ledger.
+
+Framework vocabulary is translated once by private API normalizers. The
+workload-neutral L1 projector owns activity identity, lifecycle, outcome,
+supported explicit relations, diagnostics, and provenance. Story selection,
+ranking, narrative, and causal wording are L2 presentation and are not frozen
+L1 facts. The executable frozen boundary and validation evidence are recorded
+in `contracts/runtime-core.freeze.json` and
+`docs/project/r0-runtime-core-freeze.md`.
+
 ## Plan Delta: Node Information Sufficiency
 
 This delta adds one focused requirement to the existing plan: every selected activity and every story-critical activity must become an operator-readable execution unit through one shared, deterministic, evidence-backed operator-facing activity record delivered from L1 projection through API transport into summary, graph, timeline, and inspector.
@@ -36,7 +52,7 @@ This delta tightens three authority boundaries that the revised spec now makes e
 
 **Primary Dependencies**: Next.js App Router, React, Zustand, `@xyflow/react`, Framer Motion, Express, Zod, `@agentlens/protocol`, Vitest.
 
-**Storage**: PostgreSQL-backed mission/event data, Redis-backed realtime/cache flows, S3-compatible artifact storage, and deterministic in-memory projections derived from the event ledger.
+**Storage**: PostgreSQL-backed span revisions, mission-local evidence admissions, append-only Governance transitions, and immutable branch cutoffs; Redis-backed realtime notifications; S3-compatible artifact storage; deterministic in-memory projections derived from selected frame evidence. Derived replay events are not an authoritative persisted event ledger.
 
 **Testing**: Workspace Vitest suites in `apps/api-ts` and `apps/web`, especially projection, route, store, and contract tests; existing pytest coverage is peripheral to this feature.
 

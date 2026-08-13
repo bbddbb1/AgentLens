@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { CreateMissionSchema, OtlpIngestRequestSchema, SPAN_PROJECTION_VERSION, UpdateMissionSchema, type GraphSnapshotsResponse, type ReplayUpdatedMissionRealtimeMessage } from '@agentlens/protocol';
-import { publishMissionEvent } from '../realtime/events.js';
+import { publishMissionEvent, publishRuntimeExplanationEvent } from '../realtime/events.js';
 import { missionStore } from '../services/missionStore.js';
 
 const createMissionSchema = CreateMissionSchema;
@@ -158,7 +158,7 @@ missionsRouter.post('/api/v1/ingest/otlp', async (req, res) => {
     }).catch(() => undefined);
     void missionStore.getRuntimeExplanation(missionId, branchId).then((runtimeExplanation) => {
       if (runtimeExplanation) {
-        void publishMissionEvent(missionId, 'runtime.explanation.updated', { runtime_explanation: runtimeExplanation });
+        void publishRuntimeExplanationEvent(missionId, runtimeExplanation);
       }
     }).catch(() => undefined);
     void missionStore.scheduleNodeProjectionEnhancements(missionId, branchId).catch(() => undefined);
@@ -198,7 +198,7 @@ missionsRouter.post('/v1/traces', async (req, res) => {
     }).catch(() => undefined);
     void missionStore.getRuntimeExplanation(missionId, branchId).then((runtimeExplanation) => {
       if (runtimeExplanation) {
-        void publishMissionEvent(missionId, 'runtime.explanation.updated', { runtime_explanation: runtimeExplanation });
+        void publishRuntimeExplanationEvent(missionId, runtimeExplanation);
       }
     }).catch(() => undefined);
     void missionStore.scheduleNodeProjectionEnhancements(missionId, branchId).catch(() => undefined);

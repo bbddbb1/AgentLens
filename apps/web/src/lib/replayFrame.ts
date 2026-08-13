@@ -1,4 +1,4 @@
-import { eventsThroughCursor, orderFrameEvents } from '@agentlens/protocol';
+import { eventsThroughCursor, orderFrameEvents } from '@agentlens/protocol/internal';
 import type { EventEnvelope, GraphSnapshot, MissionEventRecord } from '@agentlens/protocol';
 
 /** Snapshot at a replay frame index (clamped). */

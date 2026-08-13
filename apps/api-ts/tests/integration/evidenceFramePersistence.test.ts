@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { eventsThroughCursor, OtlpIngestRequestSchema } from '@agentlens/protocol';
+import { OtlpIngestRequestSchema } from '@agentlens/protocol';
+import { eventsThroughCursor } from '@agentlens/protocol/internal';
 import { initializeDatabase, pool } from '../../src/db/postgres.js';
 import { missionStore } from '../../src/services/missionStore.js';
 import { registerBridgeBinding } from '../../src/services/interrupts/bridgeBindings.js';

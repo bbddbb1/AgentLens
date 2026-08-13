@@ -4,9 +4,8 @@ import { describe, expect, it } from 'vitest';
 import {
   projectRuntimeExplanation,
   projectRuntimeSummary,
-  type EventEnvelope,
-  type RuntimeExplanationActivity,
-} from '@agentlens/protocol';
+} from '@agentlens/protocol/internal';
+import type { EventEnvelope, RuntimeExplanationActivity } from '@agentlens/protocol';
 import { attachExplanationToNodes } from '../../src/services/missionStore.js';
 import { projectReplay } from '../../src/services/runtime/projection.js';
 

@@ -14,6 +14,7 @@ Define the shared frame and activity contract that keeps the Run UI's summary, g
 
 - `branch_id` (optional string)
 - `sequence_num` (optional integer)
+- `projection_version` (optional literal `runtime_explanation.v1`)
 
 **Response**: `RuntimeExplanationProjection`
 
@@ -52,10 +53,16 @@ Define the shared frame and activity contract that keeps the Run UI's summary, g
 
 ## Contract Evolution
 
-- Existing consumers of `runtime_explanation.v1` and paired summary payloads MUST remain supported until all in-repo consumers migrate.
-- If fixed phase labels and basis, `progress_markers`, explicit compatibility metadata, or other required semantics cannot be represented faithfully in `runtime_explanation.v1`, the server MUST expose a versioned `runtime_explanation.v2` contract and document downgrade behavior for `v1` consumers.
-- Downgrade behavior MUST disclose omitted fields or weakened semantics instead of silently fabricating or collapsing them.
-- Compatibility tests MUST cover native `v2`, downgraded `v1`, and mixed-client request behavior.
+- The post-R0 contract is the first stable `runtime_explanation.v1` baseline.
+  Earlier uses of that literal were unreleased experimental repository state;
+  no earlier explanation contract appears in the `0.1.0` release record.
+- The server validates every REST response and realtime update against
+  `RuntimeExplanationV1Schema`. Unsupported requested versions fail explicitly.
+- Additive or incompatible semantic changes require an updated manifest,
+  executable schema/goldens, consumer migration evidence, and an explicit
+  successor version. A `v2` compatibility layer is not pre-created.
+- `RuntimeSummary` remains a derivative compatibility endpoint. It is not a
+  second Runtime semantic authority and is not part of the frozen v1 wire.
 
 ### 3. Graph snapshot source
 

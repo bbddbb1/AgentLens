@@ -3,6 +3,7 @@ import type {
   MissionEventRecord,
   ProjectRuntimeSummaryInput,
   RuntimeActivity,
+  RuntimePhaseLabel,
   RuntimePhaseSummary,
   RuntimeSummary,
   RuntimeSummaryAction,
@@ -41,7 +42,7 @@ function truncate(text: string, max = 120): string {
   return `${trimmed.slice(0, max - 1)}...`;
 }
 
-function phaseLabelFromMissionPhase(phase: string | undefined): string {
+function phaseLabelFromMissionPhase(phase: string | undefined): RuntimePhaseLabel {
   switch (phase) {
     case 'planning':
       return 'Queued';
@@ -72,7 +73,7 @@ function buildEvidenceRef(event: MissionEventRecord) {
 }
 
 function buildPhaseSummary(
-  label: string,
+  label: RuntimePhaseLabel,
   basis: RuntimePhaseBasis,
   event: MissionEventRecord,
 ): RuntimePhaseSummary {
@@ -98,14 +99,15 @@ function collectPhaseHistory(events: readonly MissionEventRecord[]): RuntimePhas
         : undefined;
     if (!phaseValue) continue;
 
+    const normalizedPhase = phaseLabelFromMissionPhase(phaseValue);
     const last = phases[phases.length - 1];
-    if (last && last.label === phaseValue) {
+    if (last && last.label === normalizedPhase) {
       last.end_sequence_num = event.sequence_num;
       last.evidence_refs.push(buildEvidenceRef(event));
       continue;
     }
 
-    phases.push(buildPhaseSummary(phaseValue, 'recorded', event));
+    phases.push(buildPhaseSummary(normalizedPhase, 'recorded', event));
   }
 
   return phases;
