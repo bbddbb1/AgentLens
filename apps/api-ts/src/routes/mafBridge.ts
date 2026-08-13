@@ -8,6 +8,7 @@ import { MAF_IDENTITY_POLICY } from '../services/interrupts/identityMatch.js';
 import { assertCurrentlyActionable, reconcileMissionBranchActionability } from '../services/interrupts/reconcileActionability.js';
 import { claimDelivery, isDeliveryReceiptAuthorized, postDeliveryReceipt } from '../services/interrupts/deliveryLifecycle.js';
 import { missionStore } from '../services/missionStore.js';
+import { publishMissionEvent } from '../realtime/events.js';
 
 export const mafBridgeRouter = Router();
 
@@ -111,8 +112,9 @@ mafBridgeRouter.post('/api/v1/missions/:missionId/branches/:branchId/maf/bridge/
         bindingId: binding.id,
       });
       if (!authorized) { await client.query('ROLLBACK'); return res.status(409).json({ detail: 'MAF binding is not authorized to receipt this delivery' }); }
-      const state = await postDeliveryReceipt(client, { missionId: req.params.missionId, branchId: req.params.branchId, interruptId: parsed.data.interrupt_id, deliveryId: parsed.data.delivery_id, receipt: parsed.data.receipt, safeErrorClass: parsed.data.safe_error_class });
+      const state = await postDeliveryReceipt(client, { missionId: req.params.missionId, branchId: req.params.branchId, interruptId: parsed.data.interrupt_id, deliveryId: parsed.data.delivery_id, receipt: parsed.data.receipt, safeErrorClass: parsed.data.safe_error_class, bindingId: binding.id });
       await client.query('COMMIT');
+      await publishMissionEvent(req.params.missionId, 'replay.updated', { branch_id: req.params.branchId, reason: 'governance_delivery_receipt' }).catch(() => {});
       return res.json({ delivery_id: parsed.data.delivery_id, delivery_state: state });
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   } catch (error) { return res.status(500).json({ detail: error instanceof Error ? error.message : 'MAF bridge receipt failed' }); }

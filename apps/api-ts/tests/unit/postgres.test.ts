@@ -42,6 +42,7 @@ describe('postgres database initialization', () => {
     expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS langgraph_bridge_bindings'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS interrupt_delivery_attempts'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('ADD COLUMN IF NOT EXISTS actionability'))).toBe(true);
+    expect(queryTexts.some((q) => q.includes('ADD COLUMN IF NOT EXISTS control_mode'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS mission_replay_branches'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('CREATE TABLE IF NOT EXISTS spans'))).toBe(true);
     expect(queryTexts.some((q) => q.includes('ADD COLUMN IF NOT EXISTS admission_seq'))).toBe(true);

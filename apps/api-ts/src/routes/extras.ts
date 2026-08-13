@@ -5,6 +5,7 @@ import { CreateInterruptSchema, CreateReplayBranchSchema, DecideInterruptSchema,
 import { publishMissionEvent } from '../realtime/events.js';
 import { missionStore } from '../services/missionStore.js';
 import { artifactBucket, presignArtifactDownload, presignArtifactUpload } from '../services/artifacts.js';
+import { GovernanceControlError, governanceErrorStatus } from '../services/interrupts/controlAuthority.js';
 
 const reviewSchema = z.object({
   status: z.string().optional().default('pending'),
@@ -419,20 +420,13 @@ extrasRouter.post('/api/v1/missions/:missionId/interrupts/:interruptId/decision'
     const interrupt = await missionStore.decideInterrupt(req.params.missionId, req.params.interruptId, input);
     if (!interrupt) return res.status(404).json({ detail: 'Interrupt not found or already finalized' });
     const publicInterrupt = missionStore.serializeInterrupt(interrupt);
-    await publishMissionEvent(req.params.missionId, 'interrupt.decided', { interrupt: publicInterrupt });
+    // The durable decision is authoritative; realtime fan-out is best effort
+    // and must not turn a committed idempotent mutation into an HTTP failure.
+    await publishMissionEvent(req.params.missionId, 'interrupt.decided', { interrupt: publicInterrupt }).catch(() => {});
     return res.json(publicInterrupt);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to submit interrupt decision';
-    if (message.toLowerCase().includes('idempotency key conflict')) {
-      return res.status(409).json({ detail: message });
-    }
-    if (
-      message.toLowerCase().includes('not supported')
-      || message.toLowerCase().includes('stale')
-      || message.toLowerCase().includes('structured decision')
-      || message.toLowerCase().includes('schema')
-    ) {
-      return res.status(400).json({ detail: message });
+    if (error instanceof GovernanceControlError) {
+      return res.status(governanceErrorStatus(error)).json({ detail: error.message, code: error.code });
     }
     return respondRouteError(res, error, 'Failed to submit interrupt decision');
   }
@@ -446,6 +440,6 @@ extrasRouter.post('/api/v1/interrupts/resume', async (req, res) => {
 
   const interrupt = await missionStore.resumeInterruptByToken(parsed.data.resume_token, parsed.data.payload ?? {});
   if (!interrupt) return res.status(404).json({ detail: 'Interrupt not found or already finalized' });
-  await publishMissionEvent(interrupt.mission_id, 'interrupt.resumed', { interrupt });
+  await publishMissionEvent(interrupt.mission_id, 'interrupt.resumed', { interrupt }).catch(() => {});
   return res.json(interrupt);
 });

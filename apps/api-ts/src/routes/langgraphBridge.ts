@@ -10,6 +10,7 @@ import {
 } from '../services/interrupts/bridgeBindings.js';
 import {
   claimDelivery,
+  isDeliveryReceiptAuthorized,
   markTimedOutClaimsUnknown,
   postDeliveryReceipt,
 } from '../services/interrupts/deliveryLifecycle.js';
@@ -19,6 +20,7 @@ import {
 } from '../services/interrupts/reconcileActionability.js';
 import { LANGGRAPH_IDENTITY_POLICY } from '../services/interrupts/identityMatch.js';
 import { missionStore } from '../services/missionStore.js';
+import { publishMissionEvent } from '../realtime/events.js';
 
 export const langGraphBridgeRouter = Router();
 
@@ -192,6 +194,14 @@ langGraphBridgeRouter.post(
             reason: actionable.reason,
           });
         }
+        if (!actionable.binding || actionable.binding.id !== binding.id) {
+          await client.query('COMMIT');
+          return res.status(409).json({
+            detail: 'Authenticated binding does not own this request',
+            actionability: 'observed_only',
+            reason: 'authenticated_binding_does_not_match_request',
+          });
+        }
 
         const claim = await claimDelivery(client, {
           missionId: req.params.missionId,
@@ -245,6 +255,18 @@ langGraphBridgeRouter.post(
           return res.status(401).json({ detail: 'Unauthorized binding' });
         }
 
+        const authorized = await isDeliveryReceiptAuthorized(client, {
+          missionId: req.params.missionId,
+          branchId: req.params.branchId,
+          interruptId: parsed.data.interrupt_id,
+          deliveryId: parsed.data.delivery_id,
+          bindingId: binding.id,
+        });
+        if (!authorized) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ detail: 'Binding is not authorized to receipt this delivery' });
+        }
+
         const state = await postDeliveryReceipt(client, {
           missionId: req.params.missionId,
           branchId: req.params.branchId,
@@ -253,8 +275,13 @@ langGraphBridgeRouter.post(
           receipt: parsed.data.receipt,
           safeErrorClass: parsed.data.safe_error_class,
           receiptCorrelation: parsed.data.receipt_correlation,
+          bindingId: binding.id,
         });
         await client.query('COMMIT');
+        await publishMissionEvent(req.params.missionId, 'replay.updated', {
+          branch_id: req.params.branchId,
+          reason: 'governance_delivery_receipt',
+        }).catch(() => {});
         return res.json({ delivery_id: parsed.data.delivery_id, delivery_state: state });
       } catch (error) {
         await client.query('ROLLBACK');

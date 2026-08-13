@@ -267,6 +267,7 @@ export async function initializeDatabase(): Promise<void> {
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS decided_admission_seq INTEGER`,
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS resumed_admission_seq INTEGER`,
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS governance_state_history JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS control_mode VARCHAR(50) NOT NULL DEFAULT 'unavailable'`,
   ]) {
     await pool.query(statement).catch(() => {});
   }
@@ -281,6 +282,20 @@ export async function initializeDatabase(): Promise<void> {
       'payload', payload
     )
     WHERE requested_evidence = '{}'::jsonb
+  `);
+  // Control authority is explicit. Only historical API-created resume-token
+  // rows are admitted to the legacy compatibility path; missing metadata never
+  // means legacy. Recognized adapters use exact live framework bindings.
+  await pool.query(`
+    UPDATE interrupts
+    SET control_mode = CASE
+      WHEN framework IN ('langgraph', 'ms_agent_framework') THEN 'framework_binding'
+      WHEN framework IS NULL
+        AND NULLIF(requested_evidence #>> '{payload,resume_token}', '') IS NOT NULL
+        THEN 'legacy_token'
+      ELSE 'unavailable'
+    END
+    WHERE control_mode = 'unavailable'
   `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS langgraph_bridge_bindings (

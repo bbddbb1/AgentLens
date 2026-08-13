@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { GovernanceControlError } from '../../src/services/interrupts/controlAuthority.js';
 
 // Mock module-level dependencies
 const mockStore = {
@@ -35,6 +36,7 @@ const mockStore = {
   listInterrupts: vi.fn(),
   decideInterrupt: vi.fn(),
   resumeInterruptByToken: vi.fn(),
+  serializeInterrupt: vi.fn((value) => value),
   createShare: vi.fn(),
   listShares: vi.fn(),
   findUserByEmail: vi.fn(),
@@ -328,6 +330,35 @@ describe('POST /api/v1/missions/:missionId/interrupts/:interruptId/decision', ()
       .post('/api/v1/missions/m1/interrupts/int-1/decision')
       .send({ decision: 'approve', idempotency_key: 'k1' });
     expect(res.status).toBe(404);
+  });
+
+  it.each([
+    ['control_unavailable', 503],
+    ['not_actionable', 409],
+    ['identity_conflict', 409],
+    ['idempotency_conflict', 409],
+    ['invalid_decision', 422],
+  ] as const)('maps %s to a fail-closed HTTP status', async (code, status) => {
+    mockStore.decideInterrupt.mockRejectedValueOnce(new GovernanceControlError(code, code));
+    const res = await request(app)
+      .post('/api/v1/missions/m1/interrupts/int-1/decision')
+      .send({ decision: 'approve', idempotency_key: 'k1' });
+    expect(res.status).toBe(status);
+    expect(res.body.code).toBe(code);
+  });
+
+  it('returns committed success when realtime fan-out fails', async () => {
+    const interrupt = {
+      id: 'row', mission_id: 'm1', interrupt_id: 'int-1', status: 'approved', reason: 'review',
+      payload: {}, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
+    };
+    mockStore.decideInterrupt.mockResolvedValueOnce(interrupt);
+    mockPublishEvent.mockRejectedValueOnce(new Error('redis unavailable'));
+    const res = await request(app)
+      .post('/api/v1/missions/m1/interrupts/int-1/decision')
+      .send({ decision: 'approve', idempotency_key: 'k1' });
+    expect(res.status).toBe(200);
+    expect(res.body.interrupt_id).toBe('int-1');
   });
 });
 

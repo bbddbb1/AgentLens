@@ -28,7 +28,8 @@ describe('closed framework governance selection', () => {
     const governanceEnabled = frameworkGovernanceFor(framework, env)?.controlAvailable ?? false;
     const record = mapInterruptRowToRecord({
       id: 'row', mission_id: 'mission', branch_id: 'main', interrupt_id: 'request',
-      status: 'pending', reason: 'review', framework, actionability: 'actionable',
+      status: 'pending', reason: 'review', framework, control_mode: 'framework_binding',
+      request_lifecycle: 'pending', actionability: 'actionable',
       created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
     }, { governanceEnabled });
     expect(record.governance_available).toBe(available);

@@ -1035,12 +1035,19 @@ export function projectRuntimeStateAtFrame(
       0,
     );
     const liveFrame = snapshot.sequence_num === lastAdmission;
-    current.governance_available = liveFrame && interrupt.governance_available === true;
-    current.actionability = liveFrame
+    // Inherited parent evidence is observational in a child lineage. Only the
+    // current branch's exact latest control identity may be actionable.
+    const liveControlFrame = liveFrame && String(interrupt.branch_id ?? branchId) === branchId;
+    current.governance_available = liveControlFrame && interrupt.governance_available === true;
+    current.control_mode = liveControlFrame
+      ? interrupt.control_mode ?? 'unavailable'
+      : 'unavailable';
+    current.actionability = liveControlFrame
       ? interrupt.actionability ?? 'observed_only'
       : 'unavailable';
-    current.supported_decision_types = liveFrame ? interrupt.supported_decision_types ?? [] : [];
-    current.safe_prompt = liveFrame ? interrupt.safe_prompt ?? undefined : undefined;
+    current.supported_decision_types = liveControlFrame ? interrupt.supported_decision_types ?? [] : [];
+    current.safe_prompt = liveControlFrame ? interrupt.safe_prompt ?? undefined : undefined;
+    current.safe_input_schema = liveControlFrame ? interrupt.safe_input_schema ?? undefined : undefined;
     if (axes.decision_state === 'recorded') {
       current.decision = interrupt.decision ?? current.decision;
       current.decision_comment = interrupt.decision_comment ?? current.decision_comment;

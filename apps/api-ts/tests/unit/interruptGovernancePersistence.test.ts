@@ -50,6 +50,7 @@ describe('LangGraph governance interrupt persistence serializers', () => {
       actionability: 'actionable',
       request_lifecycle: 'resolved',
       framework: 'langgraph',
+      control_mode: 'framework_binding',
       supported_decision_types: ['approve', 'reject'],
       claimed_at: '2026-01-01T00:01:00.000Z',
       claiming_binding_id: 'should-not-leak',
@@ -67,6 +68,22 @@ describe('LangGraph governance interrupt persistence serializers', () => {
     expect(record).not.toHaveProperty('claiming_binding_id');
     expect(record).not.toHaveProperty('control_ref_hash');
     expect(JSON.stringify(serializeInterruptPublic(record))).not.toContain('should-not-leak');
+  });
+
+  it('makes only explicitly marked legacy-token rows actionable', () => {
+    const base = {
+      id: '11111111-1111-1111-1111-111111111111',
+      mission_id: '22222222-2222-2222-2222-222222222222', branch_id: 'main',
+      interrupt_id: 'legacy', status: 'pending', reason: 'review', payload: {},
+      request_lifecycle: 'pending', decision_state: 'none',
+      created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
+    };
+    expect(mapInterruptRowToRecord(base, { governanceEnabled: true })).toMatchObject({
+      control_mode: 'unavailable', governance_available: false, actionability: 'unavailable',
+    });
+    expect(mapInterruptRowToRecord({ ...base, control_mode: 'legacy_token' })).toMatchObject({
+      control_mode: 'legacy_token', governance_available: true, actionability: 'actionable',
+    });
   });
 
   it('defaults the LangGraph governance feature flag to disabled', () => {

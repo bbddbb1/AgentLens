@@ -17,6 +17,7 @@ describe('Govern UI control filtering (remediation)', () => {
     expect(isActionableInterrupt({
       interrupt_id: 'i1', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
       governance_available: false, actionability: 'actionable', framework: 'langgraph',
+      control_mode: 'framework_binding', request_lifecycle: 'pending',
       supported_decision_types: ['approve'],
     })).toBe(false);
   });
@@ -25,6 +26,7 @@ describe('Govern UI control filtering (remediation)', () => {
     const interrupt: RuntimeInterruptState = {
       interrupt_id: 'i1', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
       governance_available: true, actionability: 'actionable', framework: 'langgraph',
+      control_mode: 'framework_binding', request_lifecycle: 'pending',
       supported_decision_types: ['approve'],
     };
     expect(supportedDecisions(interrupt)).toEqual(['approve']);
@@ -35,6 +37,7 @@ describe('Govern UI control filtering (remediation)', () => {
     const interrupt: RuntimeInterruptState = {
       interrupt_id: 'maf-1', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
       governance_available: true, actionability: 'actionable', framework: 'ms_agent_framework',
+      control_mode: 'framework_binding', request_lifecycle: 'pending',
       supported_decision_types: ['approve', 'reject'],
     };
     expect(supportedDecisions(interrupt)).toEqual(['approve', 'reject']);
@@ -45,6 +48,7 @@ describe('Govern UI control filtering (remediation)', () => {
     expect(isActionableInterrupt({
       interrupt_id: 'i1', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
       governance_available: true, actionability: 'actionable', framework: 'langgraph',
+      control_mode: 'framework_binding', request_lifecycle: 'pending',
       supported_decision_types: [],
     })).toBe(false);
   });
@@ -78,7 +82,36 @@ describe('Govern UI control filtering (remediation)', () => {
     expect(isActionableInterrupt({
       interrupt_id: 'maf-off', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
       framework: 'ms_agent_framework', governance_available: false, actionability: 'unavailable',
+      control_mode: 'framework_binding', request_lifecycle: 'pending',
       supported_decision_types: ['approve'],
     })).toBe(false);
+  });
+
+  it('never infers legacy controls from missing authority metadata', () => {
+    const missing: RuntimeInterruptState = {
+      interrupt_id: 'missing', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
+      request_lifecycle: 'pending', governance_available: true, actionability: 'actionable',
+    };
+    expect(supportedDecisions(missing)).toEqual([]);
+    expect(isActionableInterrupt(missing)).toBe(false);
+  });
+
+  it('retains only explicitly declared legacy-token controls', () => {
+    const legacy: RuntimeInterruptState = {
+      interrupt_id: 'legacy', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
+      request_lifecycle: 'pending', governance_available: true, actionability: 'actionable', control_mode: 'legacy_token',
+    };
+    expect(supportedDecisions(legacy)).toEqual(['approve', 'reject', 'revise', 'resume']);
+    expect(isActionableInterrupt(legacy)).toBe(true);
+  });
+
+  it('hides structured response because the UI cannot collect a typed value', () => {
+    const structured: RuntimeInterruptState = {
+      interrupt_id: 'structured', status: 'pending', reason: 'x', payload: {}, updated_at: new Date().toISOString(),
+      request_lifecycle: 'pending', governance_available: true, actionability: 'actionable', control_mode: 'framework_binding',
+      framework: 'langgraph', supported_decision_types: ['structured_response'], safe_input_schema: { type: 'object', properties: {} },
+    };
+    expect(supportedDecisions(structured)).toEqual([]);
+    expect(isActionableInterrupt(structured)).toBe(false);
   });
 });

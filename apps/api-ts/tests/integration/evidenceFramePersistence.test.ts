@@ -7,13 +7,14 @@ import { registerBridgeBinding } from '../../src/services/interrupts/bridgeBindi
 import { applyRuntimeOutcome, claimDelivery, postDeliveryReceipt } from '../../src/services/interrupts/deliveryLifecycle.js';
 import { parseGovernanceStateHistory } from '../../src/services/interrupts/governanceState.js';
 import { reconcileInterruptActionability } from '../../src/services/interrupts/reconcileActionability.js';
+import { GovernanceControlError } from '../../src/services/interrupts/controlAuthority.js';
 
 const hasTestDatabase = Boolean(process.env.AGENTLENS_TEST_DATABASE_URL);
 const suite = hasTestDatabase ? describe : describe.skip;
 
 suite('R0-A PostgreSQL evidence/frame foundation', () => {
   const missionId = randomUUID();
-  let governanceMissionId = '';
+  const governanceMissionIds: string[] = [];
   let childBranchId = '';
 
   beforeAll(async () => {
@@ -22,7 +23,7 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
 
   afterAll(async () => {
     await missionStore.deleteMission(missionId).catch(() => false);
-    if (governanceMissionId) await missionStore.deleteMission(governanceMissionId).catch(() => false);
+    for (const id of governanceMissionIds) await missionStore.deleteMission(id).catch(() => false);
     await pool.end();
   });
 
@@ -146,7 +147,7 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
     process.env.AGENTLENS_SERVICE_TOKEN = 'r0-c1-local-test-token';
     try {
       const mission = await missionStore.createMission({ objective: 'R0-C1 persistence acceptance' });
-      governanceMissionId = mission.id;
+      governanceMissionIds.push(mission.id);
       const interruptId = 'irq-r0-c1';
       await missionStore.createInterrupt({
         mission_id: mission.id,
@@ -175,7 +176,7 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
         };
         await setupClient.query(
           `UPDATE interrupts
-           SET framework = 'langgraph', native_identity = $3::jsonb,
+           SET framework = 'langgraph', control_mode = 'framework_binding', native_identity = $3::jsonb,
                supported_decision_types = '["approve","reject"]'::jsonb
            WHERE mission_id = $1 AND branch_id = 'main' AND interrupt_id = $2`,
           [mission.id, interruptId, JSON.stringify(nativeIdentity)],
@@ -237,6 +238,7 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
           interruptId,
           deliveryId,
           receipt: 'accepted',
+          bindingId,
         });
         await deliveryClient.query('COMMIT');
       } catch (error) {
@@ -301,6 +303,205 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
         delivery_state: 'accepted',
         runtime_outcome: 'failed',
       });
+    } finally {
+      if (priorFlag === undefined) delete process.env.LANGGRAPH_GOVERNANCE_ENABLED;
+      else process.env.LANGGRAPH_GOVERNANCE_ENABLED = priorFlag;
+      if (priorToken === undefined) delete process.env.AGENTLENS_SERVICE_TOKEN;
+      else process.env.AGENTLENS_SERVICE_TOKEN = priorToken;
+    }
+  });
+
+  it('fails closed on exact current control authority and preserves one idempotent mutation', async () => {
+    const priorFlag = process.env.LANGGRAPH_GOVERNANCE_ENABLED;
+    const priorToken = process.env.AGENTLENS_SERVICE_TOKEN;
+    process.env.LANGGRAPH_GOVERNANCE_ENABLED = 'true';
+    process.env.AGENTLENS_SERVICE_TOKEN = 'r0-c2-local-test-token';
+    try {
+      const mission = await missionStore.createMission({ objective: 'R0-C2 control acceptance' });
+      governanceMissionIds.push(mission.id);
+
+      const prepareFrameworkRequest = async (
+        interruptId: string,
+        options: { binding?: boolean; threadId?: string; bindingThreadId?: string; supported?: string[]; schema?: Record<string, unknown> } = {},
+      ): Promise<{ bindingId?: string; controlRef?: string }> => {
+        await missionStore.createInterrupt({
+          mission_id: mission.id,
+          interrupt_id: interruptId,
+          reason: `Review ${interruptId}`,
+        });
+        const threadId = options.threadId ?? `thread-${interruptId}`;
+        const identity = {
+          mission_id: mission.id,
+          branch_id: 'main',
+          framework: 'langgraph',
+          interaction_request_id: interruptId,
+          thread_id: threadId,
+        };
+        await pool.query(
+          `UPDATE interrupts
+           SET framework = 'langgraph', control_mode = 'framework_binding', native_identity = $3::jsonb,
+               supported_decision_types = $4::jsonb, safe_input_schema = $5::jsonb,
+               actionability = 'observed_only'
+           WHERE mission_id = $1 AND branch_id = 'main' AND interrupt_id = $2`,
+          [mission.id, interruptId, JSON.stringify(identity), JSON.stringify(options.supported ?? ['approve', 'reject']), options.schema ? JSON.stringify(options.schema) : null],
+        );
+        if (options.binding === false) return {};
+        const controlRef = `control-${interruptId}-0123456789`;
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const binding = await registerBridgeBinding(client, {
+            missionId: mission.id,
+            branchId: 'main',
+            controlRef,
+            leaseSeconds: 120,
+            nativeIdentity: { ...identity, thread_id: options.bindingThreadId ?? threadId },
+            interruptId,
+            interactionRequestId: interruptId,
+            framework: 'langgraph',
+          });
+          await reconcileInterruptActionability(client, {
+            missionId: mission.id,
+            branchId: 'main',
+            interruptId,
+            framework: 'langgraph',
+          });
+          await client.query('COMMIT');
+          return { bindingId: binding.id, controlRef };
+        } catch (error) {
+          await client.query('ROLLBACK');
+          throw error;
+        } finally {
+          client.release();
+        }
+      };
+
+      const valid = await prepareFrameworkRequest('irq-valid');
+      const first = await missionStore.decideInterrupt(mission.id, 'irq-valid', {
+        branch_id: 'main', decision: 'approve', comment: 'ship', idempotency_key: 'c2-idempotent',
+      });
+      const repeated = await missionStore.decideInterrupt(mission.id, 'irq-valid', {
+        branch_id: 'main', decision: 'approve', comment: 'ship', idempotency_key: 'c2-idempotent',
+      });
+      expect(repeated?.decision_id).toBe(first?.decision_id);
+      await expect(missionStore.decideInterrupt(mission.id, 'irq-valid', {
+        branch_id: 'main', decision: 'approve', comment: 'different', idempotency_key: 'c2-idempotent',
+      })).rejects.toMatchObject<Partial<GovernanceControlError>>({ code: 'idempotency_conflict' });
+      const durable = await pool.query(
+        `SELECT
+           (SELECT COUNT(*)::int FROM interrupt_delivery_attempts WHERE mission_id = $1 AND interrupt_id = 'irq-valid') AS deliveries,
+           (SELECT jsonb_array_length(governance_state_history) FROM interrupts WHERE mission_id = $1 AND interrupt_id = 'irq-valid') AS revisions`,
+        [mission.id],
+      );
+      expect(durable.rows[0]).toMatchObject({ deliveries: 1, revisions: 4 });
+
+      const successorClient = await pool.connect();
+      let successorBindingId = '';
+      try {
+        await successorClient.query('BEGIN');
+        const successor = await registerBridgeBinding(successorClient, {
+          missionId: mission.id, branchId: 'main', controlRef: 'successor-control-0123456789', leaseSeconds: 120,
+          interruptId: 'irq-valid', interactionRequestId: 'irq-valid', framework: 'langgraph',
+          nativeIdentity: {
+            mission_id: mission.id, branch_id: 'main', framework: 'langgraph', interaction_request_id: 'irq-valid', thread_id: 'thread-irq-valid',
+          },
+        });
+        successorBindingId = successor.id;
+        await successorClient.query('COMMIT');
+      } catch (error) {
+        await successorClient.query('ROLLBACK');
+        throw error;
+      } finally {
+        successorClient.release();
+      }
+
+      const deliveryClient = await pool.connect();
+      try {
+        await deliveryClient.query('BEGIN');
+        expect((await claimDelivery(deliveryClient, {
+          missionId: mission.id, branchId: 'main', interruptId: 'irq-valid', bindingId: successorBindingId,
+        })).claimed).toBe(false);
+        const claim = await claimDelivery(deliveryClient, {
+          missionId: mission.id, branchId: 'main', interruptId: 'irq-valid', bindingId: valid.bindingId!,
+        });
+        expect(claim.claimed).toBe(true);
+        expect(await postDeliveryReceipt(deliveryClient, {
+          missionId: mission.id, branchId: 'main', interruptId: 'irq-valid', deliveryId: claim.deliveryId!,
+          receipt: 'accepted', bindingId: successorBindingId,
+        })).toBe('unknown');
+        expect(await postDeliveryReceipt(deliveryClient, {
+          missionId: mission.id, branchId: 'main', interruptId: 'irq-valid', deliveryId: claim.deliveryId!,
+          receipt: 'failed', bindingId: valid.bindingId!,
+        })).toBe('failed');
+        await deliveryClient.query('COMMIT');
+      } catch (error) {
+        await deliveryClient.query('ROLLBACK');
+        throw error;
+      } finally {
+        deliveryClient.release();
+      }
+      expect((await missionStore.listInterrupts(mission.id, undefined, 'main'))?.find((row) => row.interrupt_id === 'irq-valid'))
+        .toMatchObject({ decision_state: 'recorded', delivery_state: 'failed', runtime_outcome: 'awaiting_interaction' });
+
+      await prepareFrameworkRequest('irq-disabled');
+      const beforeDisabled = await pool.query(
+        `SELECT decision_state, delivery_state, governance_state_history FROM interrupts WHERE mission_id = $1 AND interrupt_id = 'irq-disabled'`,
+        [mission.id],
+      );
+      process.env.LANGGRAPH_GOVERNANCE_ENABLED = 'false';
+      await expect(missionStore.decideInterrupt(mission.id, 'irq-disabled', {
+        branch_id: 'main', decision: 'approve', idempotency_key: 'disabled',
+      })).rejects.toMatchObject<Partial<GovernanceControlError>>({ code: 'control_unavailable' });
+      process.env.LANGGRAPH_GOVERNANCE_ENABLED = 'true';
+      const afterDisabled = await pool.query(
+        `SELECT decision_state, delivery_state, governance_state_history FROM interrupts WHERE mission_id = $1 AND interrupt_id = 'irq-disabled'`,
+        [mission.id],
+      );
+      expect(afterDisabled.rows[0]).toEqual(beforeDisabled.rows[0]);
+
+      await prepareFrameworkRequest('irq-missing-binding', { binding: false });
+      await expect(missionStore.decideInterrupt(mission.id, 'irq-missing-binding', {
+        branch_id: 'main', decision: 'approve', idempotency_key: 'missing',
+      })).rejects.toMatchObject<Partial<GovernanceControlError>>({ code: 'not_actionable' });
+      await prepareFrameworkRequest('irq-conflict', { bindingThreadId: 'wrong-thread' });
+      await expect(missionStore.decideInterrupt(mission.id, 'irq-conflict', {
+        branch_id: 'main', decision: 'approve', idempotency_key: 'conflict',
+      })).rejects.toMatchObject<Partial<GovernanceControlError>>({ code: 'identity_conflict' });
+
+      await prepareFrameworkRequest('irq-structured', { supported: ['structured_response'] });
+      await expect(missionStore.decideInterrupt(mission.id, 'irq-structured', {
+        branch_id: 'main', decision: 'revise', payload: {}, idempotency_key: 'structured',
+      })).rejects.toMatchObject<Partial<GovernanceControlError>>({ code: 'invalid_decision' });
+
+      await missionStore.createInterrupt({ mission_id: mission.id, interrupt_id: 'irq-unknown', reason: 'unknown' });
+      await pool.query(
+        `UPDATE interrupts SET control_mode = 'framework_binding', framework = 'future_framework', native_identity = '{}'::jsonb
+         WHERE mission_id = $1 AND interrupt_id = 'irq-unknown'`,
+        [mission.id],
+      );
+      await expect(missionStore.decideInterrupt(mission.id, 'irq-unknown', {
+        branch_id: 'main', decision: 'approve', idempotency_key: 'unknown',
+      })).rejects.toMatchObject<Partial<GovernanceControlError>>({ code: 'control_unsupported' });
+
+      const legacyToken = 'legacy-control-token-0123456789';
+      await missionStore.createInterrupt({ mission_id: mission.id, interrupt_id: 'irq-legacy', reason: 'legacy', resume_token: legacyToken });
+      const legacyDecision = await missionStore.decideInterrupt(mission.id, 'irq-legacy', {
+        branch_id: 'main', decision: 'approve', idempotency_key: 'legacy',
+      });
+      expect(legacyDecision).toMatchObject({ control_mode: 'legacy_token', decision_state: 'recorded', runtime_outcome: 'awaiting_interaction' });
+      expect(await missionStore.resumeInterruptByToken(legacyToken)).toMatchObject({ runtime_outcome: 'resumed' });
+
+      const frameworkToken = 'framework-token-0123456789';
+      await missionStore.createInterrupt({ mission_id: mission.id, interrupt_id: 'irq-no-token-bypass', reason: 'framework', resume_token: frameworkToken });
+      await pool.query(
+        `UPDATE interrupts SET control_mode = 'framework_binding', framework = 'langgraph', native_identity = '{}'::jsonb
+         WHERE mission_id = $1 AND interrupt_id = 'irq-no-token-bypass'`,
+        [mission.id],
+      );
+      expect(await missionStore.resumeInterruptByToken(frameworkToken)).toBeNull();
+      expect((await missionStore.listInterrupts(mission.id, undefined, 'main'))
+        ?.find((row) => row.interrupt_id === 'irq-no-token-bypass'))
+        .toMatchObject({ decision_state: 'none', delivery_state: 'not_requested', runtime_outcome: 'awaiting_interaction' });
     } finally {
       if (priorFlag === undefined) delete process.env.LANGGRAPH_GOVERNANCE_ENABLED;
       else process.env.LANGGRAPH_GOVERNANCE_ENABLED = priorFlag;

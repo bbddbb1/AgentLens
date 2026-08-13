@@ -168,16 +168,36 @@ export async function claimDelivery(
 
   const interrupt = await client.query(
     `
-      SELECT decision_id, decision_type, decision_payload, delivery_id, delivery_state, decision_value_summary
-      FROM interrupts
-      WHERE mission_id = $1 AND branch_id = $2 AND interrupt_id = $3
+      SELECT interrupt.decision_id, interrupt.decision_type, interrupt.decision_payload,
+             interrupt.delivery_id, interrupt.delivery_state, interrupt.decision_value_summary,
+             interrupt.actionability, interrupt.authorized_binding_id, interrupt.control_mode,
+             interrupt.request_lifecycle, interrupt.status, interrupt.expires_at,
+             binding.id AS live_binding_id
+      FROM interrupts AS interrupt
+      LEFT JOIN framework_bridge_bindings AS binding
+        ON binding.id = $4::uuid
+       AND binding.mission_id = interrupt.mission_id
+       AND binding.branch_id = interrupt.branch_id
+       AND binding.framework = interrupt.framework
+       AND binding.lifecycle_state = 'active'
+       AND binding.lease_expires_at > NOW()
+      WHERE interrupt.mission_id = $1 AND interrupt.branch_id = $2 AND interrupt.interrupt_id = $3
       LIMIT 1
-      FOR UPDATE
+      FOR UPDATE OF interrupt
     `,
-    [input.missionId, input.branchId, input.interruptId],
+    [input.missionId, input.branchId, input.interruptId, input.bindingId],
   );
   const row = interrupt.rows[0] as Record<string, unknown> | undefined;
-  if (!row?.decision_id) {
+  const expired = row?.expires_at ? new Date(String(row.expires_at)).getTime() <= Date.now() : false;
+  if (
+    !row?.decision_id
+    || row.control_mode !== 'framework_binding'
+    || row.actionability !== 'actionable'
+    || row.request_lifecycle !== 'pending'
+    || expired
+    || !row.live_binding_id
+    || String(row.authorized_binding_id ?? '') !== input.bindingId
+  ) {
     return { externalState: 'pending', claimed: false };
   }
 
@@ -253,11 +273,32 @@ export async function postDeliveryReceipt(
     receipt: 'accepted' | 'failed' | 'stale' | 'unknown';
     safeErrorClass?: string;
     receiptCorrelation?: string;
+    bindingId: string;
   },
 ): Promise<DeliveryExternalState> {
   const current = await client.query(
-    `SELECT external_state FROM interrupt_delivery_attempts WHERE id = $1 FOR UPDATE`,
-    [input.deliveryId],
+    `SELECT delivery.external_state
+     FROM interrupt_delivery_attempts AS delivery
+     JOIN interrupts AS interrupt
+       ON interrupt.mission_id = delivery.mission_id
+      AND interrupt.branch_id = delivery.branch_id
+      AND interrupt.interrupt_id = delivery.interrupt_id
+     LEFT JOIN framework_bridge_bindings AS binding
+       ON binding.id = $5::uuid
+      AND binding.mission_id = interrupt.mission_id
+      AND binding.branch_id = interrupt.branch_id
+      AND binding.framework = interrupt.framework
+      AND binding.lifecycle_state = 'active'
+      AND binding.lease_expires_at > NOW()
+     WHERE delivery.id = $1
+       AND delivery.mission_id = $2
+       AND delivery.branch_id = $3
+       AND delivery.interrupt_id = $4
+       AND interrupt.control_mode = 'framework_binding'
+       AND binding.id IS NOT NULL
+       AND delivery.claiming_binding_id = $5::uuid
+     FOR UPDATE OF delivery, interrupt`,
+    [input.deliveryId, input.missionId, input.branchId, input.interruptId, input.bindingId],
   );
   if (!current.rows[0]) return 'unknown';
   const existing = String(current.rows[0].external_state) as DeliveryExternalState;
@@ -339,8 +380,9 @@ export async function isDeliveryReceiptAuthorized(
   );
   const row = result.rows[0] as Record<string, unknown> | undefined;
   if (!row) return false;
-  const authority = row.claiming_binding_id ?? row.authorized_binding_id;
-  return authority !== null && authority !== undefined && String(authority) === input.bindingId;
+  return row.claiming_binding_id !== null
+    && row.claiming_binding_id !== undefined
+    && String(row.claiming_binding_id) === input.bindingId;
 }
 
 export async function markTimedOutClaimsUnknown(client: PoolClient): Promise<number> {

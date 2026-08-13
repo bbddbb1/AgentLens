@@ -81,7 +81,7 @@ describe('structured decision bounds', () => {
   it('rejects schema-invalid values', () => {
     const result = validateStructuredDecisionValue(
       { answer: 1 },
-      { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] },
+      { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'], additionalProperties: false },
     );
     expect(result.ok).toBe(false);
   });
@@ -89,7 +89,7 @@ describe('structured decision bounds', () => {
   it('returns a safe summary for valid values', () => {
     const result = validateStructuredDecisionValue(
       { answer: 'yes' },
-      { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] },
+      { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'], additionalProperties: false },
     );
     expect(result.ok).toBe(true);
     if (result.ok) {

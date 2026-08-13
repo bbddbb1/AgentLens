@@ -63,7 +63,10 @@ export function mafInteractionFact(
       activity_correlation_id: identity.activity_correlation_id,
     },
     requestType: identity.request_type ?? 'request_info',
-    supportedDecisionTypes: ['approve', 'reject', 'structured_response'],
+    // A nominal native response type is not a safe input schema. Until the
+    // binding supplies an exact collectable/validatable shape, only scalar
+    // approve/reject controls are actionable.
+    supportedDecisionTypes: ['approve', 'reject'],
     publicAttributes: {
       'agentlens.interaction.framework': 'ms_agent_framework',
       'agentlens.interaction.request_id': requestId,

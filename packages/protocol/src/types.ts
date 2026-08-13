@@ -686,11 +686,14 @@ export interface InterruptRecord {
   delivery_id?: string;
   runtime_outcome?: InterruptRuntimeOutcome;
   governance_diagnostics?: string[];
+  /** Explicit mutation authority; missing is fail-closed, never implicit legacy. */
+  control_mode?: InterruptControlMode;
   framework?: string;
   governance_available?: boolean;
 }
 
 export type InterruptRequestLifecycle = 'pending' | 'resolved' | 'expired' | 'stale' | 'unsupported';
+export type InterruptControlMode = 'framework_binding' | 'legacy_token' | 'unavailable';
 export type InterruptActionability =
   | 'actionable'
   | 'observed_only'
@@ -814,9 +817,11 @@ export interface RuntimeInterruptState {
   delivery_state?: InterruptDeliveryState;
   runtime_outcome?: InterruptRuntimeOutcome;
   governance_diagnostics?: string[];
+  control_mode?: InterruptControlMode;
   governance_available?: boolean;
   framework?: string;
   safe_prompt?: string;
+  safe_input_schema?: Record<string, unknown>;
 }
 
 export type PendingMissionEvent = Omit<EventEnvelope, 'id' | 'sequence_num' | 'branch_sequence_num'>;

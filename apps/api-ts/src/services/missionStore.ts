@@ -48,6 +48,12 @@ import { mapInterruptRowToRecord, serializeInterruptPublic } from './interrupts/
 import { allocateEvidenceAdmission } from './evidenceAdmission.js';
 import { appendGovernanceStateHistory, governanceTransition } from './interrupts/governanceState.js';
 import { validateStructuredDecisionValue } from './interrupts/structuredDecisionBounds.js';
+import {
+  GovernanceControlError,
+  controlModeFromRow,
+  effectiveFrameworkDecisionTypes,
+  isExplicitLegacyControl,
+} from './interrupts/controlAuthority.js';
 import { applyRuntimeOutcome, ensureDeliveryAttempt } from './interrupts/deliveryLifecycle.js';
 import { mafInteractionFact, mafOutcomeFact, mafTraceWorkflowIds } from './runtime/normalization/mafIngestion.js';
 import { langGraphInteractionFact, langGraphOutcomeFact } from './runtime/normalization/langgraphGovernance.js';
@@ -514,7 +520,11 @@ class MissionStore {
         const agentId = langGraphInteraction?.agentId ?? attributeValue(span.attributes, AgentAttributes.ID);
         const safePrompt = langGraphInteraction?.safePrompt ?? attributeValue(event.attributes, AgentAttributes.INTERRUPT_REASON);
         const requestType = langGraphInteraction?.requestType ?? normalizedInteraction?.requestType ?? 'interrupt';
-        const supportedDecisionTypes = langGraphInteraction?.supportedDecisionTypes ?? normalizedInteraction?.supportedDecisionTypes ?? [];
+        const supportedDecisionTypes = effectiveFrameworkDecisionTypes({
+          supported_decision_types: langGraphInteraction?.supportedDecisionTypes
+            ?? normalizedInteraction?.supportedDecisionTypes
+            ?? [],
+        });
         const scrubbedAttrs = langGraphInteraction?.publicAttributes ?? normalizedInteraction?.publicAttributes ?? { ...(event.attributes ?? {}) } as Record<string, unknown>;
         const reason = langGraphInteraction?.reason ?? 'Human input required';
         const resumeUrl = langGraphInteraction?.resumeUrl;
@@ -551,10 +561,10 @@ class MissionStore {
             INSERT INTO interrupts (
               id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at,
               framework, native_identity, source_refs, request_type, safe_prompt, supported_decision_types, actionability, request_lifecycle,
-              runtime_outcome, identity_ambiguous, requested_admission_seq, requested_evidence
+              runtime_outcome, identity_ambiguous, requested_admission_seq, requested_evidence, control_mode
             ) VALUES (
               $1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11,
-              $12, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18, $19, 'awaiting_interaction', $20, $21, $22::jsonb
+              $12, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18, $19, 'awaiting_interaction', $20, $21, $22::jsonb, 'framework_binding'
             )
             ON CONFLICT (mission_id, branch_id, interrupt_id) DO UPDATE
             SET status = CASE
@@ -573,6 +583,7 @@ class MissionStore {
                   WHEN EXCLUDED.supported_decision_types = '[]'::jsonb THEN interrupts.supported_decision_types
                   ELSE EXCLUDED.supported_decision_types
                 END,
+                control_mode = 'framework_binding',
                 request_lifecycle = COALESCE(interrupts.request_lifecycle, EXCLUDED.request_lifecycle),
                 requested_admission_seq = COALESCE(interrupts.requested_admission_seq, EXCLUDED.requested_admission_seq),
                 identity_ambiguous = interrupts.identity_ambiguous OR EXCLUDED.identity_ambiguous,
@@ -1491,8 +1502,8 @@ class MissionStore {
         `
           INSERT INTO interrupts (
             id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at,
-            requested_admission_seq, requested_evidence
-          ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11, $12, $13::jsonb)
+            requested_admission_seq, requested_evidence, control_mode
+          ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10::jsonb, $11, $12, $13::jsonb, 'legacy_token')
           ON CONFLICT (mission_id, branch_id, interrupt_id) DO UPDATE
           SET status = CASE
                 WHEN interrupts.status IN ('approved', 'rejected', 'resumed') THEN interrupts.status
@@ -1501,6 +1512,10 @@ class MissionStore {
               reason = EXCLUDED.reason,
               resume_url = COALESCE(EXCLUDED.resume_url, interrupts.resume_url),
               payload = interrupts.payload || EXCLUDED.payload,
+              control_mode = CASE
+                WHEN interrupts.control_mode = 'legacy_token' THEN interrupts.control_mode
+                ELSE 'unavailable'
+              END,
               requested_admission_seq = COALESCE(interrupts.requested_admission_seq, EXCLUDED.requested_admission_seq),
               updated_at = NOW()
           RETURNING *
@@ -1641,11 +1656,38 @@ class MissionStore {
         return null;
       }
 
-      const existingMapped = this.mapInterruptRow(existing);
+      // Idempotent same-key/same-content replay.
+      if (existing.idempotency_key && String(existing.idempotency_key) === input.idempotency_key) {
+        const priorDecision = String(existing.decision ?? existing.decision_type ?? '');
+        const sameContent = priorDecision === input.decision
+          && String(existing.decision_comment ?? '') === String(input.comment ?? '')
+          && deterministicStringify(existing.decision_payload ?? {}) === deterministicStringify(input.payload ?? {});
+        if (!sameContent) {
+          await client.query('ROLLBACK');
+          throw new GovernanceControlError('idempotency_conflict', 'Idempotency key conflict with different decision content');
+        }
+        await client.query('COMMIT');
+        return this.mapInterruptRow(existing);
+      }
+
+      if (existing.decision_state === 'recorded' || existing.decision || ['expired', 'cancelled', 'resumed'].includes(String(existing.status))) {
+        await client.query('ROLLBACK');
+        throw new GovernanceControlError('request_finalized', 'Interrupt decision is already finalized');
+      }
+
+      const controlMode = controlModeFromRow(existing);
       const framework = String(existing.framework ?? '');
       const governance = frameworkGovernanceFor(framework);
-      let liveActionability = String(existing.actionability ?? 'observed_only');
-      if (governance) {
+      let isGovernance = false;
+      if (controlMode === 'framework_binding') {
+        if (!governance) {
+          await client.query('ROLLBACK');
+          throw new GovernanceControlError('control_unsupported', `Framework control is unsupported (${framework || 'missing framework'})`);
+        }
+        if (!governance.controlAvailable) {
+          await client.query('ROLLBACK');
+          throw new GovernanceControlError('control_unavailable', `Governance control is unavailable for ${framework}`);
+        }
         const live = await assertCurrentlyActionable(client, {
           missionId,
           branchId,
@@ -1653,69 +1695,59 @@ class MissionStore {
           framework: governance.framework,
           identityPolicy: governance.identityPolicy,
         });
-        liveActionability = live.actionability;
         if (live.actionability === 'identity_conflict' || live.diagnostic === 'conflicting_native_identity') {
           await client.query('ROLLBACK');
-          throw new Error('Native identity is ambiguous or conflicting; decision rejected');
+          throw new GovernanceControlError('identity_conflict', 'Native identity is ambiguous or conflicting; decision rejected');
         }
-      }
-      const isGovernance =
-        Boolean(governance?.controlAvailable)
-        && liveActionability === 'actionable';
-
-      if (governance?.enabled && !isGovernance) {
-        // Governance path exists but is not currently actionable (expired binding, etc.)
-        if (existing.decision_state !== 'recorded' && !existing.idempotency_key) {
+        if (live.actionability !== 'actionable' || !live.binding) {
           await client.query('ROLLBACK');
-          throw new Error(`Request is not actionable (${liveActionability})`);
+          throw new GovernanceControlError('not_actionable', `Request is not actionable (${live.reason})`);
         }
+        isGovernance = true;
+      } else if (!isExplicitLegacyControl(existing)) {
+        await client.query('ROLLBACK');
+        throw new GovernanceControlError(
+          framework ? 'control_unsupported' : 'control_unavailable',
+          framework
+            ? `Framework control is unsupported (${framework})`
+            : 'Interrupt has no explicit mutation authority',
+        );
       }
 
-      // Idempotent same-key/same-content replay.
-      if (existing.idempotency_key && String(existing.idempotency_key) === input.idempotency_key) {
-        const priorDecision = String(existing.decision ?? existing.decision_type ?? '');
-        const sameContent = priorDecision === input.decision;
-        if (!sameContent) {
-          await client.query('ROLLBACK');
-          throw new Error('Idempotency key conflict with different decision content');
-        }
-        await client.query('COMMIT');
-        return existingMapped;
+      const expired = existing.expires_at
+        ? new Date(String(existing.expires_at)).getTime() <= Date.now()
+        : false;
+      if (existing.request_lifecycle !== 'pending' || expired) {
+        await client.query('ROLLBACK');
+        throw new GovernanceControlError('not_actionable', expired ? 'Interrupt request is expired' : 'Interrupt request is not pending');
       }
-
-      if (existing.decision_state === 'recorded' || existing.decision || ['expired', 'cancelled', 'resumed'].includes(String(existing.status))) {
-        if (existing.idempotency_key && String(existing.idempotency_key) !== input.idempotency_key) {
-          await client.query('ROLLBACK');
-          return null;
-        }
-      }
-
-      const decisionAdmission = await allocateEvidenceAdmission(client, missionId);
 
       if (isGovernance) {
-        const supported = Array.isArray(existing.supported_decision_types)
-          ? existing.supported_decision_types.map(String)
-          : [];
+        const supported = effectiveFrameworkDecisionTypes(existing);
         const decisionType = input.decision === 'revise' ? 'structured_response' : input.decision;
-        if (supported.length > 0 && !supported.includes(decisionType) && !supported.includes(input.decision)) {
+        if (!supported.includes(decisionType as (typeof supported)[number])) {
           await client.query('ROLLBACK');
-          throw new Error(`Decision type ${input.decision} is not supported by this request`);
+          throw new GovernanceControlError('invalid_decision', `Decision type ${input.decision} is not supported by this request`);
         }
-        if (String(existing.request_lifecycle) === 'stale' || String(existing.request_lifecycle) === 'resolved') {
+        if (decisionType === 'structured_response' && (!input.payload || Object.keys(input.payload).length === 0)) {
           await client.query('ROLLBACK');
-          throw new Error('Request is stale or resolved');
+          throw new GovernanceControlError('invalid_decision', 'Structured decision requires a non-empty typed value');
         }
 
-        const value = input.payload ?? {};
-        const validation = validateStructuredDecisionValue(
-          Object.keys(value).length ? value : undefined,
-          (existing.safe_input_schema as Record<string, unknown>) ?? undefined,
-        );
+        const validation = decisionType === 'structured_response'
+          ? validateStructuredDecisionValue(
+              input.payload,
+              (existing.safe_input_schema as Record<string, unknown>) ?? undefined,
+            )
+          : input.payload === undefined
+            ? { ok: true as const, value: {}, summary: { kind: 'empty' } }
+            : validateStructuredDecisionValue(input.payload);
         if (!validation.ok) {
           await client.query('ROLLBACK');
-          throw new Error(validation.reason);
+          throw new GovernanceControlError('invalid_decision', validation.reason);
         }
 
+        const decisionAdmission = await allocateEvidenceAdmission(client, missionId);
         const decisionId = randomUUID();
         const result = await client.query(
           `
@@ -1742,8 +1774,21 @@ class MissionStore {
             WHERE mission_id = $1
               AND branch_id = $2
               AND interrupt_id = $3
+              AND control_mode = 'framework_binding'
+              AND request_lifecycle = 'pending'
+              AND (expires_at IS NULL OR expires_at > NOW())
               AND decision_state = 'none'
               AND actionability = 'actionable'
+              AND authorized_binding_id IS NOT NULL
+              AND EXISTS (
+                SELECT 1 FROM framework_bridge_bindings AS binding
+                WHERE binding.id = interrupts.authorized_binding_id
+                  AND binding.mission_id = interrupts.mission_id
+                  AND binding.branch_id = interrupts.branch_id
+                  AND binding.framework = interrupts.framework
+                  AND binding.lifecycle_state = 'active'
+                  AND binding.lease_expires_at > NOW()
+              )
             RETURNING *
           `,
           [
@@ -1770,7 +1815,7 @@ class MissionStore {
         const row = result.rows[0] as Record<string, unknown> | undefined;
         if (!row) {
           await client.query('ROLLBACK');
-          return null;
+          throw new GovernanceControlError('not_actionable', 'Interrupt control authority changed before the decision could be recorded');
         }
         await appendGovernanceStateHistory(client, {
           missionId,
@@ -1805,6 +1850,7 @@ class MissionStore {
         return this.mapInterruptRow(authoritative.rows[0] as Record<string, unknown>);
       }
 
+      const decisionAdmission = await allocateEvidenceAdmission(client, missionId);
       const result = await client.query(
         `
           UPDATE interrupts
@@ -1824,6 +1870,11 @@ class MissionStore {
           WHERE mission_id = $1
             AND branch_id = $2
             AND interrupt_id = $3
+            AND control_mode = 'legacy_token'
+            AND framework IS NULL
+            AND native_identity IS NULL
+            AND request_lifecycle = 'pending'
+            AND (expires_at IS NULL OR expires_at > NOW())
             AND (idempotency_key IS NULL OR idempotency_key = $7)
             AND status IN ('pending', 'approved', 'rejected')
           RETURNING *
@@ -1874,15 +1925,6 @@ class MissionStore {
       }
       await client.query('COMMIT');
 
-      // Legacy auto-resume if approved
-      if (interrupt && input.decision === 'approve') {
-        const resumeToken = (interrupt.payload as Record<string, unknown>)?.attributes as Record<string, unknown> | undefined;
-        const token = (resumeToken?.[AgentAttributes.RESUME_TOKEN] ?? resumeToken?.['agent.resume.token']) as string | undefined;
-        if (token) {
-          await this.resumeInterruptByToken(token, input.payload ?? {});
-        }
-      }
-
       if (interrupt) {
         const { sandboxRunner } = await import('./runtime/SandboxJobRunner.js');
         await sandboxRunner.onDecisionMade(missionId, branchId, interrupt);
@@ -1903,7 +1945,13 @@ class MissionStore {
       await client.query('BEGIN');
       const existingResult = await client.query(
         `SELECT * FROM interrupts
-         WHERE resume_token_hash = $1 AND status IN ('pending', 'approved')
+         WHERE resume_token_hash = $1
+           AND control_mode = 'legacy_token'
+           AND framework IS NULL
+           AND native_identity IS NULL
+           AND request_lifecycle = 'pending'
+           AND (expires_at IS NULL OR expires_at > NOW())
+           AND status IN ('pending', 'approved')
          LIMIT 1 FOR UPDATE`,
         [hashToken(resumeToken)],
       );
@@ -1926,6 +1974,11 @@ class MissionStore {
               request_lifecycle = 'resolved',
               updated_at = NOW()
           WHERE resume_token_hash = $1
+            AND control_mode = 'legacy_token'
+            AND framework IS NULL
+            AND native_identity IS NULL
+            AND request_lifecycle = 'pending'
+            AND (expires_at IS NULL OR expires_at > NOW())
             AND status IN ('pending', 'approved')
           RETURNING *
         `,

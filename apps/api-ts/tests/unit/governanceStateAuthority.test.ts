@@ -143,6 +143,25 @@ describe('R0-C1 governance state authority', () => {
     });
   });
 
+  it('keeps inherited parent control observational in a child branch', () => {
+    const parent = {
+      branch_id: 'main', interrupt_id: 'irq-parent', status: 'pending', reason: 'review',
+      payload: {}, requested_evidence: { interrupt_id: 'irq-parent', reason: 'review', payload: {} },
+      created_at: '2026-08-13T00:00:01.000Z', requested_admission_seq: 1,
+      governance_state_history: [at(1, 'request', 'pending'), at(1, 'runtime', 'awaiting_interaction')],
+      framework: 'langgraph', control_mode: 'framework_binding', governance_available: true,
+      actionability: 'actionable', supported_decision_types: ['approve'],
+    };
+    const replay = projectReplayEvidence('mission-child', 'child', [], [parent]);
+    const state = projectRuntimeStateAtFrame(
+      'mission-child', 'child', replay.events, replay.snapshots.at(-1)!, [parent],
+    );
+    expect(state.interrupts['irq-parent']).toMatchObject({
+      control_mode: 'unavailable', governance_available: false, actionability: 'unavailable',
+      supported_decision_types: [],
+    });
+  });
+
   it('never projects legacy resume tokens or private control references as replay evidence', () => {
     const replay = projectReplayEvidence('mission-secret', 'main', [], [{
       branch_id: 'main', interrupt_id: 'irq-secret', status: 'pending', reason: 'review',

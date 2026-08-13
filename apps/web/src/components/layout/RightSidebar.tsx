@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, AlertTriangle, Check, CheckCircle2, PanelRightClose, Play, Shield, X, XCircle } from 'lucide-react';
 import type { RuntimeExplanationActivity, RuntimeExplanationProjection, RuntimeInterruptState, RuntimeState, RuntimeSummary } from '@agentlens/protocol';
 import { RopsEvidence } from '@/components/rops/RopsEvidence';
@@ -29,14 +29,18 @@ interface EvidenceTarget {
 }
 
 export function supportedDecisions(interrupt: RuntimeInterruptState): string[] {
-  const frameworkGovernance = interrupt.framework === 'langgraph' || interrupt.framework === 'ms_agent_framework' || Boolean(interrupt.supported_decision_types?.length) || interrupt.actionability !== undefined;
-  return frameworkGovernance ? (interrupt.supported_decision_types ?? []) : ['approve', 'reject', 'revise', 'resume'];
+  if (interrupt.control_mode === 'legacy_token') return ['approve', 'reject', 'revise', 'resume'];
+  if (interrupt.control_mode !== 'framework_binding') return [];
+  // The current UI has no typed structured-value collector. Keep that action
+  // hidden even when a non-UI API consumer has an exact validated schema.
+  return (interrupt.supported_decision_types ?? []).filter((decision) => decision !== 'structured_response');
 }
 
 export function isActionableInterrupt(interrupt: RuntimeInterruptState): boolean {
-  if (interrupt.governance_available === false || interrupt.decision_state === 'recorded') return false;
-  if (interrupt.actionability && interrupt.actionability !== 'actionable') return false;
-  const pending = interrupt.request_lifecycle ? interrupt.request_lifecycle === 'pending' : interrupt.status === 'pending';
+  if (interrupt.governance_available !== true || interrupt.decision_state === 'recorded') return false;
+  if (interrupt.control_mode !== 'framework_binding' && interrupt.control_mode !== 'legacy_token') return false;
+  if (interrupt.actionability !== 'actionable') return false;
+  const pending = interrupt.request_lifecycle === 'pending';
   return pending && supportedDecisions(interrupt).length > 0;
 }
 
@@ -64,6 +68,7 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null,
   const [decisionComment, setDecisionComment] = useState('');
   const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  const decisionIdempotencyKeys = useRef(new Map<string, string>());
 
   const frameSequenceNum = useMemo(() => sequenceNumThroughFrame(snapshots, events, currentFrame), [snapshots, events, currentFrame]);
   useEffect(() => {
@@ -168,7 +173,7 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null,
   const recentDecisions = useMemo(
     () =>
       liveInterrupts
-        .filter((interrupt) => interrupt.status !== 'pending')
+        .filter((interrupt) => interrupt.decision_state === 'recorded')
         .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))
         .slice(0, 5),
     [liveInterrupts],
@@ -178,6 +183,8 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null,
     if (!missionId || !hasFrameScopedCurrentState) return;
     setIsSubmittingDecision(true);
     setDecisionError(null);
+    const idempotencyKey = decisionIdempotencyKeys.current.get(interruptId) ?? crypto.randomUUID();
+    decisionIdempotencyKeys.current.set(interruptId, idempotencyKey);
     try {
       await api.interrupts.decide(
         missionId,
@@ -185,10 +192,11 @@ export function RightSidebar({ missionId, onBranchChange, runtimeSummary = null,
         {
           decision,
           comment: decisionComment.trim() || undefined,
-          idempotency_key: crypto.randomUUID(),
+          idempotency_key: idempotencyKey,
         },
         currentBranchId ?? undefined,
       );
+      decisionIdempotencyKeys.current.delete(interruptId);
       setDecisionComment('');
       refreshEvidence();
       if (currentBranchId && onBranchChange) await onBranchChange(currentBranchId);
@@ -475,7 +483,7 @@ function GovernPanel({ hasFrameScopedCurrentState, isLatestFramePosition, action
 }
 
 function InterruptCard({ interrupt, isSubmitting, onDecision }: { interrupt: RuntimeInterruptState; isSubmitting: boolean; onDecision: (id: string, decision: 'approve' | 'reject' | 'revise' | 'resume') => Promise<void> }) {
-  const frameworkGovernance = interrupt.framework === 'langgraph' || interrupt.framework === 'ms_agent_framework' || Boolean(interrupt.supported_decision_types?.length) || interrupt.actionability !== undefined;
+  const frameworkGovernance = interrupt.control_mode === 'framework_binding';
   const supported = supportedDecisions(interrupt);
   const actionable = isActionableInterrupt(interrupt);
   return (
@@ -490,7 +498,7 @@ function InterruptCard({ interrupt, isSubmitting, onDecision }: { interrupt: Run
           </div>
           <div>
             <dt className="inline">actionability: </dt>
-            <dd className="inline">{interrupt.actionability ?? 'legacy'}</dd>
+            <dd className="inline">{interrupt.actionability ?? 'unavailable'}</dd>
           </div>
           <div>
             <dt className="inline">decision: </dt>
@@ -520,7 +528,7 @@ function InterruptCard({ interrupt, isSubmitting, onDecision }: { interrupt: Run
               Reject
             </button>
           )}
-          {(supported.includes('structured_response') || supported.includes('revise')) && (
+          {supported.includes('revise') && (
             <button type="button" onClick={() => void onDecision(interrupt.interrupt_id, 'revise')} disabled={isSubmitting} className="rounded-sm border border-warning/40 bg-bg-secondary px-2.5 py-1.5 text-[11px] font-medium text-warning disabled:opacity-50">
               Respond
             </button>

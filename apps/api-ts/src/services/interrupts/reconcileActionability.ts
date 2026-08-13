@@ -47,6 +47,10 @@ export interface InterruptGovernanceRow {
   delivery_id?: string | null;
   identity_ambiguous?: boolean | null;
   authorized_binding_id?: string | null;
+  control_mode?: string | null;
+  request_lifecycle?: string | null;
+  status?: string | null;
+  expires_at?: string | Date | null;
   source_refs?: unknown;
 }
 
@@ -100,6 +104,29 @@ export function evaluateActionability(input: {
       actionability: 'observed_only',
       governanceAvailable: true,
       reason: 'binding_without_interrupt',
+    };
+  }
+
+  if (input.interrupt.control_mode !== 'framework_binding') {
+    return {
+      actionability: 'unavailable',
+      governanceAvailable: input.governanceControlAvailable,
+      reason: 'framework_control_binding_not_authoritative',
+    };
+  }
+
+  const requestExpired = input.interrupt.expires_at
+    ? new Date(input.interrupt.expires_at).getTime() <= (input.now ?? new Date()).getTime()
+    : false;
+  if (
+    input.interrupt.request_lifecycle !== 'pending'
+    || requestExpired
+    || ['resumed', 'expired', 'cancelled'].includes(String(input.interrupt.status ?? ''))
+  ) {
+    return {
+      actionability: 'unavailable',
+      governanceAvailable: true,
+      reason: requestExpired ? 'request_expired' : `request_${String(input.interrupt.request_lifecycle ?? input.interrupt.status ?? 'not_pending')}`,
     };
   }
 
@@ -212,7 +239,8 @@ export async function reconcileInterruptActionability(
   const interruptResult = await client.query(
     `
       SELECT interrupt_id, mission_id, branch_id, framework, native_identity,
-             actionability, decision_state, delivery_id, identity_ambiguous, authorized_binding_id
+             actionability, decision_state, delivery_id, identity_ambiguous, authorized_binding_id,
+             control_mode, request_lifecycle, status, expires_at
       FROM interrupts
       WHERE mission_id = $1 AND branch_id = $2 AND interrupt_id = $3
       LIMIT 1
@@ -292,8 +320,12 @@ export async function reconcileInterruptActionability(
       `
         UPDATE interrupts
         SET actionability = $4,
+            request_lifecycle = CASE
+              WHEN request_lifecycle = 'pending' AND expires_at IS NOT NULL AND expires_at <= NOW() THEN 'expired'
+              ELSE request_lifecycle
+            END,
             authorized_binding_id = CASE
-              WHEN $7::boolean THEN authorized_binding_id
+              WHEN decision_state = 'recorded' OR delivery_id IS NOT NULL THEN authorized_binding_id
               ELSE $6::uuid
             END,
             identity_ambiguous = CASE
@@ -310,7 +342,6 @@ export async function reconcileInterruptActionability(
         evaluation.actionability,
         evaluation.actionability === 'identity_conflict',
         evaluation.actionability === 'actionable' ? evaluation.binding?.id ?? null : null,
-        hasRecordedDeliveryAuthority(interruptRow),
       ],
     );
   }

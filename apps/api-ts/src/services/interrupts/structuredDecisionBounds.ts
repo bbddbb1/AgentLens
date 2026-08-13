@@ -9,6 +9,65 @@ export type StructuredDecisionValidationResult =
   | { ok: false; reason: string };
 
 const ALLOWED_TYPES = new Set(['object', 'array', 'string', 'number', 'boolean', 'null']);
+const SUPPORTED_SCHEMA_KEYS = new Set(['type', 'properties', 'required', 'additionalProperties', 'items', 'enum']);
+
+export type StructuredDecisionSchemaSupport =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+function inspectSchema(schema: Record<string, unknown>, depth: number): StructuredDecisionSchemaSupport {
+  if (depth > STRUCTURED_DECISION_MAX_DEPTH) {
+    return { ok: false, reason: `structured decision schema exceeds max nesting depth ${STRUCTURED_DECISION_MAX_DEPTH}` };
+  }
+  for (const key of Object.keys(schema)) {
+    if (!SUPPORTED_SCHEMA_KEYS.has(key)) return { ok: false, reason: `unsupported structured decision schema keyword: ${key}` };
+  }
+  if (typeof schema.type !== 'string' || !ALLOWED_TYPES.has(schema.type)) {
+    return { ok: false, reason: 'structured decision schema requires one supported explicit type' };
+  }
+  if (schema.enum !== undefined && (!Array.isArray(schema.enum) || schema.enum.length === 0)) {
+    return { ok: false, reason: 'structured decision schema enum must be a non-empty array' };
+  }
+  if (schema.type === 'object') {
+    if (!schema.properties || typeof schema.properties !== 'object' || Array.isArray(schema.properties)) {
+      return { ok: false, reason: 'object structured decision schema requires properties' };
+    }
+    if (schema.additionalProperties !== false) {
+      return { ok: false, reason: 'object structured decision schema must reject undeclared properties' };
+    }
+    if (schema.required !== undefined && !Array.isArray(schema.required)) {
+      return { ok: false, reason: 'object structured decision schema required must be an array' };
+    }
+    const properties = schema.properties as Record<string, unknown>;
+    const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : []);
+    if ([...required].some((key) => !(key in properties))) {
+      return { ok: false, reason: 'object structured decision schema requires an undeclared property' };
+    }
+    for (const property of Object.values(properties)) {
+      if (!property || typeof property !== 'object' || Array.isArray(property)) {
+        return { ok: false, reason: 'structured decision property schema must be an object' };
+      }
+      const nested = inspectSchema(property as Record<string, unknown>, depth + 1);
+      if (!nested.ok) return nested;
+    }
+  }
+  if (schema.type === 'array') {
+    if (!schema.items || typeof schema.items !== 'object' || Array.isArray(schema.items)) {
+      return { ok: false, reason: 'array structured decision schema requires one item schema' };
+    }
+    return inspectSchema(schema.items as Record<string, unknown>, depth + 1);
+  }
+  return { ok: true };
+}
+
+export function supportsStructuredDecisionSchema(
+  schema: Record<string, unknown> | undefined,
+): StructuredDecisionSchemaSupport {
+  if (!schema || Object.keys(schema).length === 0) {
+    return { ok: false, reason: 'structured response is unavailable without an explicit safe input schema' };
+  }
+  return inspectSchema(schema, 0);
+}
 
 function jsonType(value: unknown): string {
   if (value === null) return 'null';
@@ -62,6 +121,9 @@ function matchesSimpleSchema(value: unknown, schema: Record<string, unknown> | u
     if (expectedType === 'boolean' && actual !== 'boolean') return 'value does not match schema type boolean';
     if (expectedType === 'null' && actual !== 'null') return 'value does not match schema type null';
   }
+  if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value))) {
+    return 'value is not one of the declared schema enum values';
+  }
   if (schema.type === 'object' && schema.properties && typeof value === 'object' && value && !Array.isArray(value)) {
     const properties = schema.properties as Record<string, Record<string, unknown>>;
     const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
@@ -73,6 +135,17 @@ function matchesSimpleSchema(value: unknown, schema: Record<string, unknown> | u
         const nested = matchesSimpleSchema((value as Record<string, unknown>)[key], propSchema);
         if (nested) return nested;
       }
+    }
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value as Record<string, unknown>)) {
+        if (!(key in properties)) return `undeclared property ${key} is not allowed`;
+      }
+    }
+  }
+  if (schema.type === 'array' && Array.isArray(value) && schema.items && typeof schema.items === 'object') {
+    for (const item of value) {
+      const nested = matchesSimpleSchema(item, schema.items as Record<string, unknown>);
+      if (nested) return nested;
     }
   }
   return undefined;
@@ -87,7 +160,7 @@ export function validateStructuredDecisionValue(
   schema?: Record<string, unknown>,
 ): StructuredDecisionValidationResult {
   if (value === undefined) {
-    return { ok: true, value: undefined, summary: { kind: 'empty' } };
+    return { ok: false, reason: 'structured decision value is required' };
   }
   const boundsError = walkBounds(value, 0);
   if (boundsError) return { ok: false, reason: boundsError };
@@ -105,6 +178,10 @@ export function validateStructuredDecisionValue(
     };
   }
 
+  if (schema) {
+    const support = supportsStructuredDecisionSchema(schema);
+    if (!support.ok) return support;
+  }
   const schemaError = matchesSimpleSchema(value, schema);
   if (schemaError) return { ok: false, reason: schemaError };
 

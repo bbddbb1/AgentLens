@@ -1,6 +1,7 @@
 import type { InterruptRecord } from '@agentlens/protocol';
 import { isLangGraphGovernanceControlAvailable, isMafGovernanceControlAvailable } from '../../config/features.js';
 import { materializeGovernanceState, parseGovernanceStateHistory } from './governanceState.js';
+import { controlModeFromRow, effectiveFrameworkDecisionTypes } from './controlAuthority.js';
 
 const SENSITIVE_PAYLOAD_KEYS = new Set([
   'resume_token',
@@ -50,11 +51,6 @@ function scrubRecord(value: Record<string, unknown> | undefined): Record<string,
   return out;
 }
 
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map(String);
-}
-
 /**
  * Map a DB interrupt row into the public InterruptRecord shape without private
  * binding/claim/control fields. Legacy rows default to non-actionable observation.
@@ -64,13 +60,17 @@ export function mapInterruptRowToRecord(
   options?: { governanceEnabled?: boolean },
 ): InterruptRecord & { branch_id?: string } {
   const framework = row.framework ? String(row.framework) : undefined;
-  const governanceEnabled = options?.governanceEnabled ?? (
+  const controlMode = controlModeFromRow(row);
+  const legacyControl = controlMode === 'legacy_token' && !framework && !row.native_identity;
+  const frameworkDeploymentAvailable = options?.governanceEnabled ?? (
     framework === 'ms_agent_framework'
       ? isMafGovernanceControlAvailable()
       : framework === 'langgraph'
         ? isLangGraphGovernanceControlAvailable()
         : false
   );
+  const governanceEnabled = legacyControl
+    || (controlMode === 'framework_binding' && frameworkDeploymentAvailable);
   const governanceHistory = parseGovernanceStateHistory(row.governance_state_history);
   const historyState = governanceHistory.length > 0
     ? materializeGovernanceState(governanceHistory)
@@ -84,11 +84,15 @@ export function mapInterruptRowToRecord(
   const runtimeOutcome = historyState?.runtime_outcome
     ?? (row.runtime_outcome ? String(row.runtime_outcome) : undefined)
     ?? 'unknown';
-  const actionability =
-    (row.actionability ? String(row.actionability) : undefined) ?? 'observed_only';
   const requestLifecycle = historyState?.request_lifecycle
     ?? (row.request_lifecycle ? String(row.request_lifecycle) : undefined)
     ?? 'pending';
+  const legacyPending = requestLifecycle === 'pending'
+    && !['resumed', 'expired', 'cancelled'].includes(String(row.status ?? ''))
+    && (!row.expires_at || new Date(String(row.expires_at)).getTime() > Date.now());
+  const actionability = legacyControl
+    ? (legacyPending ? 'actionable' : 'unavailable')
+    : (row.actionability ? String(row.actionability) : undefined) ?? 'observed_only';
 
   const record: InterruptRecord & { branch_id?: string } = {
     id: String(row.id),
@@ -119,7 +123,9 @@ export function mapInterruptRowToRecord(
     // disabled, even if a historical row still stores actionable.
     actionability: (governanceEnabled ? actionability : 'unavailable') as InterruptRecord['actionability'],
     request_type: row.request_type ? String(row.request_type) : undefined,
-    supported_decision_types: asStringArray(row.supported_decision_types) as InterruptRecord['supported_decision_types'],
+    supported_decision_types: legacyControl
+      ? []
+      : effectiveFrameworkDecisionTypes(row),
     safe_prompt: row.safe_prompt ? String(row.safe_prompt) : undefined,
     safe_input_schema: (row.safe_input_schema as Record<string, unknown>) ?? undefined,
     decision_state: decisionState as InterruptRecord['decision_state'],
@@ -135,6 +141,7 @@ export function mapInterruptRowToRecord(
       : Array.isArray(row.governance_diagnostics)
         ? row.governance_diagnostics.map(String)
         : undefined,
+    control_mode: controlMode,
     framework,
     governance_available: governanceEnabled,
   };
@@ -183,6 +190,7 @@ export function serializeInterruptPublic(
     delivery_id: interrupt.delivery_id,
     runtime_outcome: interrupt.runtime_outcome,
     governance_diagnostics: interrupt.governance_diagnostics,
+    control_mode: interrupt.control_mode,
     framework: interrupt.framework,
     governance_available: interrupt.governance_available === true,
   };

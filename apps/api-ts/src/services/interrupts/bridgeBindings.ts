@@ -56,6 +56,25 @@ export async function registerBridgeBinding(
     ?? input.nativeIdentity.interrupt_request_id
     ?? input.interruptId;
 
+  // Serialize binding replacement with decision authority selection for the
+  // same request. A registration racing a decision must observe whether the
+  // decision froze the current binding before revoking it.
+  await client.query(
+    `SELECT interrupt_id FROM interrupts
+     WHERE mission_id = $1
+       AND branch_id = $2
+       AND (
+         ($3::text IS NOT NULL AND interrupt_id = $3)
+         OR ($4::text IS NOT NULL AND (
+           native_identity ->> 'interaction_request_id' = $4
+           OR native_identity ->> 'interrupt_request_id' = $4
+           OR interrupt_id = $4
+         ))
+       )
+     FOR UPDATE`,
+    [input.missionId, input.branchId, input.interruptId ?? null, interactionRequestId ?? null],
+  );
+
   // Keep an observed request's selected binding alive. Later registrations may
   // replace only unselected bindings, never its claim authority.
   await client.query(
@@ -78,6 +97,7 @@ export async function registerBridgeBinding(
           WHERE observed.mission_id = previous.mission_id
             AND observed.branch_id = previous.branch_id
             AND observed.authorized_binding_id = previous.id
+            AND (observed.decision_state = 'recorded' OR observed.delivery_id IS NOT NULL)
         )
     `,
     [input.missionId, input.branchId, interactionRequestId ?? null, input.interruptId ?? null, framework],

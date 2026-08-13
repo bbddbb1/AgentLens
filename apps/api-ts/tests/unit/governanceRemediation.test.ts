@@ -9,6 +9,9 @@ const baseInterrupt = {
   mission_id: 'm1',
   branch_id: 'main',
   framework: 'langgraph',
+  control_mode: 'framework_binding',
+  request_lifecycle: 'pending',
+  status: 'pending',
   native_identity: {
     mission_id: 'm1',
     branch_id: 'main',
@@ -122,6 +125,27 @@ describe('authoritative actionability evaluation', () => {
       binding: { ...liveBinding, lifecycle_state: 'revoked' },
     });
     expect(result.actionability).toBe('observed_only');
+  });
+
+  it('expired or non-pending requests are never actionable', () => {
+    expect(evaluateActionability({
+      governanceControlAvailable: true,
+      interrupt: { ...baseInterrupt, expires_at: new Date(Date.now() - 1000).toISOString() },
+      binding: liveBinding,
+    })).toMatchObject({ actionability: 'unavailable', reason: 'request_expired' });
+    expect(evaluateActionability({
+      governanceControlAvailable: true,
+      interrupt: { ...baseInterrupt, request_lifecycle: 'resolved' },
+      binding: liveBinding,
+    }).actionability).toBe('unavailable');
+  });
+
+  it('does not infer framework control authority from missing metadata', () => {
+    expect(evaluateActionability({
+      governanceControlAvailable: true,
+      interrupt: { ...baseInterrupt, control_mode: undefined },
+      binding: liveBinding,
+    }).actionability).toBe('unavailable');
   });
 
   it('ambiguous native identity blocks control', () => {

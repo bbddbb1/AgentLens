@@ -12,6 +12,9 @@ const baseInterrupt = {
   mission_id: 'm1',
   branch_id: 'main',
   framework: 'langgraph',
+  control_mode: 'framework_binding',
+  request_lifecycle: 'pending',
+  status: 'pending',
   native_identity: {
     mission_id: 'm1',
     branch_id: 'main',
