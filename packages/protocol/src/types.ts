@@ -685,6 +685,7 @@ export interface InterruptRecord {
   delivery_state?: InterruptDeliveryState;
   delivery_id?: string;
   runtime_outcome?: InterruptRuntimeOutcome;
+  governance_diagnostics?: string[];
   framework?: string;
   governance_available?: boolean;
 }
@@ -812,6 +813,7 @@ export interface RuntimeInterruptState {
   decision_state?: InterruptDecisionState;
   delivery_state?: InterruptDeliveryState;
   runtime_outcome?: InterruptRuntimeOutcome;
+  governance_diagnostics?: string[];
   governance_available?: boolean;
   framework?: string;
   safe_prompt?: string;

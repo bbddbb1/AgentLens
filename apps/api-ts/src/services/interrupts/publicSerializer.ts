@@ -1,5 +1,6 @@
 import type { InterruptRecord } from '@agentlens/protocol';
 import { isLangGraphGovernanceControlAvailable, isMafGovernanceControlAvailable } from '../../config/features.js';
+import { materializeGovernanceState, parseGovernanceStateHistory } from './governanceState.js';
 
 const SENSITIVE_PAYLOAD_KEYS = new Set([
   'resume_token',
@@ -70,17 +71,24 @@ export function mapInterruptRowToRecord(
         ? isLangGraphGovernanceControlAvailable()
         : false
   );
-  const decisionState =
-    (row.decision_state ? String(row.decision_state) : undefined)
+  const governanceHistory = parseGovernanceStateHistory(row.governance_state_history);
+  const historyState = governanceHistory.length > 0
+    ? materializeGovernanceState(governanceHistory)
+    : undefined;
+  const decisionState = historyState?.decision_state
+    ?? (row.decision_state ? String(row.decision_state) : undefined)
     ?? (row.decision || row.decision_id ? 'recorded' : 'none');
-  const deliveryState =
-    (row.delivery_state ? String(row.delivery_state) : undefined) ?? 'not_requested';
-  const runtimeOutcome =
-    (row.runtime_outcome ? String(row.runtime_outcome) : undefined) ?? 'unknown';
+  const deliveryState = historyState?.delivery_state
+    ?? (row.delivery_state ? String(row.delivery_state) : undefined)
+    ?? 'not_requested';
+  const runtimeOutcome = historyState?.runtime_outcome
+    ?? (row.runtime_outcome ? String(row.runtime_outcome) : undefined)
+    ?? 'unknown';
   const actionability =
     (row.actionability ? String(row.actionability) : undefined) ?? 'observed_only';
-  const requestLifecycle =
-    (row.request_lifecycle ? String(row.request_lifecycle) : undefined) ?? 'pending';
+  const requestLifecycle = historyState?.request_lifecycle
+    ?? (row.request_lifecycle ? String(row.request_lifecycle) : undefined)
+    ?? 'pending';
 
   const record: InterruptRecord & { branch_id?: string } = {
     id: String(row.id),
@@ -122,6 +130,11 @@ export function mapInterruptRowToRecord(
     delivery_state: deliveryState as InterruptRecord['delivery_state'],
     delivery_id: row.delivery_id ? String(row.delivery_id) : undefined,
     runtime_outcome: runtimeOutcome as InterruptRecord['runtime_outcome'],
+    governance_diagnostics: historyState?.governance_diagnostics.length
+      ? historyState.governance_diagnostics
+      : Array.isArray(row.governance_diagnostics)
+        ? row.governance_diagnostics.map(String)
+        : undefined,
     framework,
     governance_available: governanceEnabled,
   };
@@ -169,6 +182,7 @@ export function serializeInterruptPublic(
     delivery_state: interrupt.delivery_state,
     delivery_id: interrupt.delivery_id,
     runtime_outcome: interrupt.runtime_outcome,
+    governance_diagnostics: interrupt.governance_diagnostics,
     framework: interrupt.framework,
     governance_available: interrupt.governance_available === true,
   };

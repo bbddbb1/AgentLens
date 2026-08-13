@@ -637,6 +637,16 @@ function classifyCanonicalActivity(
     semantic_outcome: fact.observation.outcome,
   } satisfies Omit<ActivityEventProjection, 'phase' | 'completed_status'>;
 
+  if (event.event_type === 'interrupt.decision') {
+    const decision = redactableValue(event, payload.decision ?? payload.comment ?? payload.decision_payload);
+    return {
+      ...base,
+      phase: 'start',
+      completed_status: 'waiting',
+      outputs: decision === undefined ? undefined : { decision },
+    };
+  }
+
   if (fact.observation.lifecycle === 'failed' || fact.observation.outcome === 'failure') {
     return {
       ...base,
@@ -753,6 +763,14 @@ function classifyEventActivity(event: EventEnvelope): ActivityEventProjection | 
           : { reason: redactableValue(event, stringValue(payload, 'reason', 'gen_ai.agent.interrupt.reason'))! },
       };
     case 'interrupt.decision':
+      return {
+        ...base,
+        phase: 'start',
+        completed_status: 'waiting',
+        outputs: redactableValue(event, payload.decision ?? payload.comment ?? payload.decision_payload) === undefined
+          ? undefined
+          : { decision: redactableValue(event, payload.decision ?? payload.comment ?? payload.decision_payload)! },
+      };
     case 'interrupt.resumed':
       return {
         ...base,
@@ -1135,7 +1153,10 @@ export function projectRuntimeExplanation(
     if (event.event_type === 'interrupt.requested' && interruptId) {
       pendingInterrupts.set(interruptId, evidenceRef(event));
     }
-    if ((event.event_type === 'interrupt.decision' || event.event_type === 'interrupt.resumed') && interruptId) {
+    if (event.event_type === 'interrupt.resumed' && interruptId) {
+      pendingInterrupts.delete(interruptId);
+    }
+    if (metadata.governance_runtime_terminal === true && interruptId) {
       pendingInterrupts.delete(interruptId);
     }
 
@@ -1627,19 +1648,16 @@ export function projectRuntimeExplanation(
       .map((entry) => entry.ref))
     : [];
   const hasTerminalConflict = terminalStates.size > 1;
-  const hasWaitingTerminalConflict = pendingInterrupts.size > 0 && terminalStates.size > 0;
   let runOutcome: RuntimeExplanationRunOutcome;
   let runOutcomeProvenance: RuntimeFactProvenance;
-  if (hasTerminalConflict || hasWaitingTerminalConflict) {
+  if (hasTerminalConflict) {
     runOutcome = 'unknown';
-    const conflictRefs = dedupeRefs([...terminalRefs, ...pendingInterruptRefs]);
+    const conflictRefs = terminalRefs;
     runOutcomeProvenance = factProvenance(conflictRefs, 'unknown', 'inconsistent');
     flags.push(createFlag(
       'run_evidence_conflict',
       'error',
-      hasWaitingTerminalConflict
-        ? 'Terminal run evidence conflicts with an unresolved waiting interaction at this frame.'
-        : 'Recorded run-terminal evidence contains conflicting outcomes.',
+      'Recorded run-terminal evidence contains conflicting outcomes.',
       conflictRefs,
     ));
   } else if (terminalStates.has('failed')) {

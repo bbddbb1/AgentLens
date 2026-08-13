@@ -266,6 +266,7 @@ export async function initializeDatabase(): Promise<void> {
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS requested_admission_seq INTEGER`,
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS decided_admission_seq INTEGER`,
     `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS resumed_admission_seq INTEGER`,
+    `ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS governance_state_history JSONB NOT NULL DEFAULT '[]'::jsonb`,
   ]) {
     await pool.query(statement).catch(() => {});
   }
@@ -281,7 +282,6 @@ export async function initializeDatabase(): Promise<void> {
     )
     WHERE requested_evidence = '{}'::jsonb
   `);
-
   await pool.query(`
     CREATE TABLE IF NOT EXISTS langgraph_bridge_bindings (
       id UUID PRIMARY KEY,
@@ -305,7 +305,6 @@ export async function initializeDatabase(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_langgraph_bridge_bindings_scope
     ON langgraph_bridge_bindings (mission_id, branch_id, lifecycle_state, lease_expires_at)
@@ -526,6 +525,59 @@ export async function initializeDatabase(): Promise<void> {
     FROM missions
     ON CONFLICT (mission_id) DO UPDATE
     SET next_seq = GREATEST(evidence_admission_counters.next_seq, EXCLUDED.next_seq)
+  `);
+  // R0-C1 compatibility backfill after admissions exist. Only transitions
+  // whose historical admissions are known are reconstructed. Aggregate
+  // delivery/outcome values without their original transition time remain
+  // unknown instead of being backdated into the decision frame.
+  await pool.query(`
+    UPDATE interrupts
+    SET governance_state_history =
+      CASE WHEN requested_admission_seq IS NULL THEN '[]'::jsonb ELSE
+        jsonb_build_array(
+          jsonb_build_object(
+            'transition_id', 'request:' || requested_admission_seq || ':pending:interrupt_request',
+            'admission_seq', requested_admission_seq, 'axis', 'request', 'state', 'pending',
+            'recorded_at', created_at, 'source', 'interrupt_request'
+          ),
+          jsonb_build_object(
+            'transition_id', 'runtime:' || requested_admission_seq || ':awaiting_interaction:interrupt_request',
+            'admission_seq', requested_admission_seq, 'axis', 'runtime', 'state', 'awaiting_interaction',
+            'recorded_at', created_at, 'source', 'interrupt_request'
+          )
+        )
+      END
+      || CASE WHEN decided_admission_seq IS NULL OR (decision IS NULL AND decision_state <> 'recorded') THEN '[]'::jsonb ELSE
+        jsonb_build_array(
+          jsonb_build_object(
+            'transition_id', 'decision:' || decided_admission_seq || ':recorded:operator_decision',
+            'admission_seq', decided_admission_seq, 'axis', 'decision', 'state', 'recorded',
+            'recorded_at', COALESCE(decided_at, updated_at), 'source', 'operator_decision'
+          ),
+          jsonb_build_object(
+            'transition_id', 'delivery:' || decided_admission_seq || ':' ||
+              CASE WHEN delivery_state = 'not_requested' THEN 'not_requested' ELSE 'unknown' END || ':delivery_attempt',
+            'admission_seq', decided_admission_seq, 'axis', 'delivery',
+            'state', CASE WHEN delivery_state = 'not_requested' THEN 'not_requested' ELSE 'unknown' END,
+            'recorded_at', COALESCE(decided_at, updated_at), 'source', 'delivery_attempt'
+          )
+        )
+      END
+      || CASE WHEN resumed_admission_seq IS NULL THEN '[]'::jsonb ELSE
+        jsonb_build_array(
+          jsonb_build_object(
+            'transition_id', 'runtime:' || resumed_admission_seq || ':resumed:legacy_resume',
+            'admission_seq', resumed_admission_seq, 'axis', 'runtime', 'state', 'resumed',
+            'recorded_at', COALESCE(resumed_at, updated_at), 'source', 'legacy_resume'
+          ),
+          jsonb_build_object(
+            'transition_id', 'request:' || resumed_admission_seq || ':resolved:legacy_resume',
+            'admission_seq', resumed_admission_seq, 'axis', 'request', 'state', 'resolved',
+            'recorded_at', COALESCE(resumed_at, updated_at), 'source', 'legacy_resume'
+          )
+        )
+      END
+    WHERE governance_state_history = '[]'::jsonb
   `);
 
   await pool.query(`

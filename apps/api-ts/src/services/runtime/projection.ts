@@ -16,6 +16,7 @@ import { normalizeSpansToFacts } from './normalization/index.js';
 import { originFrameworkFromAttrs } from './normalization/agentLensCompat.js';
 import { assembleModelProvenance } from './normalization/otelGenAi.js';
 import { publicRuntimeIdentity, publicSpanStartAttributes, publicTelemetryAttributes, publicTelemetryName } from './normalization/publicMetadata.js';
+import { materializeGovernanceState, parseGovernanceStateHistory } from '../interrupts/governanceState.js';
 
 export type MaturityTier = 'L1' | 'L2' | 'L3';
 
@@ -240,14 +241,14 @@ function canonicalActivityMetadata(
   };
 }
 
-function canonicalInterruptActivity(interruptId: string, lifecycle: 'started' | 'completed'): CanonicalActivitySummary {
+function canonicalInterruptActivity(interruptId: string, lifecycle: 'started' | 'completed' | 'failed'): CanonicalActivitySummary {
   return {
     id: `human:${interruptId}`,
     kind: 'human',
     invocation_id: interruptId,
     identity_basis: 'explicit_invocation',
     lifecycle,
-    outcome: 'unknown',
+    outcome: lifecycle === 'failed' ? 'failure' : 'unknown',
   };
 }
 
@@ -261,6 +262,28 @@ function parseAttrJson(val: any): any {
     }
   }
   return val;
+}
+
+function publicInterruptPayload(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const lowered = key.toLowerCase();
+    if (
+      lowered.includes('token')
+      || lowered.includes('secret')
+      || lowered.includes('control_ref')
+      || lowered.includes('checkpoint')
+      || lowered.includes('workflow_state')
+      || lowered.includes('queue')
+      || lowered === 'authorized_binding_id'
+      || lowered === 'claiming_binding_id'
+    ) continue;
+    out[key] = entry && typeof entry === 'object' && !Array.isArray(entry)
+      ? publicInterruptPayload(entry)
+      : entry;
+  }
+  return out;
 }
 
 function normalizeCausalContext(
@@ -950,6 +973,7 @@ export function projectRuntimeStateAtFrame(
   branchId: string,
   events: readonly MissionEventRecord[],
   snapshot: GraphSnapshot,
+  interrupts: readonly Record<string, any>[] = [],
 ): NonNullable<ReplayStateResponse['current_state']> {
   const frameEvents = eventsThroughCursor(events, snapshot.sequence_num);
   const runtimeAgents = buildRuntimeAgentsFromEvents(frameEvents, 'Unknown');
@@ -977,6 +1001,50 @@ export function projectRuntimeStateAtFrame(
       current.decision = 'resume';
     }
     current.updated_at = event.timestamp;
+    interruptsRecord[interruptId] = current;
+  }
+
+  for (const interrupt of interrupts) {
+    const requestedAdmission = Number(interrupt.requested_admission_seq ?? 0);
+    if (!requestedAdmission || requestedAdmission > snapshot.sequence_num) continue;
+    const interruptId = String(interrupt.interrupt_id ?? '');
+    if (!interruptId) continue;
+    const requestedEvidence = interrupt.requested_evidence && typeof interrupt.requested_evidence === 'object'
+      ? interrupt.requested_evidence as Record<string, any>
+      : {};
+    const axes = materializeGovernanceState(interrupt.governance_state_history, snapshot.sequence_num);
+    const current = interruptsRecord[interruptId] ?? {
+      interrupt_id: interruptId,
+      status: 'pending',
+      reason: String(requestedEvidence.reason ?? interrupt.reason ?? ''),
+      agent_id: requestedEvidence.agent_id ?? interrupt.agent_id ?? undefined,
+      span_id: interrupt.span_id ?? undefined,
+      payload: publicInterruptPayload(requestedEvidence.payload ?? {}),
+      updated_at: interrupt.created_at,
+    };
+    current.request_lifecycle = axes.request_lifecycle;
+    current.decision_state = axes.decision_state;
+    current.delivery_state = axes.delivery_state;
+    current.runtime_outcome = axes.runtime_outcome;
+    current.governance_diagnostics = axes.governance_diagnostics;
+    current.framework = interrupt.framework ?? undefined;
+    const lastAdmission = Math.max(
+      ...events.map((event) => event.sequence_num),
+      ...interrupts.flatMap((candidate) => parseGovernanceStateHistory(candidate.governance_state_history)
+        .map((transition) => transition.admission_seq)),
+      0,
+    );
+    const liveFrame = snapshot.sequence_num === lastAdmission;
+    current.governance_available = liveFrame && interrupt.governance_available === true;
+    current.actionability = liveFrame
+      ? interrupt.actionability ?? 'observed_only'
+      : 'unavailable';
+    current.supported_decision_types = liveFrame ? interrupt.supported_decision_types ?? [] : [];
+    current.safe_prompt = liveFrame ? interrupt.safe_prompt ?? undefined : undefined;
+    if (axes.decision_state === 'recorded') {
+      current.decision = interrupt.decision ?? current.decision;
+      current.decision_comment = interrupt.decision_comment ?? current.decision_comment;
+    }
     interruptsRecord[interruptId] = current;
   }
 
@@ -1256,7 +1324,7 @@ export function projectReplayEvidence(
         interrupt_id: requestedEvidence.interrupt_id ?? intr.interrupt_id,
         reason: requestedEvidence.reason ?? intr.reason,
         resume_url: requestedEvidence.resume_url ?? intr.resume_url,
-        ...(requestedEvidence.payload ?? intr.payload ?? {}),
+        ...publicInterruptPayload(requestedEvidence.payload ?? intr.payload ?? {}),
       },
       metadata: {
         runtime_timestamp_unix_nano: String(BigInt(new Date(intr.created_at).getTime()) * 1_000_000n),
@@ -1293,7 +1361,9 @@ export function projectReplayEvidence(
           runtime_timestamp_unix_nano: String(BigInt(new Date(intr.decided_at).getTime()) * 1_000_000n),
           evidence_admission_seq: decidedAdmission,
           evidence_admitted_at: intr.decided_admitted_at ?? decidedIso,
-          ...canonicalActivityMetadata(canonicalInterruptActivity(String(intr.interrupt_id), 'completed')),
+          // A recorded decision is Governance evidence, not Runtime continuation.
+          // Keep the interaction activity waiting until explicit Runtime evidence.
+          ...canonicalActivityMetadata(canonicalInterruptActivity(String(intr.interrupt_id), 'started')),
         },
         causal: {
           parent_span_id: runtimeSpanId,
@@ -1337,6 +1407,84 @@ export function projectReplayEvidence(
         source_event_id: 'interrupt.resumed',
       } as any);
     }
+
+    for (const transition of parseGovernanceStateHistory(intr.governance_state_history)) {
+      if (transition.axis === 'delivery') {
+        // Delivery is frame evidence, but it carries no Runtime lifecycle
+        // meaning. Project an observation so every frame surface receives the
+        // same admission timestamp without turning delivery into continuation.
+        events.push({
+          id: `interrupt-${intr.interrupt_id}-delivery-${transition.admission_seq}-${transition.state}`,
+          mission_id: missionId,
+          branch_id: interruptBranchId,
+          sequence_num: transition.admission_seq,
+          branch_sequence_num: transition.admission_seq,
+          event_type: 'observation.recorded',
+          timestamp: transition.recorded_at,
+          agent_id: intr.agent_id ?? undefined,
+          span_id: runtimeSpanId,
+          trace_id: traceId,
+          payload: {
+            interrupt_id: intr.interrupt_id,
+            delivery_state: transition.state,
+          },
+          metadata: {
+            runtime_timestamp_unix_nano: String(BigInt(new Date(transition.recorded_at).getTime()) * 1_000_000n),
+            evidence_admission_seq: transition.admission_seq,
+            evidence_admitted_at: transition.recorded_at,
+          },
+          source_span_id: intr.span_id ?? undefined,
+          source_event_id: 'observation.recorded',
+        } as any);
+        continue;
+      }
+      if (transition.axis !== 'runtime') continue;
+      if (transition.state === 'awaiting_interaction' || transition.state === 'unknown') continue;
+      const alreadyProjected = events.some((event) =>
+        event.sequence_num === transition.admission_seq
+        && event.event_type === 'interrupt.resumed'
+        && String(event.payload?.interrupt_id ?? '') === String(intr.interrupt_id),
+      );
+      if (alreadyProjected) continue;
+      const failed = transition.state === 'failed';
+      const terminalEventType = transition.state === 'resumed' || transition.state === 'continued_with_input'
+        ? 'interrupt.resumed'
+        : 'observation.recorded';
+      events.push({
+        id: `interrupt-${intr.interrupt_id}-runtime-${transition.admission_seq}-${transition.state}`,
+        mission_id: missionId,
+        branch_id: interruptBranchId,
+        sequence_num: transition.admission_seq,
+        branch_sequence_num: transition.admission_seq,
+        event_type: terminalEventType,
+        timestamp: transition.recorded_at,
+        agent_id: intr.agent_id ?? undefined,
+        span_id: runtimeSpanId,
+        trace_id: traceId,
+        payload: {
+          interrupt_id: intr.interrupt_id,
+          runtime_outcome: transition.state,
+        },
+        metadata: {
+          runtime_timestamp_unix_nano: String(BigInt(new Date(transition.recorded_at).getTime()) * 1_000_000n),
+          evidence_admission_seq: transition.admission_seq,
+          evidence_admitted_at: transition.recorded_at,
+          governance_runtime_terminal: true,
+          // Failure terminates the Runtime, not the already-completed human
+          // interaction. Avoid creating a contradictory second activity
+          // terminal when failure follows an explicit resume.
+          ...(!failed
+            ? canonicalActivityMetadata(canonicalInterruptActivity(String(intr.interrupt_id), 'completed'))
+            : {}),
+          ...(failed ? {
+            runtime_lifecycle: 'failed',
+            runtime_lifecycle_basis: 'recorded_event',
+          } : {}),
+        },
+        source_span_id: intr.span_id ?? undefined,
+        source_event_id: terminalEventType,
+      } as any);
+    }
   }
 
   // Admission controls membership; source nanoseconds control presentation.
@@ -1349,7 +1497,13 @@ export function projectReplayEvidence(
     return a.id.localeCompare(b.id);
   });
 
-  const admissionCursors = [...new Set(events.map((event) => event.sequence_num))].sort((a, b) => a - b);
+  const governanceTransitions = interrupts.flatMap((interrupt) =>
+    parseGovernanceStateHistory(interrupt.governance_state_history),
+  );
+  const admissionCursors = [...new Set([
+    ...events.map((event) => event.sequence_num),
+    ...governanceTransitions.map((transition) => transition.admission_seq),
+  ])].sort((a, b) => a - b);
   const snapshots = admissionCursors.map((cursor) => {
     const frameSpans = scopeSpanIdsForBranchView(materializeSpanRevisions(admittedSpans, cursor), branchId);
     const snapshot = projectTraceSnapshot(missionId, branchId, frameSpans);
@@ -1360,15 +1514,18 @@ export function projectReplayEvidence(
         right.metadata?.runtime_timestamp_unix_nano ?? right.timestamp,
       ) || left.id.localeCompare(right.id));
     const representative = admittedEvents[0];
+    const governanceRepresentative = governanceTransitions.find((transition) => transition.admission_seq === cursor);
     snapshot.id = `snap-${cursor}`;
     snapshot.sequence_num = cursor;
     snapshot.source_event_sequence_num = cursor;
-    snapshot.timestamp = representative?.timestamp ?? '1970-01-01T00:00:00.000Z';
+    snapshot.timestamp = representative?.timestamp ?? governanceRepresentative?.recorded_at ?? '1970-01-01T00:00:00.000Z';
     snapshot.source_event_id = representative?.id;
     snapshot.event_type = representative?.event_type;
     snapshot.event_description = representative
       ? `Evidence admitted: ${representative.event_type}`
-      : 'Evidence admitted';
+      : governanceRepresentative
+        ? `Governance evidence admitted: ${governanceRepresentative.axis}`
+        : 'Evidence admitted';
     return snapshot;
   });
   if (snapshots.length === 0) {
@@ -1414,7 +1571,7 @@ export function projectReplayEvidence(
     ],
     events,
     snapshots,
-    current_state: projectRuntimeStateAtFrame(missionId, branchId, events, lastSnapshot),
+    current_state: projectRuntimeStateAtFrame(missionId, branchId, events, lastSnapshot, interrupts),
   };
 }
 

@@ -468,7 +468,7 @@ export function applyEventToScratch(scratch: MissionProjectionScratch, event: Mi
     const interruptId = payloadString(payload, 'interrupt_id') ?? event.span_id;
     if (interruptId) {
       const current = scratch.interrupts.get(interruptId) ?? { status: 'pending' };
-      current.status = payloadString(payload, 'decision') ?? 'decided';
+      current.status = 'pending';
       scratch.interrupts.set(interruptId, current);
     }
   } else if (event.event_type === 'interrupt.resumed') {

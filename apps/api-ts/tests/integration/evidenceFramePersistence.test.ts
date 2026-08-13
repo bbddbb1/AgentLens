@@ -3,12 +3,17 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eventsThroughCursor, OtlpIngestRequestSchema } from '@agentlens/protocol';
 import { initializeDatabase, pool } from '../../src/db/postgres.js';
 import { missionStore } from '../../src/services/missionStore.js';
+import { registerBridgeBinding } from '../../src/services/interrupts/bridgeBindings.js';
+import { applyRuntimeOutcome, claimDelivery, postDeliveryReceipt } from '../../src/services/interrupts/deliveryLifecycle.js';
+import { parseGovernanceStateHistory } from '../../src/services/interrupts/governanceState.js';
+import { reconcileInterruptActionability } from '../../src/services/interrupts/reconcileActionability.js';
 
 const hasTestDatabase = Boolean(process.env.AGENTLENS_TEST_DATABASE_URL);
 const suite = hasTestDatabase ? describe : describe.skip;
 
 suite('R0-A PostgreSQL evidence/frame foundation', () => {
   const missionId = randomUUID();
+  let governanceMissionId = '';
   let childBranchId = '';
 
   beforeAll(async () => {
@@ -17,6 +22,7 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
 
   afterAll(async () => {
     await missionStore.deleteMission(missionId).catch(() => false);
+    if (governanceMissionId) await missionStore.deleteMission(governanceMissionId).catch(() => false);
     await pool.end();
   });
 
@@ -79,7 +85,7 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
 
     const after = await missionStore.getReplayFromTelemetry(missionId, 'main');
     expect(after?.snapshots.find((snapshot) => snapshot.sequence_num === 2)).toEqual(publishedSnapshot);
-    expect(eventsThroughCursor(after?.events ?? [], 2)).toEqual(publishedEvents);
+    expect(structuredClone(eventsThroughCursor(after?.events ?? [], 2))).toEqual(publishedEvents);
     expect(eventsThroughCursor(after?.events ?? [], 2).some((event) => event.source_span_id === 'late')).toBe(false);
     expect(eventsThroughCursor(after?.events ?? [], 4).some((event) => event.source_span_id === 'late')).toBe(true);
     expect(eventsThroughCursor(after?.events ?? [], 2).some((event) => event.event_type === 'tool.completed')).toBe(false);
@@ -89,7 +95,7 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
     const explanation = await missionStore.getRuntimeExplanation(missionId, 'main', 2);
     const summary = await missionStore.getRuntimeSummary(missionId, 'main', 2);
     const graph = after?.snapshots.find((snapshot) => snapshot.sequence_num === 2);
-    expect(audit.events).toEqual(publishedEvents);
+    expect(structuredClone(audit.events)).toEqual(publishedEvents);
     expect(explanation?.as_of_sequence_num).toBe(2);
     expect(summary?.sequence_num).toBe(2);
     expect(graph?.sequence_num).toBe(2);
@@ -131,5 +137,175 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
       [1, 1, 'A'],
       [2, 4, 'B'],
     ]);
+  });
+
+  it('persists independent Governance axes at exact immutable frame cutoffs', async () => {
+    const priorFlag = process.env.LANGGRAPH_GOVERNANCE_ENABLED;
+    const priorToken = process.env.AGENTLENS_SERVICE_TOKEN;
+    process.env.LANGGRAPH_GOVERNANCE_ENABLED = 'true';
+    process.env.AGENTLENS_SERVICE_TOKEN = 'r0-c1-local-test-token';
+    try {
+      const mission = await missionStore.createMission({ objective: 'R0-C1 persistence acceptance' });
+      governanceMissionId = mission.id;
+      const interruptId = 'irq-r0-c1';
+      await missionStore.createInterrupt({
+        mission_id: mission.id,
+        interrupt_id: interruptId,
+        reason: 'Review required',
+      });
+
+      const requestRow = (await pool.query(
+        `SELECT * FROM interrupts WHERE mission_id = $1 AND branch_id = 'main' AND interrupt_id = $2`,
+        [mission.id, interruptId],
+      )).rows[0];
+      const requestAdmission = Number(requestRow.requested_admission_seq);
+      const requestReplay = await missionStore.getReplayFromTelemetry(mission.id, 'main');
+      const frozenRequestEvents = structuredClone(eventsThroughCursor(requestReplay?.events ?? [], requestAdmission));
+
+      let bindingId = '';
+      const setupClient = await pool.connect();
+      try {
+        await setupClient.query('BEGIN');
+        const nativeIdentity = {
+          mission_id: mission.id,
+          branch_id: 'main',
+          framework: 'langgraph',
+          interaction_request_id: interruptId,
+          thread_id: 'thread-r0-c1',
+        };
+        await setupClient.query(
+          `UPDATE interrupts
+           SET framework = 'langgraph', native_identity = $3::jsonb,
+               supported_decision_types = '["approve","reject"]'::jsonb
+           WHERE mission_id = $1 AND branch_id = 'main' AND interrupt_id = $2`,
+          [mission.id, interruptId, JSON.stringify(nativeIdentity)],
+        );
+        const binding = await registerBridgeBinding(setupClient, {
+          missionId: mission.id,
+          branchId: 'main',
+          controlRef: 'control-r0-c1',
+          leaseSeconds: 120,
+          nativeIdentity,
+          interruptId,
+          interactionRequestId: interruptId,
+          framework: 'langgraph',
+        });
+        bindingId = binding.id;
+        const actionable = await reconcileInterruptActionability(setupClient, {
+          missionId: mission.id,
+          branchId: 'main',
+          interruptId,
+          framework: 'langgraph',
+        });
+        expect(actionable.actionability).toBe('actionable');
+        await setupClient.query('COMMIT');
+      } catch (error) {
+        await setupClient.query('ROLLBACK');
+        throw error;
+      } finally {
+        setupClient.release();
+      }
+
+      const decision = await missionStore.decideInterrupt(mission.id, interruptId, {
+        branch_id: 'main',
+        decision: 'approve',
+        idempotency_key: 'r0-c1-decision',
+      });
+      expect(decision).toMatchObject({
+        decision_state: 'recorded', delivery_state: 'pending', runtime_outcome: 'awaiting_interaction',
+      });
+      let persisted = (await pool.query(
+        `SELECT * FROM interrupts WHERE mission_id = $1 AND branch_id = 'main' AND interrupt_id = $2`,
+        [mission.id, interruptId],
+      )).rows[0];
+      const decisionAdmission = Number(persisted.decided_admission_seq);
+      const deliveryId = String(persisted.delivery_id);
+
+      const deliveryClient = await pool.connect();
+      try {
+        await deliveryClient.query('BEGIN');
+        const claim = await claimDelivery(deliveryClient, {
+          missionId: mission.id,
+          branchId: 'main',
+          interruptId,
+          bindingId,
+        });
+        expect(claim.claimed).toBe(true);
+        await postDeliveryReceipt(deliveryClient, {
+          missionId: mission.id,
+          branchId: 'main',
+          interruptId,
+          deliveryId,
+          receipt: 'accepted',
+        });
+        await deliveryClient.query('COMMIT');
+      } catch (error) {
+        await deliveryClient.query('ROLLBACK');
+        throw error;
+      } finally {
+        deliveryClient.release();
+      }
+
+      persisted = (await pool.query(
+        `SELECT * FROM interrupts WHERE mission_id = $1 AND branch_id = 'main' AND interrupt_id = $2`,
+        [mission.id, interruptId],
+      )).rows[0];
+      const deliveryAdmission = Math.max(...parseGovernanceStateHistory(persisted.governance_state_history)
+        .filter((transition) => transition.axis === 'delivery' && transition.state === 'accepted')
+        .map((transition) => transition.admission_seq));
+
+      const outcomeClient = await pool.connect();
+      try {
+        await outcomeClient.query('BEGIN');
+        await applyRuntimeOutcome(outcomeClient, {
+          missionId: mission.id,
+          branchId: 'main',
+          interruptId,
+          outcome: 'failed',
+          deliveryId,
+          requireDeliveryCorrelation: true,
+        });
+        await outcomeClient.query('COMMIT');
+      } catch (error) {
+        await outcomeClient.query('ROLLBACK');
+        throw error;
+      } finally {
+        outcomeClient.release();
+      }
+
+      persisted = (await pool.query(
+        `SELECT * FROM interrupts WHERE mission_id = $1 AND branch_id = 'main' AND interrupt_id = $2`,
+        [mission.id, interruptId],
+      )).rows[0];
+      const outcomeAdmission = Math.max(...parseGovernanceStateHistory(persisted.governance_state_history)
+        .filter((transition) => transition.axis === 'runtime' && transition.state === 'failed')
+        .map((transition) => transition.admission_seq));
+      const replay = await missionStore.getReplayFromTelemetry(mission.id, 'main');
+      expect(structuredClone(eventsThroughCursor(replay?.events ?? [], requestAdmission))).toEqual(frozenRequestEvents);
+
+      const stateAt = (sequence: number) => replay?.snapshots.find((snapshot) => snapshot.sequence_num === sequence);
+      expect(stateAt(requestAdmission)).toBeDefined();
+      expect(stateAt(decisionAdmission)).toBeDefined();
+      expect(stateAt(deliveryAdmission)).toBeDefined();
+      expect(stateAt(outcomeAdmission)).toBeDefined();
+
+      const decisionExplanation = await missionStore.getRuntimeExplanation(mission.id, 'main', decisionAdmission);
+      const deliveryExplanation = await missionStore.getRuntimeExplanation(mission.id, 'main', deliveryAdmission);
+      const outcomeExplanation = await missionStore.getRuntimeExplanation(mission.id, 'main', outcomeAdmission);
+      expect(decisionExplanation?.run_outcome).toBe('waiting');
+      expect(deliveryExplanation?.run_outcome).toBe('waiting');
+      expect(outcomeExplanation?.run_outcome).toBe('failed');
+      expect(replay?.current_state?.interrupts[interruptId]).toMatchObject({
+        request_lifecycle: 'resolved',
+        decision_state: 'recorded',
+        delivery_state: 'accepted',
+        runtime_outcome: 'failed',
+      });
+    } finally {
+      if (priorFlag === undefined) delete process.env.LANGGRAPH_GOVERNANCE_ENABLED;
+      else process.env.LANGGRAPH_GOVERNANCE_ENABLED = priorFlag;
+      if (priorToken === undefined) delete process.env.AGENTLENS_SERVICE_TOKEN;
+      else process.env.AGENTLENS_SERVICE_TOKEN = priorToken;
+    }
   });
 });

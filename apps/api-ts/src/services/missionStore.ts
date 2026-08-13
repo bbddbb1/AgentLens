@@ -45,6 +45,8 @@ import { pool } from '../db/postgres.js';
 import type { PoolClient } from 'pg';
 import { frameworkGovernanceFor } from './interrupts/frameworkGovernance.js';
 import { mapInterruptRowToRecord, serializeInterruptPublic } from './interrupts/publicSerializer.js';
+import { allocateEvidenceAdmission } from './evidenceAdmission.js';
+import { appendGovernanceStateHistory, governanceTransition } from './interrupts/governanceState.js';
 import { validateStructuredDecisionValue } from './interrupts/structuredDecisionBounds.js';
 import { applyRuntimeOutcome, ensureDeliveryAttempt } from './interrupts/deliveryLifecycle.js';
 import { mafInteractionFact, mafOutcomeFact, mafTraceWorkflowIds } from './runtime/normalization/mafIngestion.js';
@@ -121,23 +123,6 @@ function stableUuidFromText(value: string): string {
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
-}
-
-async function allocateEvidenceAdmission(client: PoolClient, missionId: string): Promise<number> {
-  const result = await client.query(
-    `INSERT INTO evidence_admission_counters (mission_id, next_seq)
-     VALUES ($1, 1)
-     ON CONFLICT (mission_id) DO UPDATE
-     SET next_seq = evidence_admission_counters.next_seq + 1
-     WHERE evidence_admission_counters.next_seq < 2147483647
-     RETURNING next_seq`,
-    [missionId],
-  );
-  const value = Number(result.rows[0]?.next_seq);
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`Evidence admission cursor exhausted for mission ${missionId}`);
-  }
-  return value;
 }
 
 function sequenceNumThroughSnapshot(
@@ -458,6 +443,23 @@ class MissionStore {
 
   private async recordInterruptsFromSpans(client: PoolClient, missionId: string, spans: StoredOtlpSpan[], branchId: string = ROOT_BRANCH_ID): Promise<boolean> {
     let interruptRequested = false;
+    // Re-evaluating an older trace after newly admitted correlation evidence
+    // must never add a Governance fact to an already-published earlier frame.
+    const translationAdmissionFloor = spans.reduce(
+      (maximum, span) => Math.max(maximum, span.admission_seq),
+      0,
+    );
+    const translationRecordedAt = [...spans]
+      .sort((left, right) => right.admission_seq - left.admission_seq)[0]?.admitted_at;
+    const requestAdmissionByInterrupt = new Map<string, { admissionSeq: number; recordedAt: string }>();
+    const pendingOutcomes: Array<{
+      admissionSeq: number;
+      interruptId: string;
+      outcome: Parameters<typeof applyRuntimeOutcome>[1]['outcome'];
+      deliveryId?: string;
+      correlated?: boolean;
+      requireDeliveryCorrelation?: boolean;
+    }> = [];
     // A framework may emit native identity and request evidence in separate
     // OTLP batches. Re-evaluate the trace's persisted observation facts after
     // each ingest, so normalization never depends on exporter batch shape.
@@ -479,22 +481,20 @@ class MissionStore {
       for (const event of span.events ?? []) {
         const mafOutcome = mafOutcomeFact(event);
         if (mafOutcome) {
-            await applyRuntimeOutcome(client, {
-              missionId,
-              branchId,
-              interruptId: mafOutcome.interruptId,
-              outcome: mafOutcome.outcome,
-              deliveryId: mafOutcome.deliveryId,
-              correlated: true,
-              requireDeliveryCorrelation: true,
-            });
+          pendingOutcomes.push({
+            admissionSeq: span.admission_seq,
+            interruptId: mafOutcome.interruptId,
+            outcome: mafOutcome.outcome,
+            deliveryId: mafOutcome.deliveryId,
+            correlated: true,
+            requireDeliveryCorrelation: true,
+          });
           continue;
         }
         const langGraphOutcome = langGraphOutcomeFact(event);
         if (langGraphOutcome) {
-          await applyRuntimeOutcome(client, {
-            missionId,
-            branchId,
+          pendingOutcomes.push({
+            admissionSeq: span.admission_seq,
             interruptId: langGraphOutcome.interruptId,
             outcome: langGraphOutcome.outcome,
             deliveryId: langGraphOutcome.deliveryId,
@@ -546,7 +546,7 @@ class MissionStore {
           nextIdentity: nativeIdentity,
         });
 
-        await client.query(
+        const persisted = await client.query(
           `
             INSERT INTO interrupts (
               id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload, expires_at,
@@ -577,6 +577,7 @@ class MissionStore {
                 requested_admission_seq = COALESCE(interrupts.requested_admission_seq, EXCLUDED.requested_admission_seq),
                 identity_ambiguous = interrupts.identity_ambiguous OR EXCLUDED.identity_ambiguous,
                 updated_at = NOW()
+            RETURNING requested_admission_seq, created_at
           `,
           [
             randomUUID(),
@@ -599,7 +600,7 @@ class MissionStore {
             initialActionability,
             requestLifecycle,
             ambiguity.identityAmbiguous,
-            span.admission_seq,
+            Math.max(span.admission_seq, translationAdmissionFloor),
             JSON.stringify({
               agent_id: agentId ?? attributeValue(span.attributes, AgentAttributes.ID) ?? null,
               interrupt_id: interruptId,
@@ -609,6 +610,39 @@ class MissionStore {
             }),
           ],
         );
+
+        const requestAdmission = Number(
+          persisted.rows[0]?.requested_admission_seq
+          ?? Math.max(span.admission_seq, translationAdmissionFloor),
+        );
+        const requestRecordedAt = new Date(String(persisted.rows[0]?.created_at ?? span.admitted_at)).toISOString();
+        requestAdmissionByInterrupt.set(interruptId, {
+          admissionSeq: requestAdmission,
+          recordedAt: requestRecordedAt,
+        });
+        await appendGovernanceStateHistory(client, {
+          missionId,
+          branchId,
+          interruptId,
+          transitions: [
+            governanceTransition({
+              admission_seq: requestAdmission,
+              axis: 'request',
+              state: 'pending',
+              recorded_at: requestRecordedAt,
+              source: 'interrupt_request',
+              evidence_ref: `${span.span_id}:${event.name ?? 'interrupt.requested'}`,
+            }),
+            governanceTransition({
+              admission_seq: requestAdmission,
+              axis: 'runtime',
+              state: 'awaiting_interaction',
+              recorded_at: requestRecordedAt,
+              source: 'interrupt_request',
+              evidence_ref: `${span.span_id}:${event.name ?? 'interrupt.requested'}`,
+            }),
+          ],
+        });
 
         if (governance) {
           await reconcileInterruptActionability(client, {
@@ -621,6 +655,31 @@ class MissionStore {
           });
         }
       }
+    }
+    // Apply terminal facts only after every request in the trace has been
+    // admitted, so exporter span order cannot decide whether correlation finds
+    // its interrupt aggregate.
+    for (const outcome of pendingOutcomes.sort((left, right) => left.admissionSeq - right.admissionSeq)) {
+      const requestAdmission = requestAdmissionByInterrupt.get(outcome.interruptId);
+      const outcomeAdmission = Math.max(
+        outcome.admissionSeq,
+        requestAdmission?.admissionSeq ?? 0,
+        translationAdmissionFloor,
+      );
+      await applyRuntimeOutcome(client, {
+        missionId,
+        branchId,
+        interruptId: outcome.interruptId,
+        outcome: outcome.outcome,
+        deliveryId: outcome.deliveryId,
+        correlated: outcome.correlated,
+        requireDeliveryCorrelation: outcome.requireDeliveryCorrelation,
+        admissionSeq: outcomeAdmission,
+        recordedAt: outcomeAdmission === requestAdmission?.admissionSeq
+          ? requestAdmission.recordedAt
+          : spans.find((span) => span.admission_seq === outcomeAdmission)?.admitted_at
+            ?? translationRecordedAt,
+      });
     }
     return interruptRequested;
   }
@@ -1038,7 +1097,15 @@ class MissionStore {
 
       // 3. Freeze ancestor membership at each persisted fork admission cutoff.
       const selectedSpans = selectSpanRevisionsForBranch(spans, safeBranches, branchId);
-      const selectedInterrupts = selectInterruptsForBranch(interrupts, safeBranches, branchId);
+      const selectedInterrupts = selectInterruptsForBranch(interrupts, safeBranches, branchId).map((row) => ({
+        ...row,
+        ...mapInterruptRowToRecord(row as Record<string, unknown>),
+        governance_state_history: row.governance_state_history,
+        requested_evidence: row.requested_evidence,
+        requested_admission_seq: row.requested_admission_seq,
+        decided_admission_seq: row.decided_admission_seq,
+        resumed_admission_seq: row.resumed_admission_seq,
+      }));
       const replay = projectReplayEvidence(missionId, branchId, selectedSpans, selectedInterrupts);
       return {
         ...replay,
@@ -1460,6 +1527,32 @@ class MissionStore {
           }),
         ],
       );
+      const persistedAdmission = Number(result.rows[0]?.requested_admission_seq ?? requestedAdmission);
+      const recordedAt = new Date(String(result.rows[0]?.created_at ?? new Date().toISOString())).toISOString();
+      const governanceHistory = await appendGovernanceStateHistory(client, {
+        missionId: input.mission_id,
+        branchId,
+        interruptId,
+        transitions: [
+          governanceTransition({
+            admission_seq: persistedAdmission,
+            axis: 'request',
+            state: 'pending',
+            recorded_at: recordedAt,
+            source: 'interrupt_request',
+            evidence_ref: `interrupt:${interruptId}:requested`,
+          }),
+          governanceTransition({
+            admission_seq: persistedAdmission,
+            axis: 'runtime',
+            state: 'awaiting_interaction',
+            recorded_at: recordedAt,
+            source: 'interrupt_request',
+            evidence_ref: `interrupt:${interruptId}:requested`,
+          }),
+        ],
+      });
+      if (result.rows[0]) result.rows[0].governance_state_history = governanceHistory;
       const interrupt = this.mapInterruptRow(result.rows[0] as Record<string, unknown>);
       await client.query('COMMIT');
       return interrupt;
@@ -1642,7 +1735,6 @@ class MissionStore {
                 decision_actor = $10,
                 decision_type = $11,
                 delivery_state = 'pending',
-                runtime_outcome = COALESCE(NULLIF(runtime_outcome, 'unknown'), 'awaiting_interaction'),
                 idempotency_key = $12,
                 decided_at = COALESCE(decided_at, NOW()),
                 decided_admission_seq = COALESCE(decided_admission_seq, $13),
@@ -1680,16 +1772,37 @@ class MissionStore {
           await client.query('ROLLBACK');
           return null;
         }
+        await appendGovernanceStateHistory(client, {
+          missionId,
+          branchId,
+          interruptId,
+          transitions: [governanceTransition({
+            admission_seq: decisionAdmission,
+            axis: 'decision',
+            state: 'recorded',
+            recorded_at: new Date(String(row.decided_at ?? new Date().toISOString())).toISOString(),
+            source: 'operator_decision',
+            evidence_ref: decisionId,
+          })],
+        });
         await ensureDeliveryAttempt(client, {
           missionId,
           branchId,
           interruptId,
           decisionId,
+          admissionSeq: decisionAdmission,
+          recordedAt: new Date(String(row.decided_at ?? new Date().toISOString())).toISOString(),
         });
+        const authoritative = await client.query(
+          `SELECT * FROM interrupts
+           WHERE mission_id = $1 AND branch_id = $2 AND interrupt_id = $3
+           LIMIT 1`,
+          [missionId, branchId, interruptId],
+        );
         await this.ensureBranch(client, missionId, branchId);
         await client.query('COMMIT');
         // Do not auto-resume or imply runtime outcome for a governance bridge path.
-        return this.mapInterruptRow(row);
+        return this.mapInterruptRow(authoritative.rows[0] as Record<string, unknown>);
       }
 
       const result = await client.query(
@@ -1704,6 +1817,9 @@ class MissionStore {
               resumed_at = CASE WHEN $4 = 'resume' THEN COALESCE(resumed_at, NOW()) ELSE resumed_at END,
               decided_admission_seq = COALESCE(decided_admission_seq, $8),
               resumed_admission_seq = CASE WHEN $4 = 'resume' THEN COALESCE(resumed_admission_seq, $8) ELSE resumed_admission_seq END,
+              decision_state = 'recorded',
+              runtime_outcome = CASE WHEN $4 = 'resume' THEN 'resumed' ELSE runtime_outcome END,
+              request_lifecycle = CASE WHEN $4 = 'resume' THEN 'resolved' ELSE request_lifecycle END,
               updated_at = NOW()
           WHERE mission_id = $1
             AND branch_id = $2
@@ -1715,9 +1831,45 @@ class MissionStore {
         [missionId, branchId, interruptId, input.decision, input.comment ?? null, JSON.stringify(input.payload ?? {}), input.idempotency_key, decisionAdmission],
       );
       const row = result.rows[0] as Record<string, unknown> | undefined;
-      const interrupt = row ? this.mapInterruptRow(row) : null;
+      let interrupt: (InterruptRecord & { branch_id?: string }) | null = null;
 
-      if (interrupt) {
+      if (row) {
+        const recordedAt = new Date(String(row?.decided_at ?? new Date().toISOString())).toISOString();
+        const governanceHistory = await appendGovernanceStateHistory(client, {
+          missionId,
+          branchId,
+          interruptId,
+          transitions: [
+            governanceTransition({
+              admission_seq: decisionAdmission,
+              axis: 'decision',
+              state: 'recorded',
+              recorded_at: recordedAt,
+              source: 'operator_decision',
+              evidence_ref: `legacy-decision:${input.idempotency_key}`,
+            }),
+            ...(input.decision === 'resume' ? [
+              governanceTransition({
+                admission_seq: decisionAdmission,
+                axis: 'runtime',
+                state: 'resumed',
+                recorded_at: recordedAt,
+                source: 'legacy_resume',
+                evidence_ref: `legacy-decision:${input.idempotency_key}`,
+              }),
+              governanceTransition({
+                admission_seq: decisionAdmission,
+                axis: 'request',
+                state: 'resolved',
+                recorded_at: recordedAt,
+                source: 'legacy_resume',
+                evidence_ref: `legacy-decision:${input.idempotency_key}`,
+              }),
+            ] : []),
+          ],
+        });
+        row.governance_state_history = governanceHistory;
+        interrupt = this.mapInterruptRow(row);
         await this.ensureBranch(client, missionId, branchId);
       }
       await client.query('COMMIT');
@@ -1769,6 +1921,9 @@ class MissionStore {
               decision_payload = decision_payload || $2::jsonb,
               resumed_at = COALESCE(resumed_at, NOW()),
               resumed_admission_seq = COALESCE(resumed_admission_seq, $3),
+              decision_state = CASE WHEN decision IS NULL THEN 'recorded' ELSE decision_state END,
+              runtime_outcome = 'resumed',
+              request_lifecycle = 'resolved',
               updated_at = NOW()
           WHERE resume_token_hash = $1
             AND status IN ('pending', 'approved')
@@ -1777,8 +1932,34 @@ class MissionStore {
         [hashToken(resumeToken), JSON.stringify(payload), resumedAdmission],
       );
       const row = result.rows[0] as Record<string, unknown> | undefined;
-      const interrupt = row ? this.mapInterruptRow(row) : null;
-      if (interrupt) {
+      let interrupt: (InterruptRecord & { branch_id?: string }) | null = null;
+      if (row) {
+        const recordedAt = new Date(String(row?.resumed_at ?? new Date().toISOString())).toISOString();
+        const governanceHistory = await appendGovernanceStateHistory(client, {
+          missionId: String(row.mission_id),
+          branchId: String(row.branch_id ?? ROOT_BRANCH_ID),
+          interruptId: String(row.interrupt_id),
+          transitions: [
+            governanceTransition({
+              admission_seq: resumedAdmission,
+              axis: 'runtime',
+              state: 'resumed',
+              recorded_at: recordedAt,
+              source: 'legacy_resume',
+              evidence_ref: `resume-token:${String(row.interrupt_id)}`,
+            }),
+            governanceTransition({
+              admission_seq: resumedAdmission,
+              axis: 'request',
+              state: 'resolved',
+              recorded_at: recordedAt,
+              source: 'legacy_resume',
+              evidence_ref: `resume-token:${String(row.interrupt_id)}`,
+            }),
+          ],
+        });
+        row.governance_state_history = governanceHistory;
+        interrupt = this.mapInterruptRow(row);
         await this.ensureBranch(client, interrupt.mission_id, interrupt.branch_id ?? ROOT_BRANCH_ID);
       }
       await client.query('COMMIT');

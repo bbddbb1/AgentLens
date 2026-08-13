@@ -126,6 +126,29 @@ describe('projectRuntimeExplanation', () => {
     expect(finalFrame.run_outcome).toBe('completed');
   });
 
+  it('keeps Runtime waiting after decision recording until explicit continuation evidence', () => {
+    const events = [
+      event(1, 'interrupt.requested', { interrupt_id: 'int-c1', reason: 'Approval needed' }),
+      event(2, 'interrupt.decision', { interrupt_id: 'int-c1', decision: 'approve' }),
+      event(3, 'interrupt.resumed', { interrupt_id: 'int-c1' }),
+    ];
+    const decided = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main', events, as_of_sequence_num: 2,
+    });
+    const resumed = projectRuntimeExplanation({
+      mission_id: 'm1', branch_id: 'main', events, as_of_sequence_num: 3,
+    });
+
+    expect(decided.run_outcome).toBe('waiting');
+    expect(decided.activities.find((activity) => activity.id === 'human:int-c1')).toMatchObject({
+      status: 'waiting',
+    });
+    expect(resumed.run_outcome).not.toBe('waiting');
+    expect(resumed.activities.find((activity) => activity.id === 'human:int-c1')).toMatchObject({
+      status: 'completed',
+    });
+  });
+
   it('flags orphan terminal evidence without inventing a start', () => {
     const explanation = projectRuntimeExplanation({
       mission_id: 'm1',

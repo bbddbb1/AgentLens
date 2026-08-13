@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eventsThroughCursor, MissionEventRecord, orderFrameEvents, ReplayBranch } from '@agentlens/protocol';
 import { ROOT_BRANCH_ID } from './types.js';
+import { materializeGovernanceState, parseGovernanceStateHistory } from '../interrupts/governanceState.js';
 
 export function createDefaultBranch(missionId: string): ReplayBranch {
   const now = new Date().toISOString();
@@ -91,6 +92,7 @@ type AdmittedInterruptRecord = Record<string, unknown> & {
   requested_admission_seq?: number | null;
   decided_admission_seq?: number | null;
   resumed_admission_seq?: number | null;
+  governance_state_history?: unknown;
 };
 
 /** Apply the same immutable ancestor cutoff to persisted interrupt lifecycle facts. */
@@ -116,6 +118,17 @@ export function selectInterruptsForBranch<T extends AdmittedInterruptRecord>(
       }
 
       const row = { ...source } as T;
+      const history = parseGovernanceStateHistory(source.governance_state_history)
+        .filter((transition) => transition.admission_seq <= upperBound);
+      const axes = materializeGovernanceState(history, upperBound);
+      Object.assign(row, {
+        governance_state_history: history,
+        request_lifecycle: axes.request_lifecycle,
+        decision_state: axes.decision_state,
+        delivery_state: axes.delivery_state,
+        runtime_outcome: axes.runtime_outcome,
+        governance_diagnostics: axes.governance_diagnostics,
+      });
       const decided = Number(source.decided_admission_seq ?? 0);
       const resumed = Number(source.resumed_admission_seq ?? 0);
       if (decided > upperBound) {
@@ -139,6 +152,12 @@ export function selectInterruptsForBranch<T extends AdmittedInterruptRecord>(
           resumed_admission_seq: null,
         });
       }
+      Object.assign(row, {
+        request_lifecycle: axes.request_lifecycle,
+        decision_state: axes.decision_state,
+        delivery_state: axes.delivery_state,
+        runtime_outcome: axes.runtime_outcome,
+      });
       selected.push(row);
     }
   }

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
+import { allocateEvidenceAdmission } from '../evidenceAdmission.js';
+import { appendGovernanceStateHistory, governanceTransition } from './governanceState.js';
 
 export type DeliveryExternalState = 'pending' | 'accepted' | 'failed' | 'stale' | 'unknown';
 export type RuntimeOutcomeState =
@@ -75,6 +77,8 @@ export async function ensureDeliveryAttempt(
     branchId: string;
     interruptId: string;
     decisionId: string;
+    admissionSeq?: number;
+    recordedAt?: string;
   },
 ): Promise<{ id: string; external_state: DeliveryExternalState; claimed_at?: string | null }> {
   const existing = await client.query(
@@ -117,6 +121,20 @@ export async function ensureDeliveryAttempt(
     `,
     [input.missionId, input.branchId, input.interruptId, String(row.id)],
   );
+  const admissionSeq = input.admissionSeq ?? await allocateEvidenceAdmission(client, input.missionId);
+  await appendGovernanceStateHistory(client, {
+    missionId: input.missionId,
+    branchId: input.branchId,
+    interruptId: input.interruptId,
+    transitions: [governanceTransition({
+      admission_seq: admissionSeq,
+      axis: 'delivery',
+      state: 'pending',
+      recorded_at: input.recordedAt ?? new Date().toISOString(),
+      source: 'delivery_attempt',
+      evidence_ref: String(row.id),
+    })],
+  });
   return {
     id: String(row.id),
     external_state: String(row.external_state) as DeliveryExternalState,
@@ -246,6 +264,7 @@ export async function postDeliveryReceipt(
   if (!canAdvanceDelivery(existing, input.receipt)) {
     return existing;
   }
+  if (existing === input.receipt) return existing;
 
   await client.query(
     `
@@ -274,6 +293,20 @@ export async function postDeliveryReceipt(
     `,
     [input.missionId, input.branchId, input.interruptId, input.receipt],
   );
+  const admissionSeq = await allocateEvidenceAdmission(client, input.missionId);
+  await appendGovernanceStateHistory(client, {
+    missionId: input.missionId,
+    branchId: input.branchId,
+    interruptId: input.interruptId,
+    transitions: [governanceTransition({
+      admission_seq: admissionSeq,
+      axis: 'delivery',
+      state: input.receipt,
+      recorded_at: new Date().toISOString(),
+      source: 'delivery_receipt',
+      evidence_ref: input.deliveryId,
+    })],
+  });
   return input.receipt;
 }
 
@@ -337,6 +370,20 @@ export async function markTimedOutClaimsUnknown(client: PoolClient): Promise<num
       `,
       [row.mission_id, row.branch_id, row.interrupt_id],
     );
+    const admissionSeq = await allocateEvidenceAdmission(client, String(row.mission_id));
+    await appendGovernanceStateHistory(client, {
+      missionId: String(row.mission_id),
+      branchId: String(row.branch_id),
+      interruptId: String(row.interrupt_id),
+      transitions: [governanceTransition({
+        admission_seq: admissionSeq,
+        axis: 'delivery',
+        state: 'unknown',
+        recorded_at: new Date().toISOString(),
+        source: 'delivery_receipt',
+        evidence_ref: String(row.id),
+      })],
+    });
   }
   return result.rowCount ?? 0;
 }
@@ -356,6 +403,9 @@ export async function applyRuntimeOutcome(
     correlated?: boolean;
     /** Framework adapters can require a durable Core delivery match. */
     requireDeliveryCorrelation?: boolean;
+    /** Reuse the admission of the normalized Runtime evidence when available. */
+    admissionSeq?: number;
+    recordedAt?: string;
   },
 ): Promise<RuntimeOutcomeState> {
   if (input.correlated === false) {
@@ -412,6 +462,7 @@ export async function applyRuntimeOutcome(
   if (!canAdvanceRuntimeOutcome(existing, input.outcome)) {
     return existing;
   }
+  if (existing === input.outcome) return existing;
   await client.query(
     `
       UPDATE interrupts
@@ -425,5 +476,30 @@ export async function applyRuntimeOutcome(
     `,
     [input.missionId, input.branchId, input.interruptId, input.outcome],
   );
+  const admissionSeq = input.admissionSeq ?? await allocateEvidenceAdmission(client, input.missionId);
+  const recordedAt = input.recordedAt ?? new Date().toISOString();
+  await appendGovernanceStateHistory(client, {
+    missionId: input.missionId,
+    branchId: input.branchId,
+    interruptId: input.interruptId,
+    transitions: [
+      governanceTransition({
+        admission_seq: admissionSeq,
+        axis: 'runtime',
+        state: input.outcome,
+        recorded_at: recordedAt,
+        source: 'runtime_telemetry',
+        evidence_ref: input.deliveryId ?? `interrupt:${input.interruptId}:runtime`,
+      }),
+      ...(input.outcome === 'awaiting_interaction' || input.outcome === 'unknown' ? [] : [governanceTransition({
+        admission_seq: admissionSeq,
+        axis: 'request',
+        state: 'resolved',
+        recorded_at: recordedAt,
+        source: 'runtime_telemetry',
+        evidence_ref: input.deliveryId ?? `interrupt:${input.interruptId}:runtime`,
+      })]),
+    ],
+  });
   return input.outcome;
 }
