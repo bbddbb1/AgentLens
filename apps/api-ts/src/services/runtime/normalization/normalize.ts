@@ -26,6 +26,11 @@ import type {
   NormalizedRuntimeFacts,
   SourceReference,
 } from './types.js';
+import {
+  scopedInvocationActivityId,
+  scopedSpanFallbackActivityId,
+  sourceSpanKey,
+} from '../sourceIdentity.js';
 
 const NATIVE_IDENTITY_FIELDS: Array<keyof NativeRuntimeIdentity> = [
   'framework',
@@ -163,7 +168,9 @@ export function normalizeSpansToFacts(spans: any[]): NormalizedRuntimeFacts {
       .map((event: any) => candidateForSpan(span, diagnostics, event)),
   ]);
   diagnoseNativeCorrelationConflicts(rawCandidates, diagnostics);
-  const candidates = reconcileFallbackIdentities(rawCandidates, diagnostics);
+  const candidates = scopeCollidingSourceLocalIdentities(
+    reconcileFallbackIdentities(rawCandidates, diagnostics),
+  );
   const groups = new Map<string, Candidate[]>();
   for (const candidate of candidates) {
     const group = groups.get(candidate.activityKey) ?? [];
@@ -178,7 +185,7 @@ export function normalizeSpansToFacts(spans: any[]): NormalizedRuntimeFacts {
     .map(([key, group]) => {
       const activity = mergeCandidates(key, group, diagnostics);
       for (const candidate of group) {
-        if (candidate.activity.span_id) canonicalBySpan.set(candidate.activity.span_id, activity);
+        if (candidate.activity.span_id) canonicalBySpan.set(sourceSpanKey(candidate.span), activity);
         for (const agentId of candidate.agentIds) activityIdsByAgent.set(agentId, activity.id);
       }
       return activity;
@@ -204,9 +211,13 @@ export function normalizeSpansToFacts(spans: any[]): NormalizedRuntimeFacts {
     }
   }
   for (const candidate of candidates) {
-    const source = canonicalBySpan.get(candidate.activity.span_id ?? '');
+    const source = canonicalBySpan.get(sourceSpanKey(candidate.span));
     if (!source) continue;
-    const parent = candidate.span.parent_span_id && canonicalBySpan.get(String(candidate.span.parent_span_id));
+    const parent = candidate.span.parent_span_id && canonicalBySpan.get(sourceSpanKey({
+      branch_id: candidate.span.branch_id,
+      trace_id: candidate.span.trace_id,
+      span_id: candidate.span.parent_span_id,
+    }));
     if (parent && parent.id !== source.id) {
       relationships.push({
         kind: 'parent_child',
@@ -408,7 +419,7 @@ function reconcileFallbackIdentities(
 ): Candidate[] {
   const bySpanAndKind = new Map<string, Candidate[]>();
   for (const candidate of candidates) {
-    const key = `${candidate.activity.span_id ?? ''}:${candidate.activity.kind}`;
+    const key = `${sourceSpanKey(candidate.span)}:${candidate.activity.kind}`;
     const group = bySpanAndKind.get(key) ?? [];
     group.push(candidate);
     bySpanAndKind.set(key, group);
@@ -464,6 +475,38 @@ function reconcileFallbackIdentities(
     }
   }
   return candidates.filter((candidate) => !excluded.has(candidate));
+}
+
+/** Scope only colliding source-local ids, preserving established ids when they
+ * are unambiguous within the selected evidence set. */
+function scopeCollidingSourceLocalIdentities(candidates: Candidate[]): Candidate[] {
+  const byUnscopedId = new Map<string, Candidate[]>();
+  for (const candidate of candidates) {
+    const group = byUnscopedId.get(candidate.activityKey) ?? [];
+    group.push(candidate);
+    byUnscopedId.set(candidate.activityKey, group);
+  }
+  for (const group of byUnscopedId.values()) {
+    const traceScopes = new Set(group.map((candidate) =>
+      `${String(candidate.span?.branch_id ?? 'main')}\u0000${String(candidate.span?.trace_id ?? '')}`));
+    if (traceScopes.size <= 1) continue;
+    for (const candidate of group) {
+      const scoped = candidate.activity.invocation_id
+        ? scopedInvocationActivityId(
+            candidate.activity.kind,
+            candidate.activity.invocation_id,
+            candidate.span,
+          )
+        : scopedSpanFallbackActivityId(candidate.activity.kind, {
+            branch_id: candidate.span?.branch_id,
+            trace_id: candidate.span?.trace_id,
+            span_id: candidate.activity.span_id,
+          });
+      candidate.activity.id = scoped;
+      candidate.activityKey = scoped;
+    }
+  }
+  return candidates;
 }
 
 function hasSafeLifecycleFallback(events: Candidate[]): boolean {

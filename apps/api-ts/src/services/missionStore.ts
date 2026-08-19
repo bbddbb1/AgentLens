@@ -54,6 +54,8 @@ import {
   isExplicitLegacyControl,
 } from './interrupts/controlAuthority.js';
 import { applyRuntimeOutcome, ensureDeliveryAttempt } from './interrupts/deliveryLifecycle.js';
+import { stripExecutableCredentials } from './interrupts/credentialIsolation.js';
+import { sourceSpanKey } from './runtime/sourceIdentity.js';
 import { mafInteractionFact, mafOutcomeFact, mafTraceWorkflowIds } from './runtime/normalization/mafIngestion.js';
 import { langGraphInteractionFact, langGraphOutcomeFact } from './runtime/normalization/langgraphGovernance.js';
 import {
@@ -472,10 +474,10 @@ class MissionStore {
     const traceRows = traceIds.length === 0
       ? []
       : (await client.query(
-          `SELECT DISTINCT ON (span_id) *
+          `SELECT DISTINCT ON (trace_id, span_id) *
            FROM spans
            WHERE mission_id = $1 AND branch_id = $2 AND trace_id = ANY($3)
-           ORDER BY span_id, revision_num DESC`,
+           ORDER BY trace_id, span_id, revision_num DESC`,
           [missionId, branchId, traceIds],
         )).rows;
     const traceSpans = traceRows.map((row) => this.mapSpanRow(row as Record<string, unknown>));
@@ -934,6 +936,11 @@ class MissionStore {
     batchId?: string,
   ): Promise<IngestResult | null> {
     if (spans.length === 0) return null;
+    // Control credentials are API/control-plane inputs, never L0 telemetry.
+    // Compatibility exporters may still send them; discard before hashing,
+    // comparison, persistence, normalization, or projection.
+    spans = stripExecutableCredentials(spans);
+    resourceAttributes = stripExecutableCredentials(resourceAttributes);
 
     const discoveredMissionId =
       missionIdInput ??
@@ -992,26 +999,38 @@ class MissionStore {
         }
       }
 
-      const sourceSpanIds = [...new Set(spans.map((span) => span.span_id))];
-      const latestRows = sourceSpanIds.length === 0
+      const sourceIdentities = [...new Map(spans.map((span) => [sourceSpanKey({
+        branch_id: branchId,
+        trace_id: span.trace_id,
+        span_id: span.span_id,
+      }), { traceId: span.trace_id, spanId: span.span_id }])).values()];
+      const latestRows = sourceIdentities.length === 0
         ? []
         : (await client.query(
-            `SELECT DISTINCT ON (span_id) *
+            `SELECT DISTINCT ON (trace_id, span_id) *
              FROM spans
-             WHERE mission_id = $1 AND branch_id = $2 AND span_id = ANY($3)
-             ORDER BY span_id, revision_num DESC`,
-            [missionId, branchId, sourceSpanIds],
+             WHERE mission_id = $1 AND branch_id = $2
+               AND (trace_id, span_id) IN (
+                 SELECT source->>'trace_id', source->>'span_id'
+                 FROM jsonb_array_elements($3::jsonb) AS source
+               )
+             ORDER BY trace_id, span_id, revision_num DESC`,
+            [missionId, branchId, JSON.stringify(sourceIdentities.map((source) => ({
+              trace_id: source.traceId,
+              span_id: source.spanId,
+            })))],
           )).rows;
       const latestBySpanId = new Map<string, StoredOtlpSpan>(
         latestRows.map((row) => {
           const stored = this.mapSpanRow(row as Record<string, unknown>);
-          return [stored.span_id, stored];
+          return [sourceSpanKey(stored), stored];
         }),
       );
       const changedSpans: StoredOtlpSpan[] = [];
 
       for (const span of spans) {
-        const previous = latestBySpanId.get(span.span_id);
+        const evidenceKey = sourceSpanKey({ branch_id: branchId, trace_id: span.trace_id, span_id: span.span_id });
+        const previous = latestBySpanId.get(evidenceKey);
         if (previous && spanEvidenceRepresentation(previous) === spanEvidenceRepresentation(span)) {
           continue;
         }
@@ -1044,7 +1063,7 @@ class MissionStore {
           ]
         );
         const stored = this.mapSpanRow(inserted.rows[0] as Record<string, unknown>);
-        latestBySpanId.set(span.span_id, stored);
+        latestBySpanId.set(evidenceKey, stored);
         changedSpans.push(stored);
       }
 
@@ -1529,7 +1548,7 @@ class MissionStore {
           input.reason,
           input.resume_url ?? null,
           hashToken(resumeToken),
-          JSON.stringify({ ...(input.payload ?? {}), resume_token: resumeToken }),
+          JSON.stringify(stripExecutableCredentials(input.payload ?? {})),
           input.expires_at ?? null,
           requestedAdmission,
           JSON.stringify({
@@ -1537,7 +1556,7 @@ class MissionStore {
             interrupt_id: interruptId,
             reason: input.reason,
             resume_url: input.resume_url ?? null,
-            payload: { ...(input.payload ?? {}), resume_token: resumeToken },
+            payload: stripExecutableCredentials(input.payload ?? {}),
           }),
         ],
       );

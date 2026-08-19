@@ -17,6 +17,7 @@ import { originFrameworkFromAttrs } from './normalization/agentLensCompat.js';
 import { assembleModelProvenance } from './normalization/otelGenAi.js';
 import { publicRuntimeIdentity, publicSpanStartAttributes, publicTelemetryAttributes, publicTelemetryName } from './normalization/publicMetadata.js';
 import { materializeGovernanceState, parseGovernanceStateHistory } from '../interrupts/governanceState.js';
+import { sourceSpanKey } from './sourceIdentity.js';
 
 export type MaturityTier = 'L1' | 'L2' | 'L3';
 
@@ -863,14 +864,15 @@ export function projectTraceSnapshot(
  */
 type AdmittedSpan = Record<string, any> & {
   branch_id: string;
+  trace_id: string;
   source_span_id: string;
   admission_seq: number;
   revision_num: number;
   admitted_at: string;
 };
 
-function logicalSpanId(span: Pick<AdmittedSpan, 'branch_id' | 'source_span_id'>): string {
-  return `${span.branch_id}:${span.source_span_id}`;
+function logicalSpanId(span: Pick<AdmittedSpan, 'branch_id' | 'trace_id' | 'source_span_id'>): string {
+  return sourceSpanKey({ branch_id: span.branch_id, trace_id: span.trace_id, span_id: span.source_span_id });
 }
 
 function normalizeAdmittedSpans(spans: any[], defaultBranchId: string): AdmittedSpan[] {
@@ -883,7 +885,7 @@ function normalizeAdmittedSpans(spans: any[], defaultBranchId: string): Admitted
   return spans.map((span) => {
     const branchId = String(span.branch_id ?? defaultBranchId);
     const sourceSpanId = String(span.source_span_id ?? span.span_id);
-    const logicalId = `${branchId}:${sourceSpanId}`;
+    const logicalId = sourceSpanKey({ branch_id: branchId, trace_id: span.trace_id, span_id: sourceSpanId });
     const inferredRevision = (revisionByLogicalId.get(logicalId) ?? 0) + 1;
     const revisionNum = Number.isSafeInteger(span.revision_num) && span.revision_num > 0
       ? span.revision_num
@@ -926,15 +928,15 @@ function scopeSpanIdsForBranchView(
   spans: readonly AdmittedSpan[],
   projectionBranchId: string,
 ): AdmittedSpan[] {
-  const branchesBySourceId = new Map<string, Set<string>>();
+  const scopesBySourceId = new Map<string, Set<string>>();
   for (const span of spans) {
-    const branches = branchesBySourceId.get(span.source_span_id) ?? new Set<string>();
-    branches.add(span.branch_id);
-    branchesBySourceId.set(span.source_span_id, branches);
+    const scopes = scopesBySourceId.get(span.source_span_id) ?? new Set<string>();
+    scopes.add(`${span.branch_id}\u0000${String(span.trace_id ?? '')}`);
+    scopesBySourceId.set(span.source_span_id, scopes);
   }
-  const runtimeId = (branchId: string, sourceSpanId: string): string =>
-    projectionBranchId !== 'main' || (branchesBySourceId.get(sourceSpanId)?.size ?? 0) > 1
-      ? `${branchId}::${sourceSpanId}`
+  const runtimeId = (branchId: string, traceId: string, sourceSpanId: string): string =>
+    projectionBranchId !== 'main' || (scopesBySourceId.get(sourceSpanId)?.size ?? 0) > 1
+      ? `${branchId}::${traceId}::${sourceSpanId}`
       : sourceSpanId;
   const candidatesBySourceId = new Map<string, AdmittedSpan[]>();
   for (const span of spans) {
@@ -948,16 +950,23 @@ function scopeSpanIdsForBranchView(
     let parentRuntimeId: string | undefined;
     if (parentSourceId) {
       const candidates = candidatesBySourceId.get(parentSourceId) ?? [];
-      const sameBranch = candidates.find((candidate) => candidate.branch_id === span.branch_id);
+      const sameTraceAndBranch = candidates.find((candidate) =>
+        candidate.branch_id === span.branch_id && String(candidate.trace_id ?? '') === String(span.trace_id ?? ''));
+      const sameTraceAncestor = [...candidates]
+        .filter((candidate) => String(candidate.trace_id ?? '') === String(span.trace_id ?? ''))
+        .filter((candidate) => candidate.admission_seq <= span.admission_seq)
+        .sort((left, right) => right.admission_seq - left.admission_seq)[0];
       const ancestor = [...candidates]
         .filter((candidate) => candidate.admission_seq <= span.admission_seq)
         .sort((left, right) => right.admission_seq - left.admission_seq)[0];
-      const parent = sameBranch ?? ancestor ?? candidates[0];
-      parentRuntimeId = parent ? runtimeId(parent.branch_id, parentSourceId) : parentSourceId;
+      const parent = sameTraceAndBranch ?? sameTraceAncestor ?? ancestor ?? candidates[0];
+      parentRuntimeId = parent
+        ? runtimeId(parent.branch_id, String(parent.trace_id ?? ''), parentSourceId)
+        : parentSourceId;
     }
     return {
       ...span,
-      span_id: runtimeId(span.branch_id, span.source_span_id),
+      span_id: runtimeId(span.branch_id, String(span.trace_id ?? ''), span.source_span_id),
       parent_span_id: parentRuntimeId,
     };
   });
@@ -1309,8 +1318,13 @@ export function projectReplayEvidence(
       ? intr.requested_evidence as Record<string, any>
       : {};
     const interruptBranchId = intr.branch_id ?? branchId;
+    const interruptSourceRef = Array.isArray(intr.source_refs) ? intr.source_refs[0] : undefined;
     const runtimeSpanId = intr.span_id
-      ? runtimeSpanIdByLogicalId.get(`${interruptBranchId}:${intr.span_id}`) ?? String(intr.span_id)
+      ? runtimeSpanIdByLogicalId.get(sourceSpanKey({
+          branch_id: interruptBranchId,
+          trace_id: interruptSourceRef?.trace_id,
+          span_id: intr.span_id,
+        })) ?? String(intr.span_id)
       : undefined;
     const traceId = runtimeSpanId ? spanTraceMap.get(runtimeSpanId) : undefined;
     const requestedAdmission = interruptAdmission(intr.requested_admission_seq ?? intr.admission_seq);

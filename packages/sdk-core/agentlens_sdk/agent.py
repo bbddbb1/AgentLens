@@ -298,7 +298,6 @@ class AgentInstrumentor:
         attrs: dict[str, str | bool] = {
             AgentAttributes.INTERRUPT_ID: next_interrupt_id,
             AgentAttributes.INTERRUPT_REASON: reason,
-            AgentAttributes.RESUME_TOKEN: next_resume_token,
             AgentAttributes.POLICY_REQUIRED_REVIEW: required_review,
         }
         if resume_url:

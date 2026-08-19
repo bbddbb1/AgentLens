@@ -407,7 +407,7 @@ export async function initializeDatabase(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT spans_mission_admission_key UNIQUE (mission_id, admission_seq),
-      CONSTRAINT spans_mission_branch_span_revision_key UNIQUE (mission_id, branch_id, span_id, revision_num),
+      CONSTRAINT spans_mission_branch_trace_span_revision_key UNIQUE (mission_id, branch_id, trace_id, span_id, revision_num),
       CONSTRAINT spans_positive_admission_check CHECK (admission_seq > 0),
       CONSTRAINT spans_positive_revision_check CHECK (revision_num > 0)
     )
@@ -442,15 +442,35 @@ export async function initializeDatabase(): Promise<void> {
   await pool.query(`ALTER TABLE spans ALTER COLUMN admission_seq SET NOT NULL`);
   await pool.query(`ALTER TABLE spans ALTER COLUMN revision_num SET NOT NULL`);
   await pool.query(`ALTER TABLE spans DROP CONSTRAINT IF EXISTS spans_mission_id_branch_id_span_id_key`);
+  // R0 re-freeze migration: a span id is source-local to its trace. Earlier
+  // builds incorrectly numbered same-id spans from different traces as one
+  // revision chain. Admissions remain unchanged; only the revision partition
+  // is corrected deterministically.
+  await pool.query(`ALTER TABLE spans DROP CONSTRAINT IF EXISTS spans_mission_branch_span_revision_key`);
+  await pool.query(`
+    WITH reranked AS (
+      SELECT id,
+             ROW_NUMBER() OVER (
+               PARTITION BY mission_id, branch_id, trace_id, span_id
+               ORDER BY admission_seq ASC, id ASC
+             ) AS corrected_revision
+      FROM spans
+    )
+    UPDATE spans
+    SET revision_num = reranked.corrected_revision
+    FROM reranked
+    WHERE spans.id = reranked.id
+      AND spans.revision_num <> reranked.corrected_revision
+  `);
   await pool.query(`
     DO $$
     BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'spans_mission_admission_key') THEN
         ALTER TABLE spans ADD CONSTRAINT spans_mission_admission_key UNIQUE (mission_id, admission_seq);
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'spans_mission_branch_span_revision_key') THEN
-        ALTER TABLE spans ADD CONSTRAINT spans_mission_branch_span_revision_key
-          UNIQUE (mission_id, branch_id, span_id, revision_num);
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'spans_mission_branch_trace_span_revision_key') THEN
+        ALTER TABLE spans ADD CONSTRAINT spans_mission_branch_trace_span_revision_key
+          UNIQUE (mission_id, branch_id, trace_id, span_id, revision_num);
       END IF;
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'spans_positive_admission_check') THEN
         ALTER TABLE spans ADD CONSTRAINT spans_positive_admission_check CHECK (admission_seq > 0);
