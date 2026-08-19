@@ -9,6 +9,7 @@ import { applyRuntimeOutcome, claimDelivery, postDeliveryReceipt } from '../../s
 import { parseGovernanceStateHistory } from '../../src/services/interrupts/governanceState.js';
 import { reconcileInterruptActionability } from '../../src/services/interrupts/reconcileActionability.js';
 import { GovernanceControlError } from '../../src/services/interrupts/controlAuthority.js';
+import { normalizeSpansToFacts } from '../../src/services/runtime/normalization/index.js';
 
 const hasTestDatabase = Boolean(process.env.AGENTLENS_TEST_DATABASE_URL);
 const suite = hasTestDatabase ? describe : describe.skip;
@@ -397,18 +398,17 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
       expect(durable.rows[0]).toMatchObject({ deliveries: 1, revisions: 4 });
 
       const successorClient = await pool.connect();
-      let successorBindingId = '';
+      const successorBindingId = randomUUID();
       try {
         await successorClient.query('BEGIN');
-        const successor = await registerBridgeBinding(successorClient, {
+        await expect(registerBridgeBinding(successorClient, {
           missionId: mission.id, branchId: 'main', controlRef: 'successor-control-0123456789', leaseSeconds: 120,
           interruptId: 'irq-valid', interactionRequestId: 'irq-valid', framework: 'langgraph',
           nativeIdentity: {
             mission_id: mission.id, branch_id: 'main', framework: 'langgraph', interaction_request_id: 'irq-valid', thread_id: 'thread-irq-valid',
           },
-        });
-        successorBindingId = successor.id;
-        await successorClient.query('COMMIT');
+        })).rejects.toMatchObject({ code: '23505' });
+        await successorClient.query('ROLLBACK');
       } catch (error) {
         await successorClient.query('ROLLBACK');
         throw error;
@@ -508,6 +508,350 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
       else process.env.LANGGRAPH_GOVERNANCE_ENABLED = priorFlag;
       if (priorToken === undefined) delete process.env.AGENTLENS_SERVICE_TOKEN;
       else process.env.AGENTLENS_SERVICE_TOKEN = priorToken;
+    }
+  });
+
+  it('scopes source-local span and invocation identity while preserving real revisions', async () => {
+    const id = randomUUID();
+    governanceMissionIds.push(id);
+    const makeSpan = (traceId: string, marker: string) => ({
+      trace_id: traceId,
+      span_id: 'reused-span',
+      parent_span_id: null,
+      operation_name: 'agent.invoke',
+      start_time_unix_nano: traceId === 'trace-a' ? '1000' : '1001',
+      end_time_unix_nano: traceId === 'trace-a' ? '1010' : '1011',
+      status_code: 'OK',
+      attributes: { marker },
+      events: [
+        { name: 'tool.called', timestamp: '1002', attributes: { tool_call_id: 'reused-call' } },
+        { name: 'tool.completed', timestamp: '1003', attributes: { tool_call_id: 'reused-call' } },
+      ],
+    });
+    await missionStore.ingestSpans(id, [makeSpan('trace-a', 'a'), makeSpan('trace-b', 'b')]);
+
+    const persisted = await pool.query(
+      `SELECT trace_id, span_id, revision_num FROM spans WHERE mission_id = $1 ORDER BY trace_id, revision_num`,
+      [id],
+    );
+    expect(persisted.rows).toEqual([
+      { trace_id: 'trace-a', span_id: 'reused-span', revision_num: 1 },
+      { trace_id: 'trace-b', span_id: 'reused-span', revision_num: 1 },
+    ]);
+    const facts = normalizeSpansToFacts([
+      { ...makeSpan('trace-a', 'a'), branch_id: 'main' },
+      { ...makeSpan('trace-b', 'b'), branch_id: 'main' },
+    ]);
+    const tools = facts.activities.filter((activity) => activity.kind === 'tool');
+    expect(tools).toHaveLength(2);
+    expect(new Set(tools.map((activity) => activity.id)).size).toBe(2);
+    expect(tools.every((activity) => activity.invocation_id === 'reused-call')).toBe(true);
+
+    await missionStore.ingestSpans(id, [{
+      ...makeSpan('trace-a', 'a-corrected'),
+      end_time_unix_nano: '1020',
+    }]);
+    const revisions = await pool.query(
+      `SELECT trace_id, revision_num, attributes->>'marker' AS marker
+       FROM spans WHERE mission_id = $1 ORDER BY trace_id, revision_num`,
+      [id],
+    );
+    expect(revisions.rows).toEqual([
+      { trace_id: 'trace-a', revision_num: 1, marker: 'a' },
+      { trace_id: 'trace-a', revision_num: 2, marker: 'a-corrected' },
+      { trace_id: 'trace-b', revision_num: 1, marker: 'b' },
+    ]);
+  });
+
+  it('reconstructs one coherent database snapshot when a span commit races the frame read', async () => {
+    const id = randomUUID();
+    governanceMissionIds.push(id);
+    await missionStore.ingestSpans(id, [{
+      trace_id: 'snapshot-trace', span_id: 'before', parent_span_id: null,
+      operation_name: 'before', start_time_unix_nano: '2000', end_time_unix_nano: '2001',
+      status_code: 'OK', attributes: {}, events: [],
+    }]);
+
+    const writer = await pool.connect();
+    const monitor = await pool.connect();
+    try {
+      await writer.query('BEGIN');
+      await writer.query('LOCK TABLE spans IN ACCESS EXCLUSIVE MODE');
+      const reading = missionStore.getReplayFromTelemetry(id, 'main');
+      let blocked = false;
+      for (let attempt = 0; attempt < 100 && !blocked; attempt += 1) {
+        const state = await monitor.query(
+          `SELECT 1 FROM pg_stat_activity
+           WHERE datname = current_database()
+             AND query LIKE '%FROM spans%mission_id%branch_id%'
+             AND wait_event_type = 'Lock'`,
+        );
+        blocked = (state.rowCount ?? 0) > 0;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blocked).toBe(true);
+      await writer.query(`UPDATE evidence_admission_counters SET next_seq = 3 WHERE mission_id = $1`, [id]);
+      await writer.query(
+        `INSERT INTO spans (
+           id, mission_id, branch_id, trace_id, span_id, parent_span_id, name,
+           start_time_unix_nano, end_time_unix_nano, status_code, attributes, events,
+           admission_seq, revision_num
+         ) VALUES ($1,$2,'main','snapshot-trace','after',NULL,'after',2002,2003,'OK','{}','[]',2,1)`,
+        [randomUUID(), id],
+      );
+      await writer.query(
+        `INSERT INTO interrupts (
+           id, mission_id, branch_id, interrupt_id, reason, requested_admission_seq,
+           requested_evidence, request_lifecycle, runtime_outcome, governance_state_history, control_mode
+         ) VALUES (
+           $1,$2,'main','after-request','after request',3,
+           '{"interrupt_id":"after-request","reason":"after request","payload":{}}',
+           'pending','awaiting_interaction',
+           '[{"transition_id":"request:3:pending:test","admission_seq":3,"axis":"request","state":"pending","recorded_at":"2026-01-01T00:00:00.000Z","source":"interrupt_request"},{"transition_id":"runtime:3:awaiting_interaction:test","admission_seq":3,"axis":"runtime","state":"awaiting_interaction","recorded_at":"2026-01-01T00:00:00.000Z","source":"interrupt_request"}]',
+           'unavailable'
+         )`,
+        [randomUUID(), id],
+      );
+      await writer.query('COMMIT');
+      const raced = await reading;
+      expect(raced?.events.some((event) => event.source_span_id === 'after')).toBe(false);
+      expect(raced?.current_state?.interrupts).not.toHaveProperty('after-request');
+      const afterCommit = await missionStore.getReplayFromTelemetry(id, 'main');
+      expect(afterCommit?.events.some((event) => event.source_span_id === 'after')).toBe(true);
+      expect(afterCommit?.current_state?.interrupts).toHaveProperty('after-request');
+    } finally {
+      await writer.query('ROLLBACK').catch(() => undefined);
+      writer.release();
+      monitor.release();
+    }
+  });
+
+  it('inherits the exact parent Governance prefix without a lossy child row', async () => {
+    const mission = await missionStore.createMission({ objective: 'exact governance fork' });
+    governanceMissionIds.push(mission.id);
+    const token = 'fork-exact-token-0123456789';
+    await missionStore.createInterrupt({
+      mission_id: mission.id, interrupt_id: 'fork-request', reason: 'exact reason',
+      resume_token: token, payload: { visible: 'recorded' },
+    });
+    await missionStore.decideInterrupt(mission.id, 'fork-request', {
+      branch_id: 'main', decision: 'approve', comment: 'recorded decision', idempotency_key: 'fork-decision',
+    });
+    const parentBefore = await missionStore.getReplayFromTelemetry(mission.id, 'main');
+    const cutoff = parentBefore!.snapshots.at(-1)!.sequence_num;
+    const child = await missionStore.createReplayBranch(mission.id, {
+      name: 'governance child', source_branch_id: 'main', forked_from_sequence_num: cutoff,
+    });
+    const childRows = await pool.query(
+      `SELECT 1 FROM interrupts WHERE mission_id = $1 AND branch_id = $2`,
+      [mission.id, child!.id],
+    );
+    expect(childRows.rowCount).toBe(0);
+    const childBefore = await missionStore.getReplayFromTelemetry(mission.id, child!.id);
+    expect(childBefore?.current_state?.interrupts['fork-request']).toMatchObject({
+      reason: 'exact reason', decision_state: 'recorded', runtime_outcome: 'awaiting_interaction',
+    });
+    await missionStore.resumeInterruptByToken(token);
+    const childAfter = await missionStore.getReplayFromTelemetry(mission.id, child!.id);
+    expect(childAfter?.events).toEqual(childBefore?.events);
+    expect(childAfter?.current_state).toEqual(childBefore?.current_state);
+
+    await missionStore.createInterrupt({
+      mission_id: mission.id, branch_id: child!.id, interrupt_id: 'fork-request',
+      reason: 'child-local collision', resume_token: 'child-fork-token-0123456789',
+    });
+    const childWithLocal = await missionStore.getReplayFromTelemetry(mission.id, child!.id);
+    const colliding = Object.values(childWithLocal?.current_state?.interrupts ?? {})
+      .filter((interrupt) => String(interrupt.interrupt_id).endsWith('fork-request'));
+    expect(colliding).toHaveLength(2);
+    expect(new Set(colliding.map((interrupt) => interrupt.interrupt_id)).size).toBe(2);
+    expect(new Set(colliding.map((interrupt) => interrupt.reason))).toEqual(
+      new Set(['exact reason', 'child-local collision']),
+    );
+    expect((await missionStore.getReplayFromTelemetry(mission.id, 'main'))?.current_state?.interrupts)
+      .toHaveProperty('fork-request');
+  });
+
+  it('enforces unique mutation authority, deterministic expiry, and credential isolation', async () => {
+    const mission = await missionStore.createMission({ objective: 'authority adversary' });
+    governanceMissionIds.push(mission.id);
+    const token = 'unique-legacy-token-0123456789';
+    await missionStore.createInterrupt({
+      mission_id: mission.id, interrupt_id: 'legacy-one', reason: 'legacy one', resume_token: token,
+      payload: { resume_token: token, safe: true },
+    });
+    await expect(missionStore.createInterrupt({
+      mission_id: mission.id, interrupt_id: 'legacy-two', reason: 'legacy two', resume_token: token,
+    })).rejects.toMatchObject({ code: '23505' });
+    expect((await pool.query(
+      `SELECT COUNT(*)::int AS count FROM interrupts WHERE resume_token_hash IS NOT NULL AND mission_id = $1`,
+      [mission.id],
+    )).rows[0].count).toBe(1);
+
+    const storedLegacy = (await pool.query(
+      `SELECT payload, requested_evidence FROM interrupts WHERE mission_id = $1 AND interrupt_id = 'legacy-one'`,
+      [mission.id],
+    )).rows[0];
+    expect(JSON.stringify(storedLegacy)).not.toContain(token);
+    expect(JSON.stringify(storedLegacy)).not.toContain('resume_token');
+
+    const genericDecision = await missionStore.decideInterrupt(mission.id, 'legacy-one', {
+      branch_id: 'main', decision: 'resume', idempotency_key: 'generic-resume-decision',
+    });
+    expect(genericDecision).toMatchObject({
+      decision_state: 'recorded', request_lifecycle: 'pending', runtime_outcome: 'awaiting_interaction',
+    });
+    const beforeDedicatedResume = (await pool.query(
+      `SELECT governance_state_history FROM interrupts WHERE mission_id = $1 AND interrupt_id = 'legacy-one'`,
+      [mission.id],
+    )).rows[0];
+    expect(parseGovernanceStateHistory(beforeDedicatedResume.governance_state_history)
+      .some((transition) => transition.axis === 'runtime' && transition.state === 'resumed')).toBe(false);
+    const genericDecisionAdmission = Math.max(...parseGovernanceStateHistory(beforeDedicatedResume.governance_state_history)
+      .filter((transition) => transition.axis === 'decision')
+      .map((transition) => transition.admission_seq));
+    expect((await missionStore.getRuntimeExplanation(mission.id, 'main', genericDecisionAdmission))?.run_outcome)
+      .toBe('waiting');
+    expect(await missionStore.resumeInterruptByToken(token)).toMatchObject({ runtime_outcome: 'resumed' });
+
+    await missionStore.createInterrupt({
+      mission_id: mission.id, interrupt_id: 'expired-request', reason: 'expired',
+      resume_token: 'expired-token-0123456789', expires_at: '2000-01-01T00:00:00.000Z',
+    });
+    const beforeExpiry = (await pool.query(
+      `SELECT request_lifecycle, governance_state_history FROM interrupts WHERE mission_id = $1 AND interrupt_id = 'expired-request'`,
+      [mission.id],
+    )).rows[0];
+    const expiryClient = await pool.connect();
+    try {
+      await expiryClient.query('BEGIN');
+      const evaluation = await reconcileInterruptActionability(expiryClient, {
+        missionId: mission.id, branchId: 'main', interruptId: 'expired-request', framework: 'langgraph',
+      });
+      expect(evaluation.actionability).toBe('unavailable');
+      await expiryClient.query('COMMIT');
+    } finally {
+      expiryClient.release();
+    }
+    const afterExpiry = (await pool.query(
+      `SELECT request_lifecycle, governance_state_history FROM interrupts WHERE mission_id = $1 AND interrupt_id = 'expired-request'`,
+      [mission.id],
+    )).rows[0];
+    expect(afterExpiry.request_lifecycle).toBe('pending');
+    expect(afterExpiry.governance_state_history).toEqual(beforeExpiry.governance_state_history);
+    expect((await missionStore.getReplayFromTelemetry(mission.id, 'main'))
+      ?.current_state?.interrupts['expired-request']).toMatchObject({
+        request_lifecycle: 'pending', runtime_outcome: 'awaiting_interaction', actionability: 'unavailable',
+      });
+
+    await missionStore.ingestSpans(mission.id, [{
+      trace_id: 'credential-trace', span_id: 'credential-span', parent_span_id: null,
+      operation_name: 'credential.probe', start_time_unix_nano: '3000', end_time_unix_nano: '3001', status_code: 'OK',
+      attributes: { 'gen_ai.agent.resume.token': 'telemetry-secret', control_ref: 'control-secret', safe: 'visible' },
+      events: [{ name: 'agent.interrupt.requested', timestamp: '3000', attributes: {
+        interrupt_id: 'credential-request', 'gen_ai.agent.resume.token': 'event-secret', reason: 'credential probe',
+      } }],
+    }]);
+    const raw = (await pool.query(
+      `SELECT attributes, events FROM spans WHERE mission_id = $1 AND span_id = 'credential-span'`,
+      [mission.id],
+    )).rows[0];
+    expect(JSON.stringify(raw)).not.toContain('telemetry-secret');
+    expect(JSON.stringify(raw)).not.toContain('event-secret');
+    expect(JSON.stringify(raw)).not.toContain('control-secret');
+
+    await pool.query(
+      `UPDATE spans SET attributes = attributes || '{"nested":{"resume_token":"historical-secret"}}'::jsonb
+       WHERE mission_id = $1 AND span_id = 'credential-span'`,
+      [mission.id],
+    );
+    await pool.query(`DROP INDEX idx_interrupts_unique_legacy_resume_token`);
+    await pool.query(
+      `UPDATE interrupts AS duplicate
+       SET resume_token_hash = source.resume_token_hash, control_mode = 'legacy_token'
+       FROM interrupts AS source
+       WHERE duplicate.mission_id = $1 AND duplicate.interrupt_id = 'expired-request'
+         AND source.mission_id = $1 AND source.interrupt_id = 'legacy-one'`,
+      [mission.id],
+    );
+    await pool.query(
+      `DELETE FROM agentlens_schema_migrations WHERE name = 'r0_refreeze_control_credential_cleanup'`,
+    );
+    await initializeDatabase();
+    const migrated = (await pool.query(
+      `SELECT attributes FROM spans WHERE mission_id = $1 AND span_id = 'credential-span'`,
+      [mission.id],
+    )).rows[0];
+    expect(JSON.stringify(migrated)).not.toContain('historical-secret');
+    expect(JSON.stringify(migrated)).not.toContain('resume_token');
+    const invalidated = await pool.query(
+      `SELECT interrupt_id, resume_token_hash, control_mode
+       FROM interrupts WHERE mission_id = $1 AND interrupt_id IN ('legacy-one','expired-request')
+       ORDER BY interrupt_id`,
+      [mission.id],
+    );
+    expect(invalidated.rows).toEqual([
+      { interrupt_id: 'expired-request', resume_token_hash: null, control_mode: 'unavailable' },
+      { interrupt_id: 'legacy-one', resume_token_hash: null, control_mode: 'unavailable' },
+    ]);
+  });
+
+  it('lets PostgreSQL select at most one active pre-interrupt binding under concurrency', async () => {
+    const mission = await missionStore.createMission({ objective: 'binding race' });
+    governanceMissionIds.push(mission.id);
+    const first = await pool.connect();
+    const second = await pool.connect();
+    try {
+      await first.query('BEGIN');
+      await second.query('BEGIN');
+      const input = {
+        missionId: mission.id, branchId: 'main', leaseSeconds: 120,
+        interactionRequestId: 'pre-request', framework: 'langgraph' as const,
+        nativeIdentity: {
+          mission_id: mission.id, branch_id: 'main', framework: 'langgraph', interaction_request_id: 'pre-request', thread_id: 'thread-pre',
+        },
+      };
+      await registerBridgeBinding(first, { ...input, controlRef: 'pre-control-one-0123456789' });
+      const racing = registerBridgeBinding(second, { ...input, controlRef: 'pre-control-two-0123456789' });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await first.query('COMMIT');
+      const successor = await racing;
+      await second.query('COMMIT');
+      expect((await pool.query(
+        `SELECT COUNT(*)::int AS count FROM framework_bridge_bindings
+         WHERE mission_id = $1 AND branch_id = 'main' AND interaction_request_id = 'pre-request' AND lifecycle_state = 'active'`,
+        [mission.id],
+      )).rows[0].count).toBe(1);
+      expect((await pool.query(
+        `SELECT id FROM framework_bridge_bindings
+         WHERE mission_id = $1 AND branch_id = 'main' AND interaction_request_id = 'pre-request' AND lifecycle_state = 'active'`,
+        [mission.id],
+      )).rows[0].id).toBe(successor.id);
+
+      await pool.query(`DROP INDEX idx_framework_bridge_one_active_request`);
+      await pool.query(`DROP INDEX idx_framework_bridge_one_active_interaction`);
+      await pool.query(
+        `INSERT INTO framework_bridge_bindings (
+           id, mission_id, branch_id, framework, interrupt_id, interaction_request_id,
+           control_ref_hash, generation, lifecycle_state, registered_at, lease_expires_at,
+           last_heartbeat_at, native_identity
+         )
+         SELECT $2, mission_id, branch_id, framework, interrupt_id, interaction_request_id,
+                $3, generation + 1, 'active', NOW(), NOW() + INTERVAL '2 minutes', NOW(), native_identity
+         FROM framework_bridge_bindings WHERE id = $1`,
+        [successor.id, randomUUID(), 'f'.repeat(64)],
+      );
+      await initializeDatabase();
+      expect((await pool.query(
+        `SELECT COUNT(*)::int AS count FROM framework_bridge_bindings
+         WHERE mission_id = $1 AND interaction_request_id = 'pre-request' AND lifecycle_state = 'active'`,
+        [mission.id],
+      )).rows[0].count).toBe(0);
+    } finally {
+      await first.query('ROLLBACK').catch(() => undefined);
+      await second.query('ROLLBACK').catch(() => undefined);
+      first.release();
+      second.release();
     }
   });
 });

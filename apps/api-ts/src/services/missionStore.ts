@@ -1800,18 +1800,14 @@ class MissionStore {
       const result = await client.query(
         `
           UPDATE interrupts
-          SET status = CASE WHEN $4 = 'approve' THEN 'approved' WHEN $4 = 'reject' THEN 'rejected' WHEN $4 = 'resume' THEN 'resumed' ELSE 'pending' END,
+          SET status = CASE WHEN $4 = 'approve' THEN 'approved' WHEN $4 = 'reject' THEN 'rejected' ELSE status END,
               decision = $4,
               decision_comment = $5,
               decision_payload = $6::jsonb,
               idempotency_key = COALESCE(idempotency_key, $7),
               decided_at = COALESCE(decided_at, NOW()),
-              resumed_at = CASE WHEN $4 = 'resume' THEN COALESCE(resumed_at, NOW()) ELSE resumed_at END,
               decided_admission_seq = COALESCE(decided_admission_seq, $8),
-              resumed_admission_seq = CASE WHEN $4 = 'resume' THEN COALESCE(resumed_admission_seq, $8) ELSE resumed_admission_seq END,
               decision_state = 'recorded',
-              runtime_outcome = CASE WHEN $4 = 'resume' THEN 'resumed' ELSE runtime_outcome END,
-              request_lifecycle = CASE WHEN $4 = 'resume' THEN 'resolved' ELSE request_lifecycle END,
               updated_at = NOW()
           WHERE mission_id = $1
             AND branch_id = $2
@@ -1845,24 +1841,6 @@ class MissionStore {
               source: 'operator_decision',
               evidence_ref: `legacy-decision:${input.idempotency_key}`,
             }),
-            ...(input.decision === 'resume' ? [
-              governanceTransition({
-                admission_seq: decisionAdmission,
-                axis: 'runtime',
-                state: 'resumed',
-                recorded_at: recordedAt,
-                source: 'legacy_resume',
-                evidence_ref: `legacy-decision:${input.idempotency_key}`,
-              }),
-              governanceTransition({
-                admission_seq: decisionAdmission,
-                axis: 'request',
-                state: 'resolved',
-                recorded_at: recordedAt,
-                source: 'legacy_resume',
-                evidence_ref: `legacy-decision:${input.idempotency_key}`,
-              }),
-            ] : []),
           ],
         });
         row.governance_state_history = governanceHistory;
@@ -1898,14 +1876,14 @@ class MissionStore {
            AND request_lifecycle = 'pending'
            AND (expires_at IS NULL OR expires_at > NOW())
            AND status IN ('pending', 'approved')
-         LIMIT 1 FOR UPDATE`,
+         FOR UPDATE`,
         [hashToken(resumeToken)],
       );
-      const existing = existingResult.rows[0] as Record<string, unknown> | undefined;
-      if (!existing) {
+      if (existingResult.rowCount !== 1) {
         await client.query('ROLLBACK');
         return null;
       }
+      const existing = existingResult.rows[0] as Record<string, unknown>;
       const resumedAdmission = await allocateEvidenceAdmission(client, String(existing.mission_id));
       const result = await client.query(
         `
@@ -1919,7 +1897,7 @@ class MissionStore {
               runtime_outcome = 'resumed',
               request_lifecycle = 'resolved',
               updated_at = NOW()
-          WHERE resume_token_hash = $1
+          WHERE id = $1
             AND control_mode = 'legacy_token'
             AND framework IS NULL
             AND native_identity IS NULL
@@ -1928,7 +1906,7 @@ class MissionStore {
             AND status IN ('pending', 'approved')
           RETURNING *
         `,
-        [hashToken(resumeToken), JSON.stringify(payload), resumedAdmission],
+        [String(existing.id), JSON.stringify(payload), resumedAdmission],
       );
       const row = result.rows[0] as Record<string, unknown> | undefined;
       let interrupt: (InterruptRecord & { branch_id?: string }) | null = null;

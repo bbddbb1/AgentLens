@@ -30,6 +30,7 @@ export const AgentAttributes = {
   INTERRUPT_ID: 'gen_ai.agent.interrupt.id',
   INTERRUPT_REASON: 'gen_ai.agent.interrupt.reason',
   INTERRUPT_RESUME_URL: 'gen_ai.agent.interrupt.resume_url',
+  /** @deprecated Compatibility input only. Executable credentials must use the control API and are discarded from telemetry. */
   RESUME_TOKEN: 'gen_ai.agent.resume.token',
   HUMAN_DECISION: 'gen_ai.agent.human.decision',
   HUMAN_INPUT: 'gen_ai.agent.human.input',

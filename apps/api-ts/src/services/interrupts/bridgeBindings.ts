@@ -56,6 +56,17 @@ export async function registerBridgeBinding(
     ?? input.nativeIdentity.interrupt_request_id
     ?? input.interruptId;
 
+  // The request row may not exist yet. Serialize authority replacement on the
+  // DB-owned control identity itself so two API processes cannot both observe
+  // an empty pre-interrupt scope and create active bindings.
+  await client.query(
+    `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+    [JSON.stringify([
+      'governance-binding', framework, input.missionId, input.branchId,
+      interactionRequestId ?? '', input.interruptId ?? '',
+    ])],
+  );
+
   // Serialize binding replacement with decision authority selection for the
   // same request. A registration racing a decision must observe whether the
   // decision froze the current binding before revoking it.

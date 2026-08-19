@@ -1349,10 +1349,10 @@ export function projectReplayEvidence(
       trace_id: traceId,
       payload: {
         agent_id: requestedEvidence.agent_id ?? intr.agent_id,
-        interrupt_id: requestedEvidence.interrupt_id ?? intr.interrupt_id,
         reason: requestedEvidence.reason ?? intr.reason,
         resume_url: requestedEvidence.resume_url ?? intr.resume_url,
         ...publicInterruptPayload(requestedEvidence.payload ?? intr.payload ?? {}),
+        interrupt_id: intr.interrupt_id,
       },
       metadata: {
         runtime_timestamp_unix_nano: String(BigInt(new Date(intr.created_at).getTime()) * 1_000_000n),
@@ -1365,7 +1365,7 @@ export function projectReplayEvidence(
       source_event_id: 'interrupt.requested',
     } as any);
 
-    if (intr.decided_at && intr.decision && intr.decision !== 'resume') {
+    if (intr.decided_at && intr.decision) {
       const decidedIso = new Date(intr.decided_at).toISOString();
       const decidedAdmission = interruptAdmission(intr.decided_admission_seq);
       events.push({

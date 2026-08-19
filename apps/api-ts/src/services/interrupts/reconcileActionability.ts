@@ -320,10 +320,6 @@ export async function reconcileInterruptActionability(
       `
         UPDATE interrupts
         SET actionability = $4,
-            request_lifecycle = CASE
-              WHEN request_lifecycle = 'pending' AND expires_at IS NOT NULL AND expires_at <= NOW() THEN 'expired'
-              ELSE request_lifecycle
-            END,
             authorized_binding_id = CASE
               WHEN decision_state = 'recorded' OR delivery_id IS NOT NULL THEN authorized_binding_id
               ELSE $6::uuid

@@ -111,7 +111,7 @@ class AgentAttributes:
     """Optional resume URL associated with the interrupt."""
 
     RESUME_TOKEN = "gen_ai.agent.resume.token"
-    """Opaque token that can be used to resume execution after review."""
+    """Deprecated compatibility input. Control credentials must not be emitted as telemetry."""
 
     HUMAN_DECISION = "gen_ai.agent.human.decision"
     """Human decision captured for an interrupt (approve, reject, resume)."""

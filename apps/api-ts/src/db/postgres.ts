@@ -328,6 +328,29 @@ export async function initializeDatabase(): Promise<void> {
     END
     WHERE control_mode = 'unavailable'
   `);
+  // Executable legacy credentials are DB-only hashes. Historical duplicate
+  // hashes are ambiguous authority: invalidate every member rather than pick a
+  // winner. Then remove plaintext compatibility copies from evidence columns.
+  await pool.query(`
+    WITH ambiguous AS (
+      SELECT resume_token_hash
+      FROM interrupts
+      WHERE resume_token_hash IS NOT NULL
+      GROUP BY resume_token_hash
+      HAVING COUNT(*) > 1
+    )
+    UPDATE interrupts
+    SET resume_token_hash = NULL,
+        control_mode = 'unavailable',
+        actionability = 'unavailable',
+        decision_audit = decision_audit || '{"legacy_control_migration":"duplicate_token_invalidated"}'::jsonb
+    WHERE resume_token_hash IN (SELECT resume_token_hash FROM ambiguous)
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interrupts_unique_legacy_resume_token
+    ON interrupts (resume_token_hash)
+    WHERE resume_token_hash IS NOT NULL
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS langgraph_bridge_bindings (
       id UUID PRIMARY KEY,
@@ -375,8 +398,90 @@ export async function initializeDatabase(): Promise<void> {
     ON CONFLICT (id) DO NOTHING
   `);
   await pool.query(`
+    DELETE FROM framework_bridge_bindings AS binding
+    WHERE NOT EXISTS (SELECT 1 FROM missions WHERE missions.id = binding.mission_id)
+  `);
+  await pool.query(`
+    ALTER TABLE framework_bridge_bindings
+    ADD CONSTRAINT framework_bridge_bindings_mission_fkey
+    FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+  `).catch(() => {});
+  await pool.query(`
+    ALTER TABLE framework_bridge_bindings
+    ADD CONSTRAINT framework_bridge_bindings_branch_fkey
+    FOREIGN KEY (mission_id, branch_id)
+    REFERENCES mission_replay_branches(mission_id, id) ON DELETE CASCADE
+  `).catch(() => {});
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_framework_bridge_bindings_scope
     ON framework_bridge_bindings (framework, mission_id, branch_id, lifecycle_state, lease_expires_at)
+  `);
+  // Any pre-existing set with more than one active authority is ambiguous and
+  // therefore entirely revoked. Current authority is enforced by PostgreSQL,
+  // including registrations that race before an interrupt row exists.
+  await pool.query(`
+    WITH ambiguous AS (
+      SELECT framework, mission_id, branch_id,
+             COALESCE(interaction_request_id, '') AS request_key,
+             COALESCE(interrupt_id, '') AS interrupt_key
+      FROM framework_bridge_bindings
+      WHERE lifecycle_state = 'active'
+      GROUP BY framework, mission_id, branch_id,
+               COALESCE(interaction_request_id, ''), COALESCE(interrupt_id, '')
+      HAVING COUNT(*) > 1
+    )
+    UPDATE framework_bridge_bindings AS binding
+    SET lifecycle_state = 'revoked', revoked_at = NOW(), updated_at = NOW()
+    FROM ambiguous
+    WHERE binding.lifecycle_state = 'active'
+      AND binding.framework = ambiguous.framework
+      AND binding.mission_id = ambiguous.mission_id
+      AND binding.branch_id = ambiguous.branch_id
+      AND COALESCE(binding.interaction_request_id, '') = ambiguous.request_key
+      AND COALESCE(binding.interrupt_id, '') = ambiguous.interrupt_key
+  `);
+  for (const identityColumn of ['interaction_request_id', 'interrupt_id']) {
+    await pool.query(`
+      WITH ambiguous AS (
+        SELECT framework, mission_id, branch_id, ${identityColumn} AS identity_value
+        FROM framework_bridge_bindings
+        WHERE lifecycle_state = 'active' AND ${identityColumn} IS NOT NULL
+        GROUP BY framework, mission_id, branch_id, ${identityColumn}
+        HAVING COUNT(*) > 1
+      )
+      UPDATE framework_bridge_bindings AS binding
+      SET lifecycle_state = 'revoked', revoked_at = NOW(), updated_at = NOW()
+      FROM ambiguous
+      WHERE binding.lifecycle_state = 'active'
+        AND binding.framework = ambiguous.framework
+        AND binding.mission_id = ambiguous.mission_id
+        AND binding.branch_id = ambiguous.branch_id
+        AND binding.${identityColumn} = ambiguous.identity_value
+    `);
+  }
+  await pool.query(`DROP INDEX IF EXISTS idx_framework_bridge_one_active_control_ref`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_framework_bridge_one_active_request
+    ON framework_bridge_bindings (
+      framework, mission_id, branch_id,
+      COALESCE(interaction_request_id, ''), COALESCE(interrupt_id, '')
+    )
+    WHERE lifecycle_state = 'active'
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_framework_bridge_one_active_interaction
+    ON framework_bridge_bindings (framework, mission_id, branch_id, interaction_request_id)
+    WHERE lifecycle_state = 'active' AND interaction_request_id IS NOT NULL
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_framework_bridge_one_active_interrupt
+    ON framework_bridge_bindings (framework, mission_id, branch_id, interrupt_id)
+    WHERE lifecycle_state = 'active' AND interrupt_id IS NOT NULL
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_framework_bridge_one_active_control_ref
+    ON framework_bridge_bindings (framework, mission_id, branch_id, control_ref_hash)
+    WHERE lifecycle_state = 'active'
   `);
 
   await pool.query(`
@@ -525,6 +630,59 @@ export async function initializeDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_spans_trace_id ON spans (trace_id);
   `);
 
+  // One-time compatibility cleanup for credentials recorded by older SDK/API
+  // paths. Values are removed recursively; no plaintext is copied elsewhere.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agentlens_schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE OR REPLACE FUNCTION agentlens_strip_control_credentials(value jsonb)
+    RETURNS jsonb LANGUAGE plpgsql IMMUTABLE AS $$
+    DECLARE
+      result jsonb;
+      item record;
+    BEGIN
+      IF value IS NULL THEN RETURN NULL; END IF;
+      IF jsonb_typeof(value) = 'object' THEN
+        result := '{}'::jsonb;
+        FOR item IN SELECT key, val FROM jsonb_each(value) AS entries(key, val) LOOP
+          IF item.key !~* '(^|[._-])(resume[._-]?token|control[._-]?(ref|reference)|bridge[._-]?control[._-]?ref)($|[._-])' THEN
+            result := result || jsonb_build_object(item.key, agentlens_strip_control_credentials(item.val));
+          END IF;
+        END LOOP;
+        RETURN result;
+      ELSIF jsonb_typeof(value) = 'array' THEN
+        SELECT COALESCE(jsonb_agg(agentlens_strip_control_credentials(element)), '[]'::jsonb)
+        INTO result FROM jsonb_array_elements(value) AS elements(element);
+        RETURN result;
+      END IF;
+      RETURN value;
+    END $$;
+
+    UPDATE interrupts
+    SET payload = agentlens_strip_control_credentials(payload),
+        requested_evidence = agentlens_strip_control_credentials(requested_evidence),
+        decision_payload = agentlens_strip_control_credentials(decision_payload)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM agentlens_schema_migrations WHERE name = 'r0_refreeze_control_credential_cleanup'
+    );
+    UPDATE spans
+    SET attributes = agentlens_strip_control_credentials(attributes),
+        events = agentlens_strip_control_credentials(events)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM agentlens_schema_migrations WHERE name = 'r0_refreeze_control_credential_cleanup'
+    );
+    UPDATE missions
+    SET metadata = agentlens_strip_control_credentials(metadata)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM agentlens_schema_migrations WHERE name = 'r0_refreeze_control_credential_cleanup'
+    );
+    INSERT INTO agentlens_schema_migrations(name)
+    VALUES ('r0_refreeze_control_credential_cleanup') ON CONFLICT DO NOTHING;
+    DROP FUNCTION agentlens_strip_control_credentials(jsonb);
+  `);
+
   // Backfill legacy interrupt lifecycle admissions after span admissions so
   // existing evidence receives one stable mission-local cursor per action.
   await pool.query(`
@@ -659,4 +817,19 @@ export async function initializeDatabase(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+
+  // Frozen vocabularies constrain all new writes. NOT VALID preserves an
+  // inspectable fail-closed boundary for any pre-freeze rows that used legacy
+  // values; public serializers still validate the frozen contract.
+  for (const statement of [
+    `ALTER TABLE interrupts ADD CONSTRAINT interrupts_request_lifecycle_frozen CHECK (request_lifecycle IN ('pending','resolved','expired','stale','unsupported')) NOT VALID`,
+    `ALTER TABLE interrupts ADD CONSTRAINT interrupts_actionability_frozen CHECK (actionability IN ('actionable','observed_only','unsupported','identity_conflict','unavailable')) NOT VALID`,
+    `ALTER TABLE interrupts ADD CONSTRAINT interrupts_decision_state_frozen CHECK (decision_state IN ('none','recorded')) NOT VALID`,
+    `ALTER TABLE interrupts ADD CONSTRAINT interrupts_delivery_state_frozen CHECK (delivery_state IN ('not_requested','pending','accepted','failed','stale','unknown')) NOT VALID`,
+    `ALTER TABLE interrupts ADD CONSTRAINT interrupts_runtime_outcome_frozen CHECK (runtime_outcome IN ('awaiting_interaction','resumed','continued_with_input','rejected_or_terminated','failed','unknown')) NOT VALID`,
+    `ALTER TABLE interrupts ADD CONSTRAINT interrupts_control_mode_frozen CHECK (control_mode IN ('framework_binding','legacy_token','unavailable')) NOT VALID`,
+    `ALTER TABLE interrupts ADD CONSTRAINT interrupts_resume_hash_shape CHECK (resume_token_hash IS NULL OR length(resume_token_hash) = 64) NOT VALID`,
+  ]) {
+    await pool.query(statement).catch(() => {});
+  }
 }

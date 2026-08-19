@@ -233,6 +233,12 @@ class TestAgentInstrumentor:
         event_names = [call[0][0] for call in span.add_event.call_args_list]
         assert "agent.interrupt.requested" in event_names
         assert "agent.escalation" in event_names
+        interrupt_attrs = next(
+            call[0][1] for call in span.add_event.call_args_list
+            if call[0][0] == "agent.interrupt.requested"
+        )
+        assert "gen_ai.agent.resume.token" not in interrupt_attrs
+        assert result["resume_token"] not in str(interrupt_attrs)
 
     def test_request_human_review_with_custom_ids(self):
         agent, _, span = self._make_agent()

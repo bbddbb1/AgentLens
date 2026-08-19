@@ -162,14 +162,22 @@ export function selectInterruptsForBranch<T extends AdmittedInterruptRecord>(
       selected.push(row);
     }
   }
-  const closestByInterruptId = new Map<string, T>();
+  const scopesByInterruptId = new Map<string, Set<string>>();
   for (const row of selected) {
     const interruptId = String(row.interrupt_id ?? '');
-    if (interruptId) closestByInterruptId.set(interruptId, row);
+    if (!interruptId) continue;
+    const scopes = scopesByInterruptId.get(interruptId) ?? new Set<string>();
+    scopes.add(String(row.branch_id ?? branchId));
+    scopesByInterruptId.set(interruptId, scopes);
   }
-  return selected.filter((row) => {
+  return selected.map((row) => {
     const interruptId = String(row.interrupt_id ?? '');
-    return !interruptId || closestByInterruptId.get(interruptId) === row;
+    if (!interruptId || (scopesByInterruptId.get(interruptId)?.size ?? 0) <= 1) return row;
+    return {
+      ...row,
+      source_interrupt_id: interruptId,
+      interrupt_id: `${String(row.branch_id ?? branchId)}::${interruptId}`,
+    } as T;
   });
 }
 
