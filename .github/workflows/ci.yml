@@ -101,6 +101,7 @@ jobs:
           --health-retries=20
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agentlens
+      AGENTLENS_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agentlens
       AGENTLENS_API_URL: http://127.0.0.1:8001
       AGENTLENS_SERVICE_TOKEN: conformance-ci-token
       LANGGRAPH_GOVERNANCE_ENABLED: "true"
@@ -118,6 +119,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: pnpm install --frozen-lockfile
       - run: uv sync
+      - run: pnpm conformance:r0-refreeze
       - run: pnpm --filter api-ts build
       - name: Start real API process
         run: |

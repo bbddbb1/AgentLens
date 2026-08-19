@@ -490,10 +490,13 @@ describe('missionStore — getAuditEvents and EventEnvelope', () => {
       events: []
     };
 
-    mockQuery.mockResolvedValueOnce({ rows: [fakeRow()], rowCount: 1 }); // getMission
-    mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'main', name: 'Main', status: 'active', created_at: now, updated_at: now }], rowCount: 1 }); // branches
-    mockClient.query.mockResolvedValueOnce({ rows: [rawSpan], rowCount: 1 }); // spans
-    mockClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // interrupts
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN REPEATABLE READ
+      .mockResolvedValueOnce({ rows: [{ id: rawSpan.mission_id }], rowCount: 1 }) // mission in snapshot
+      .mockResolvedValueOnce({ rows: [{ id: 'main', name: 'Main', status: 'active', created_at: now, updated_at: now }], rowCount: 1 }) // branches
+      .mockResolvedValueOnce({ rows: [rawSpan], rowCount: 1 }) // spans
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // interrupts
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // COMMIT
 
     const response = await missionStore.getAuditEvents('550e8400-e29b-41d4-a716-446655440000', 'main');
 
@@ -508,13 +511,11 @@ describe('missionStore — getAuditEvents and EventEnvelope', () => {
     expect(event.policy).toEqual({ rule_id: 'rule1', decision: 'allow' });
     expect(response.integrity.is_valid).toBeNull();
     expect(response.integrity.verification_status).toBe('unsupported');
+    expect(mockClient.query.mock.calls[0]?.[0]).toBe('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
   });
 
   it('filters by branch and sequence number in getAuditEvents query', async () => {
     const now = '2026-05-31T00:00:00.000Z';
-    mockQuery.mockResolvedValueOnce({ rows: [fakeRow()], rowCount: 1 }); // getMission
-    mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'dev-branch', name: 'Dev', status: 'active', created_at: now, updated_at: now }], rowCount: 1 }); // branches
-    
     const spanRows = [
         {
           id: '550e8400-e29b-41d4-a716-446655440000',
@@ -543,11 +544,13 @@ describe('missionStore — getAuditEvents and EventEnvelope', () => {
           events: [],
         },
       ];
-    mockClient.query.mockResolvedValueOnce({
-      rows: spanRows,
-      rowCount: 2,
-    }); // spans
-    mockClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // interrupts
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN REPEATABLE READ
+      .mockResolvedValueOnce({ rows: [{ id: '550e8400-e29b-41d4-a716-446655440000' }], rowCount: 1 }) // mission
+      .mockResolvedValueOnce({ rows: [{ id: 'dev-branch', name: 'Dev', status: 'active', created_at: now, updated_at: now }], rowCount: 1 }) // branches
+      .mockResolvedValueOnce({ rows: spanRows, rowCount: 2 }) // spans
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // interrupts
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // COMMIT
 
     const cutoff = projectReplay(
       '550e8400-e29b-41d4-a716-446655440000',

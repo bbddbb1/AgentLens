@@ -23,6 +23,7 @@
     "clean": "turbo clean",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "conformance:fast": "node scripts/conformance.mjs fast",
+    "conformance:r0-refreeze": "node scripts/r0-refreeze-proof.mjs",
     "conformance:system:langgraph": "node scripts/conformance.mjs system:langgraph",
     "conformance:system:maf": "node scripts/conformance.mjs system:maf",
     "conformance:system": "node scripts/conformance.mjs system",

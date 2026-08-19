@@ -1,6 +1,8 @@
 {
   "contract_id": "agentlens.runtime_core.r0",
   "status": "frozen",
+  "verdict": "R0_REFROZEN",
+  "previous_verdict": "invalidated_by_adversarial_audit",
   "runtime_explanation": {
     "version": "runtime_explanation.v1",
     "version_policy": "first_stable_post_r0_baseline",
@@ -28,6 +30,7 @@
       "checkpoint"
     ],
     "lifecycle_and_run_outcomes": ["active", "waiting", "completed", "failed", "unknown"],
+    "activity_outcomes": ["Success", "Failure", "Unknown"],
     "run_statuses": ["Active", "Waiting", "Completed", "Failed", "Unknown"],
     "runtime_phases": ["Queued", "Active Work", "Waiting", "Converging", "Completed", "Failed", "Unknown"],
     "relationship_bases": ["explicit_link", "trigger_reference", "decision_reference", "parent_span"],
@@ -50,6 +53,8 @@
     "source_time": "exact decimal nanoseconds",
     "admission_cursor": "mission-local nonnegative integer",
     "revision_rule": "latest admitted revision at or before selected cutoff",
+    "evidence_identity_scope": ["mission_id", "branch_id", "trace_id", "span_id"],
+    "invocation_identity_scope": ["mission_id", "branch_id", "trace_id", "invocation_id"],
     "frame_tuple": ["mission_id", "branch_id", "sequence_num", "as_of_timestamp", "projection_version"],
     "branch_rule": "immutable inherited parent admission prefix"
   },
@@ -92,6 +97,7 @@
     "immutable_frames": "apps/api-ts/tests/integration/evidenceFramePersistence.test.ts",
     "governance_state_authority": "apps/api-ts/tests/integration/evidenceFramePersistence.test.ts#persists-independent-Governance-axes",
     "fail_closed_control": "apps/api-ts/tests/integration/evidenceFramePersistence.test.ts#fails-closed-on-exact-current-control-authority",
+    "adversarial_refreeze": "pnpm conformance:r0-refreeze",
     "web_wire_decoder": "apps/web/tests/unit/runtimeExplanationContract.test.ts",
     "release_conformance": "pnpm conformance:release"
   },

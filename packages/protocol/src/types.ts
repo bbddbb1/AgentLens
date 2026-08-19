@@ -28,6 +28,7 @@ export type RuntimeExplanationActivityKind =
   | 'human'
   | 'checkpoint';
 export type RuntimeExplanationRunOutcome = 'active' | 'waiting' | 'completed' | 'failed' | 'unknown';
+export type RuntimeExplanationActivityOutcome = 'Success' | 'Failure' | 'Unknown';
 export type RuntimeExplanationRelationBasis =
   | 'explicit_link'
   | 'trigger_reference'
@@ -55,6 +56,7 @@ export interface RuntimeExplanationEvidenceRef {
   sequence_num: number;
   timestamp: string;
   branch_id?: string;
+  trace_id?: string;
   span_id?: string;
   source_event_id?: string;
 }
@@ -136,7 +138,7 @@ export interface RuntimeExplanationActivity {
   subtitle?: string;
   action: string;
   status: RuntimeExplanationRunOutcome;
-  outcome?: string;
+  outcome?: RuntimeExplanationActivityOutcome;
   started_at?: string;
   ended_at?: string;
   duration_ms?: number;
@@ -150,7 +152,7 @@ export interface RuntimeExplanationActivity {
   error?: Record<string, RuntimeExplanationValue>;
   artifacts?: RuntimeExplanationValue[];
   /** Exact evidence and derivation class for canonical L1 semantic fields. */
-  semantic_provenance?: RuntimeExplanationActivitySemanticProvenance;
+  semantic_provenance: RuntimeExplanationActivitySemanticProvenance;
   operator_facing_record?: RuntimeOperatorActivityRecord;
   /** @deprecated L2 presentation ranking only; canonical L1 does not populate it. */
   story_critical?: boolean;
@@ -226,8 +228,8 @@ export interface RuntimeActivityField<T = RuntimeExplanationValue> {
   /** Availability/access/conflict state; combine with basis to distinguish verbatim from derived values. */
   condition: RuntimeEvidenceFieldCondition;
   /** Whether value is verbatim evidence, a deterministic projection, or unsupported. */
-  basis?: RuntimeFactBasis;
-  evidence_refs?: RuntimeExplanationEvidenceRef[];
+  basis: RuntimeFactBasis;
+  evidence_refs: RuntimeExplanationEvidenceRef[];
 }
 
 export interface RuntimeProgressMarker {

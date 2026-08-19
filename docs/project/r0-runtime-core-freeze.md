@@ -2,9 +2,17 @@
 
 ## 1. Verdict
 
-`R0_FROZEN`
+`R0_REFROZEN`
 
-The universal Runtime Core is frozen at the repository state containing:
+The first R0 freeze declaration was invalidated by an adversarial post-freeze
+audit. The audit reproduced under-scoped evidence/activity identity,
+autocommit frame reconstruction, lossy branch Governance copying, non-unique
+control authority, unadmitted expiry mutation, decision/continuation
+conflation, and executable credentials in telemetry. Those were correctness
+defects in the claimed frozen boundary, not new product requirements.
+
+The repaired universal Runtime Core is refrozen at the repository state
+containing the original R0 commits plus:
 
 - `98568cd` — immutable evidence/frame membership;
 - `21ceb12` — canonical Runtime meaning;
@@ -13,7 +21,11 @@ The universal Runtime Core is frozen at the repository state containing:
 - `cb640a3` — evidence-bounded causal presentation;
 - `04fd784` — independent Governance state authority;
 - `f91efdf` — fail-closed control authority;
-- the R0-D contract-freeze commit that contains this document.
+- `a8820e4` — trace-scoped evidence and collision-safe activity identity;
+- `1a51048` — transactional frame and exact branch reconstruction;
+- `ab944c0` — unique control authority and credential isolation;
+- `43db169` — duplicate binding registration rejection;
+- the adversarial contract/proof commit that contains this revision.
 
 The machine-backed inventory is
 [`contracts/runtime-core.freeze.json`](../../contracts/runtime-core.freeze.json). The
@@ -27,8 +39,12 @@ small cross-framework semantic corpus is
 - Source timestamps are exact decimal nanoseconds through ingest, persistence,
   read, chronology, and duration logic.
 - Evidence admission is a mission-local immutable PostgreSQL `INTEGER` cursor.
-- Corrections append revisions. A selected frame sees the latest revision
-  admitted at or before its cutoff.
+- Corrections append revisions within the exact
+  `(mission, branch, trace, span)` source scope. Reuse of a span id in another
+  trace is independent evidence, not a correction.
+- A selected frame sees the latest revision admitted at or before its cutoff.
+- Branch, span, and Governance inputs are read in one PostgreSQL
+  `REPEATABLE READ READ ONLY` transaction.
 - A frame is the exact tuple of mission, branch, admission sequence, as-of
   timestamp, and projection version.
 - A child branch inherits the immutable parent prefix selected at fork time.
@@ -38,6 +54,9 @@ small cross-framework semantic corpus is
 ### L1 Runtime meaning
 
 - Invocation-first activity identity and the documented unambiguous fallback.
+  Explicit invocation ids remain source-local: unambiguous established ids are
+  preserved, while collisions across trace/branch scopes are deterministically
+  qualified rather than merged.
 - Existing activity kinds only: agent, workflow, tool, LLM, retrieval, memory,
   artifact, human, and checkpoint.
 - Activity lifecycle, activity outcome, run status/outcome, and Runtime phase.
@@ -58,6 +77,16 @@ small cross-framework semantic corpus is
   and unsupported control states fail closed.
 - Legacy-token mutation is available only to records explicitly persisted with
   that compatibility mode.
+- Non-null legacy-token hashes are globally unique. Ambiguous historical
+  duplicates are all invalidated rather than resolved by row order.
+- Framework binding registration is serialized on its DB control identity and
+  protected by partial unique indexes. Exactly one active authority can exist.
+- Expiry removes actionability but does not mutate request lifecycle without an
+  admitted transition.
+- A generic `resume` decision records only decision state. Only the dedicated
+  legacy-token endpoint retains the explicit compatibility continuation.
+- Executable tokens/control references are control-plane inputs, never
+  recorded telemetry or public/runtime evidence.
 
 ## 3. Semantic authority maps
 
@@ -101,6 +130,10 @@ one.
   the installed MAF 1.10.0 stack. The bounded MAF conformance corpus and every
   real system scenario complete and pass. The stalled broad package run is not
   treated as proof.
+- Identity can only be as exact as recorded scope. If a source reuses both
+  trace and invocation identifiers inside one mission/branch without another
+  explicit execution identifier, AgentLens reports the recorded identity; it
+  does not invent one from timing or order.
 
 ## 5. Legacy compatibility boundary
 
@@ -117,12 +150,36 @@ contract. No speculative v2 compatibility layer is created. Discovery of a
 previously supported external v1 deployment would require an explicit
 compatibility review rather than silent reinterpretation.
 
+The refreeze migration preserves every admission cursor. It reranks former
+cross-trace revision chains inside their correct trace partitions, removes
+provably synthetic child Governance rows, recursively removes plaintext
+control credentials from historical JSON, invalidates every member of an
+ambiguous legacy-token set, and revokes every member of an ambiguous active
+binding set. A fresh unambiguous binding is required after revocation.
+
 ## 6. Deferred concepts
 
 Problems, Reliability Visibility, Deterministic Assurance, semantic completion
 evaluation, A2A product semantics, retry/message/fan-out/join ontology,
 execution replay, generalized control protocols, policy DSLs, auto-remediation,
 future adapters, and scale/data-plane work remain outside R0.
+
+### Future-pressure falsification
+
+| Pressure case | Frozen-Core disposition |
+|---|---|
+| Third framework with different native IDs | Preserve native IDs as extension/provenance and translate only supported neutral facts. |
+| Several invocations in one span | Use explicit invocation identity; report ambiguity rather than invent order-based identity. |
+| Sparse telemetry | Preserve partial/unknown meaning. |
+| Late or corrected telemetry | Admit it to a later immutable frame/revision; never rewrite the earlier frame. |
+| Opaque remote/A2A peer | Keep opaque or model in a future L2 lens; do not infer universal activity meaning. |
+| Assurance later disagrees with Runtime completion | Keep Assurance separate; Runtime completion is not task verification. |
+| Distributed source clocks disagree | Preserve exact source chronology and use admission, not source time, for frame membership. |
+| Explicit handoff exists in only one framework | Record only the explicitly supported relation; absence remains unknown. |
+| Governance action is observable but has no valid binding | Report unavailable and reject mutation. |
+
+None of these cases requires a new activity kind, relationship kind, lifecycle,
+outcome, evidence, frame, or Governance concept.
 
 ## 7. Architecture guards
 
@@ -139,8 +196,13 @@ future adapters, and scale/data-plane work remain outside R0.
   parallel authority.
 - PostgreSQL frame/history/branch and Governance corpora enforce immutable
   cutoffs and fail-closed mutation.
+- `pnpm conformance:r0-refreeze` is the aggregate adversarial guard. It exits
+  non-zero when real PostgreSQL configuration is absent, runs the lock-barrier
+  frame race, identity collisions, migration ambiguity, branch collisions,
+  credential scans, Governance authority corpus, semantic/contract/provenance/
+  causal guards, and fast cross-framework conformance.
 - CI now targets the repository's actual default branch (`master`) and runs
-  the PostgreSQL-backed conformance release gate.
+  both the mandatory adversarial PostgreSQL gate and authenticated release gate.
 
 ### Documentation convergence audit
 
@@ -161,9 +223,15 @@ The freeze checkout produced these results:
 
 - `pnpm lint`: passed.
 - `pnpm build`: passed, including protocol, API, and production web build.
-- `pnpm test`: API 436 passed / 3 PostgreSQL tests skipped in the generic run;
+- `pnpm test`: API 436 passed / 8 PostgreSQL tests skipped in the generic run;
   web 195 passed.
-- Isolated PostgreSQL R0 evidence/Governance acceptance: 3/3 passed.
+- `pnpm conformance:r0-refreeze`, with both PostgreSQL URLs configured: 8 API
+  files / 113 tests passed, followed by the complete fast conformance corpus.
+  The required integration file contributed 8 real PostgreSQL tests; none
+  skipped. The same 8 tests also passed from a fresh empty PostgreSQL 16
+  database, proving migration and clean-install behavior.
+- The negative environment probe exited 2 when PostgreSQL configuration was
+  absent, proving the aggregate gate cannot turn `NOT RUN` into `PASSED`.
 - `pnpm conformance:release`: passed.
   - manifest: 8 passed;
   - LangGraph fast corpus: 37 passed;
@@ -173,10 +241,9 @@ The freeze checkout produced these results:
   - LangGraph system: positive, accepted-without-terminal, wrong-scope, and
     public-output scenarios all passed with cleanup passed;
   - MAF system: the same four scenarios all passed with cleanup passed.
-- Additional Python packages: OTel semconv 37 passed, graph engine 47 passed,
-  SDK core 122 passed, and LangGraph SDK 99 passed.
-- `uv run ruff check --statistics`: ran and reported the 491 legacy findings
-  described above; it is not recorded as passing.
+- Focused SDK credential-boundary tests:
+  `uv run pytest packages/sdk-core/tests/test_agent.py packages/otel-semconv/tests/test_attributes.py -q`
+  passed 41 tests.
 
 The real system gates used the built Express API, service authentication,
 real OTLP/HTTP, real LangGraph/MAF runtimes, private bridge HTTP, and an

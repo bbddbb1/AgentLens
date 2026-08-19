@@ -4,6 +4,7 @@ import type {
   RuntimeActivityField,
   RuntimeExplanationActivity,
   RuntimeExplanationActivityKind,
+  RuntimeExplanationActivityOutcome,
   RuntimeExplanationConsistencyCode,
   RuntimeExplanationConsistencyFlag,
   RuntimeExplanationEvidenceRef,
@@ -215,6 +216,7 @@ function evidenceRef(event: EventEnvelope): RuntimeExplanationEvidenceRef {
     sequence_num: event.sequence_num,
     timestamp: event.timestamp,
     branch_id: event.branch_id,
+    trace_id: event.trace_id,
     span_id: event.span_id,
     source_event_id: event.source_event_id,
   };
@@ -379,19 +381,8 @@ function factProvenance(
   return { basis, condition, evidence_refs: dedupeRefs(refs) };
 }
 
-function runtimeOutcomeLabel(status: RuntimeExplanationRunOutcome): string {
-  switch (status) {
-    case 'completed':
-      return 'Completed';
-    case 'failed':
-      return 'Failed';
-    case 'waiting':
-      return 'Waiting';
-    case 'unknown':
-      return 'Unknown';
-    default:
-      return 'Active';
-  }
+function runtimeOutcomeLabel(status: RuntimeExplanationRunOutcome): RuntimeExplanationActivityOutcome {
+  return status === 'failed' ? 'Failure' : 'Unknown';
 }
 
 function classifyKind(event: EventEnvelope): RuntimeExplanationActivityKind | null {
@@ -866,7 +857,9 @@ function mergeSemanticOutcome(
   return current ?? update;
 }
 
-function semanticOutcomeLabel(outcome: NonNullable<ActivityAccumulator['semantic_outcome']>): string {
+function semanticOutcomeLabel(
+  outcome: NonNullable<ActivityAccumulator['semantic_outcome']>,
+): RuntimeExplanationActivityOutcome {
   if (outcome === 'success') return 'Success';
   if (outcome === 'failure') return 'Failure';
   return 'Unknown';

@@ -35,6 +35,7 @@ export const RuntimeExplanationRunOutcomeSchema = z.enum([
   'failed',
   'unknown',
 ]);
+export const RuntimeExplanationActivityOutcomeSchema = z.enum(['Success', 'Failure', 'Unknown']);
 export const RuntimeExplanationRelationBasisSchema = z.enum([
   'explicit_link',
   'trigger_reference',
@@ -84,6 +85,7 @@ export const RuntimeExplanationEvidenceRefSchema = z.object({
   sequence_num: EvidenceAdmissionCursorSchema,
   timestamp: z.string().min(1),
   branch_id: z.string().min(1).optional(),
+  trace_id: z.string().min(1).optional(),
   span_id: z.string().min(1).optional(),
   source_event_id: z.string().min(1).optional(),
 }).strict();
@@ -97,15 +99,15 @@ export const RuntimeFactProvenanceSchema = z.object({
 const RuntimeActivityFieldSchema = z.object({
   value: RuntimeJsonValueSchema.optional(),
   condition: RuntimeEvidenceFieldConditionSchema,
-  basis: RuntimeFactBasisSchema.optional(),
-  evidence_refs: z.array(RuntimeExplanationEvidenceRefSchema).optional(),
+  basis: RuntimeFactBasisSchema,
+  evidence_refs: z.array(RuntimeExplanationEvidenceRefSchema),
 }).strict();
 
 const RuntimeActivityStringFieldSchema = z.object({
   value: z.string().optional(),
   condition: RuntimeEvidenceFieldConditionSchema,
-  basis: RuntimeFactBasisSchema.optional(),
-  evidence_refs: z.array(RuntimeExplanationEvidenceRefSchema).optional(),
+  basis: RuntimeFactBasisSchema,
+  evidence_refs: z.array(RuntimeExplanationEvidenceRefSchema),
 }).strict();
 
 export const RuntimeOperatorActivityRecordSchema = z.object({
@@ -139,7 +141,7 @@ export const RuntimeExplanationActivitySchema = z.object({
   subtitle: z.string().optional(),
   action: z.string(),
   status: RuntimeExplanationRunOutcomeSchema,
-  outcome: z.string().optional(),
+  outcome: RuntimeExplanationActivityOutcomeSchema.optional(),
   started_at: z.string().min(1).optional(),
   ended_at: z.string().min(1).optional(),
   duration_ms: z.number().finite().nonnegative().optional(),
@@ -152,7 +154,7 @@ export const RuntimeExplanationActivitySchema = z.object({
   outputs: z.record(z.string(), RuntimeJsonValueSchema).optional(),
   error: z.record(z.string(), RuntimeJsonValueSchema).optional(),
   artifacts: z.array(RuntimeJsonValueSchema).optional(),
-  semantic_provenance: RuntimeActivitySemanticProvenanceSchema.optional(),
+  semantic_provenance: RuntimeActivitySemanticProvenanceSchema,
   operator_facing_record: RuntimeOperatorActivityRecordSchema.optional(),
   story_critical: z.boolean().optional(),
   story_critical_limitation: z.string().optional(),

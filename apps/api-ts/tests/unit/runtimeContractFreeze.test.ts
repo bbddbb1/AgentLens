@@ -7,6 +7,7 @@ import {
   RUNTIME_EXPLANATION_VERSION,
   RuntimeEvidenceFieldConditionSchema,
   RuntimeExplanationActivityKindSchema,
+  RuntimeExplanationActivityOutcomeSchema,
   RuntimeExplanationQueryV1Schema,
   RuntimeExplanationRelationBasisSchema,
   RuntimeExplanationRunOutcomeSchema,
@@ -83,8 +84,11 @@ function semanticDigest(activity: RuntimeExplanationActivity | undefined) {
 describe('R0 frozen Runtime Core contract', () => {
   it('keeps the machine manifest synchronized with executable enums', () => {
     expect(contractManifest.status).toBe('frozen');
+    expect(contractManifest.verdict).toBe('R0_REFROZEN');
+    expect(contractManifest.previous_verdict).toBe('invalidated_by_adversarial_audit');
     expect(contractManifest.runtime_explanation.version).toBe(RUNTIME_EXPLANATION_VERSION);
     expect(contractManifest.frozen_semantics.activity_kinds).toEqual(RuntimeExplanationActivityKindSchema.options);
+    expect(contractManifest.frozen_semantics.activity_outcomes).toEqual(RuntimeExplanationActivityOutcomeSchema.options);
     expect(contractManifest.frozen_semantics.lifecycle_and_run_outcomes).toEqual(RuntimeExplanationRunOutcomeSchema.options);
     expect(contractManifest.frozen_semantics.run_statuses).toEqual(RunStatusSchema.options);
     expect(contractManifest.frozen_semantics.runtime_phases).toEqual(RuntimePhaseLabelSchema.options);
@@ -114,8 +118,24 @@ describe('R0 frozen Runtime Core contract', () => {
       as_of_timestamp: explanation.as_of_timestamp,
       projection_version: RUNTIME_EXPLANATION_VERSION,
     });
+    expect(explanation.activities.some((activity) =>
+      activity.evidence_refs.some((ref) => ref.trace_id === 'trace-1'))).toBe(true);
 
     expect(RuntimeExplanationV1Schema.safeParse({ ...explanation, unexpected: true }).success).toBe(false);
+    expect(RuntimeExplanationV1Schema.safeParse({
+      ...explanation,
+      activities: explanation.activities.map((activity, index) => index === 0
+        ? { ...activity, outcome: 'plausible_but_not_frozen' }
+        : activity),
+    }).success).toBe(false);
+    expect(RuntimeExplanationV1Schema.safeParse({
+      ...explanation,
+      activities: explanation.activities.map((activity, index) => {
+        if (index !== 0) return activity;
+        const { semantic_provenance: _, ...withoutProvenance } = activity;
+        return withoutProvenance;
+      }),
+    }).success).toBe(false);
     expect(RuntimeExplanationV1Schema.safeParse({
       ...explanation,
       frame: { ...explanation.frame, branch_id: 'other' },
