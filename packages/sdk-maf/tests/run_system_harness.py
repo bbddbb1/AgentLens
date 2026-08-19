@@ -244,8 +244,8 @@ async def _run_scenario(scenario: str) -> dict[str, object]:
         ).raise_for_status().json()
         if scenario == "binding_expiry_no_transfer":
             successor = MafGovernanceBridge(api_url, mission_id, branch_id, workflow, request.request_id)
-            successor.client().register(identity)
             await asyncio.sleep(6)
+            successor.client().register(identity)
             rejected = http.post(
                 f"/api/v1/missions/{mission_id}/branches/{branch_id}/maf/bridge/claim",
                 json={"control_ref": successor.control_ref, "interrupt_id": request.request_id},
@@ -265,16 +265,20 @@ async def _run_scenario(scenario: str) -> dict[str, object]:
             }
         if scenario == "nonmatching_binding":
             nonmatching = MafGovernanceBridge(api_url, mission_id, branch_id, workflow, request.request_id)
-            # This second authenticated binding has the same framework,
-            # mission, branch, and native identity. It still must not claim a
-            # decision reconciled to the first authenticated binding.
-            nonmatching.client().register(identity)
+            # One current active authority is DB-enforced. A second binding for
+            # the selected request is rejected before it can become a claim
+            # candidate; registration failure must not mutate Runtime state.
             rejected = http.post(
-                f"/api/v1/missions/{mission_id}/branches/{branch_id}/maf/bridge/claim",
-                json={"control_ref": nonmatching.control_ref, "interrupt_id": request.request_id},
+                f"/api/v1/missions/{mission_id}/branches/{branch_id}/maf/bridge/register",
+                json={
+                    "control_ref": nonmatching.control_ref,
+                    "lease_seconds": 60,
+                    "interaction_request_id": identity.request_id,
+                    "native_identity": identity.payload(),
+                },
             )
-            if rejected.status_code != 409 or rejected.json().get("reason") != "authenticated_binding_does_not_match_request":
-                raise AssertionError(f"non-matching authenticated binding claimed a delivery: {rejected.status_code} {rejected.text}")
+            if rejected.status_code != 409 or rejected.json().get("reason") != "active_control_authority_conflict":
+                raise AssertionError(f"duplicate active authority was admitted: {rejected.status_code} {rejected.text}")
             provider.force_flush()
             public = http.get(f"/api/v1/missions/{mission_id}/interrupts?branch_id={branch_id}").raise_for_status().json()
             interrupt = _public_interrupt(public)
@@ -284,7 +288,7 @@ async def _run_scenario(scenario: str) -> dict[str, object]:
             return {
                 "scenario": scenario,
                 "mission_id": mission_id,
-                "claim_status": rejected.status_code,
+                "registration_status": rejected.status_code,
                 "runtime_outcome": interrupt["runtime_outcome"],
                 "maf_version": assert_maf_core_version(),
             }

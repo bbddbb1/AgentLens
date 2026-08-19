@@ -54,7 +54,12 @@ mafBridgeRouter.post('/api/v1/missions/:missionId/branches/:branchId/maf/bridge/
       await client.query('COMMIT');
       return res.status(201).json({ binding_id: binding.id, generation: binding.generation, lifecycle_state: binding.lifecycle_state, lease_expires_at: binding.lease_expires_at });
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
-  } catch (error) { return res.status(500).json({ detail: error instanceof Error ? error.message : 'MAF bridge registration failed' }); }
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') {
+      return res.status(409).json({ reason: 'active_control_authority_conflict' });
+    }
+    return res.status(500).json({ detail: error instanceof Error ? error.message : 'MAF bridge registration failed' });
+  }
 });
 
 mafBridgeRouter.post('/api/v1/missions/:missionId/branches/:branchId/maf/bridge/renew', async (req, res) => {

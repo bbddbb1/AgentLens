@@ -109,6 +109,9 @@ langGraphBridgeRouter.post(
         client.release();
       }
     } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') {
+        return res.status(409).json({ reason: 'active_control_authority_conflict' });
+      }
       const message = error instanceof Error ? error.message : 'Bridge registration failed';
       return res.status(500).json({ detail: message });
     }

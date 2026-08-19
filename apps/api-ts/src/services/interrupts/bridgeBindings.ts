@@ -66,6 +66,7 @@ export async function registerBridgeBinding(
       interactionRequestId ?? '', input.interruptId ?? '',
     ])],
   );
+  await expireStaleBindings(client, input.missionId, input.branchId, framework);
 
   // Serialize binding replacement with decision authority selection for the
   // same request. A registration racing a decision must observe whether the
