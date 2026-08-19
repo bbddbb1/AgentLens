@@ -272,6 +272,37 @@ export async function initializeDatabase(): Promise<void> {
     await pool.query(statement).catch(() => {});
   }
   await pool.query(`ALTER TABLE interrupts ADD COLUMN IF NOT EXISTS requested_evidence JSONB NOT NULL DEFAULT '{}'::jsonb`);
+  // Remove rows synthesized by the pre-refreeze fork implementation. They
+  // copied an ancestor request using the ancestor admission and then shadowed
+  // the exact authoritative row. A genuine child-local request necessarily has
+  // a new mission admission greater than the fork cursor.
+  await pool.query(`
+    WITH RECURSIVE ancestors AS (
+      SELECT mission_id, id AS descendant_branch_id,
+             parent_branch_id AS ancestor_branch_id,
+             forked_from_sequence_num AS cutoff
+      FROM mission_replay_branches
+      WHERE parent_branch_id IS NOT NULL
+      UNION ALL
+      SELECT ancestors.mission_id, ancestors.descendant_branch_id,
+             branch.parent_branch_id,
+             LEAST(ancestors.cutoff, branch.forked_from_sequence_num)
+      FROM ancestors
+      JOIN mission_replay_branches AS branch
+        ON branch.mission_id = ancestors.mission_id
+       AND branch.id = ancestors.ancestor_branch_id
+      WHERE branch.parent_branch_id IS NOT NULL
+    )
+    DELETE FROM interrupts AS child
+    USING ancestors, interrupts AS ancestor
+    WHERE child.mission_id = ancestors.mission_id
+      AND child.branch_id = ancestors.descendant_branch_id
+      AND ancestor.mission_id = ancestors.mission_id
+      AND ancestor.branch_id = ancestors.ancestor_branch_id
+      AND ancestor.interrupt_id = child.interrupt_id
+      AND ancestor.requested_admission_seq = child.requested_admission_seq
+      AND child.requested_admission_seq <= ancestors.cutoff
+  `);
   await pool.query(`
     UPDATE interrupts
     SET requested_evidence = jsonb_build_object(

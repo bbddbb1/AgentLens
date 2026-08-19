@@ -1102,13 +1102,21 @@ class MissionStore {
     }
   }
   private async getReplayEvidenceFromTelemetry(missionId: string, branchId = ROOT_BRANCH_ID, useCheckpoint = false): Promise<ReplayStateResponse | null> {
-    const mission = await this.getMission(missionId);
-    if (!mission) return null;
     const client = await pool.connect();
     try {
+      // A frame is reconstructed from one database snapshot. Admission cutoffs
+      // define membership; REPEATABLE READ prevents a commit between the
+      // branch/span/Governance reads from producing a state that never existed.
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const mission = await client.query('SELECT id FROM missions WHERE id = $1', [missionId]);
+      if (mission.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return null;
+      }
       const branches = await this.listReplayBranchesInternal(client, missionId);
       const safeBranches = branches.length ? branches : [createDefaultBranch(missionId)];
       if (!safeBranches.some((branch) => branch.id === branchId)) {
+        await client.query('ROLLBACK');
         return null;
       }
       const lineage = buildBranchLineage(safeBranches, branchId);
@@ -1136,10 +1144,14 @@ class MissionStore {
         resumed_admission_seq: row.resumed_admission_seq,
       }));
       const replay = projectReplayEvidence(missionId, branchId, selectedSpans, selectedInterrupts);
+      await client.query('COMMIT');
       return {
         ...replay,
         branches: safeBranches,
       };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
     } finally {
       client.release();
     }
@@ -1222,94 +1234,10 @@ class MissionStore {
         metadata: input.metadata,
       });
 
-      // Duplicate pending interrupts exactly as they were at the fork point
-      if (sourceReplay.events) {
-        // Re-run replay to the exact fork point to get accurate interrupt state
-        const eventsAtFork = eventsThroughCursor(sourceReplay.events, forkedFromSequenceNum);
-        const interruptsMap = new Map<string, any>();
-        for (const e of eventsAtFork) {
-          if (e.event_type === 'interrupt.requested') {
-            const intrId = e.payload?.interrupt_id as string;
-            if (intrId) {
-              interruptsMap.set(intrId, {
-                interrupt_id: intrId,
-                agent_id: e.agent_id,
-                span_id: e.span_id,
-                status: 'pending',
-                reason: String(e.payload.reason ?? ''),
-                resume_url: e.payload.resume_url ? String(e.payload.resume_url) : undefined,
-                payload: e.payload,
-                decision: undefined,
-                decision_comment: undefined,
-                decision_payload: undefined,
-                requested_admission_seq: e.sequence_num,
-                decided_admission_seq: undefined,
-                resumed_admission_seq: undefined,
-              });
-            }
-          } else if (e.event_type === 'interrupt.decision') {
-            const intrId = e.payload?.interrupt_id as string;
-            const existing = interruptsMap.get(intrId);
-            if (existing) {
-              existing.status = e.payload.decision === 'approve' ? 'approved' : e.payload.decision === 'reject' ? 'rejected' : 'pending';
-              existing.decision = e.payload.decision;
-              existing.decision_comment = e.payload.comment;
-              existing.decision_payload = e.payload;
-              existing.decided_admission_seq = e.sequence_num;
-            }
-          } else if (e.event_type === 'interrupt.resumed') {
-            const intrId = e.payload?.interrupt_id as string;
-            const existing = interruptsMap.get(intrId);
-            if (existing) {
-              existing.status = 'resumed';
-              existing.decision = 'resume';
-              existing.decision_payload = e.payload;
-              existing.resumed_admission_seq = e.sequence_num;
-            }
-          }
-        }
-
-        const interruptsAtFork = Array.from(interruptsMap.values());
-        for (const intr of interruptsAtFork) {
-          await client.query(
-            `
-              INSERT INTO interrupts (
-                id, mission_id, branch_id, interrupt_id, agent_id, span_id, status, reason, resume_url, resume_token_hash, payload,
-                decision, decision_comment, decision_payload, expires_at, updated_at
-                , requested_admission_seq, decided_admission_seq, resumed_admission_seq, requested_evidence
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15, NOW(), $16, $17, $18, $19::jsonb)
-              ON CONFLICT (mission_id, branch_id, interrupt_id) DO NOTHING
-            `,
-            [
-              randomUUID(),
-              missionId,
-              branchId,
-              intr.interrupt_id,
-              intr.agent_id ?? null,
-              intr.span_id ?? null,
-              intr.status,
-              intr.reason,
-              intr.resume_url ?? null,
-              null,
-              JSON.stringify(intr.payload ?? {}),
-              intr.decision ?? null,
-              intr.decision_comment ?? null,
-              JSON.stringify(intr.decision_payload ?? {}),
-              null,
-              intr.requested_admission_seq ?? null,
-              intr.decided_admission_seq ?? null,
-              intr.resumed_admission_seq ?? null,
-              JSON.stringify({
-                agent_id: intr.agent_id ?? null,
-                interrupt_id: intr.interrupt_id,
-                reason: intr.reason,
-                resume_url: intr.resume_url ?? null,
-                payload: intr.payload ?? {},
-              }),
-            ]
-          );
-        }
-      }
+      // Do not materialize a lossy child interrupt aggregate. Branch replay
+      // inherits the authoritative parent row and truncates its append-only
+      // Governance history at this persisted fork cursor. A child-local request
+      // is stored on the child branch and therefore cannot mutate the parent.
 
       await client.query('COMMIT');
       return branch;

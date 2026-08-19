@@ -1031,6 +1031,13 @@ export function projectRuntimeStateAtFrame(
       payload: publicInterruptPayload(requestedEvidence.payload ?? {}),
       updated_at: interrupt.created_at,
     };
+    // The aggregate is the exact request representation at this cutoff. Event
+    // presentation order must not decide whether immutable request fields are
+    // retained when decision/delivery share a timestamp.
+    current.reason = String(requestedEvidence.reason ?? interrupt.reason ?? current.reason ?? '');
+    current.agent_id = requestedEvidence.agent_id ?? interrupt.agent_id ?? current.agent_id;
+    current.span_id = interrupt.span_id ?? current.span_id;
+    current.payload = publicInterruptPayload(requestedEvidence.payload ?? current.payload ?? {});
     current.request_lifecycle = axes.request_lifecycle;
     current.decision_state = axes.decision_state;
     current.delivery_state = axes.delivery_state;
