@@ -19,6 +19,7 @@ const env = {
 const gates = [
   ['--filter', 'api-ts', 'test', '--', '--run',
     'tests/integration/evidenceFramePersistence.test.ts',
+    'tests/unit/directRuntimeExplanation.test.ts',
     'tests/unit/canonicalRuntimeMeaning.test.ts',
     'tests/unit/runtimeContractFreeze.test.ts',
     'tests/unit/runtimeArchitectureFreeze.test.ts',

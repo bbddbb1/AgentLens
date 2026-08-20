@@ -68,7 +68,12 @@ import {
   type StoredNativeIdentity,
 } from './interrupts/nativeIdentityAmbiguity.js';
 import { SEMANTIC_PRESENTATION_AUTHORITY_VERSION, generateMissionSummary, generateWhyThisState, type WhyThisStateContext } from './semantic.js';
-import { buildRuntimeSummaryWithOptionalLlm, buildNodeProjection, enhanceNodeProjectionWithLlm } from './runtimeSummary.js';
+import {
+  buildNodeProjection,
+  buildRuntimeSummaryFromExplanation,
+  enhanceNodeProjectionWithLlm,
+  enhanceRuntimeSummaryWithLlm,
+} from './runtimeSummary.js';
 import {
   ROOT_BRANCH_ID,
   buildBranchLineage,
@@ -78,6 +83,7 @@ import {
   selectSpanRevisionsForBranch,
   projectTraceSnapshot,
   projectReplayEvidence,
+  projectRuntimeFrameEvents,
 } from './runtimeState.js';
 
 interface CreateMissionInput {
@@ -98,6 +104,12 @@ type StoredOtlpSpan = OtlpSpan & {
   revision_num: number;
   admitted_at: string;
 };
+
+interface SelectedTelemetryEvidence {
+  branches: ReplayBranch[];
+  spans: StoredOtlpSpan[];
+  interrupts: Record<string, unknown>[];
+}
 
 function spanEvidenceRepresentation(span: OtlpSpan): string {
   return deterministicStringify({
@@ -153,13 +165,7 @@ function toCompatibilityActivity(
     title: activity.title,
     subtitle: activity.subtitle,
     action: activity.action,
-    outcome:
-      activity.outcome
-      ?? (activity.status === 'failed' ? 'Failed'
-        : activity.status === 'waiting' ? 'Waiting'
-          : activity.status === 'completed' ? 'Completed'
-            : activity.status === 'unknown' ? 'Unknown'
-            : 'Active'),
+    outcome: activity.outcome ?? 'Unknown',
     status: activity.status,
     sequence_num: activity.sequence_num,
     timestamp: activity.started_at ?? activity.ended_at,
@@ -187,11 +193,14 @@ export function attachExplanationToNodes(
   }
 
   return nodes.map((node) => {
-    const spanId = node.source_span_id ?? node.span_id;
+    // Graph node.span_id is the collision-safe runtime span identity. The
+    // source_span_id is raw provenance and must not win attachment lookup.
+    const spanId = node.span_id ?? node.source_span_id;
     const activities = spanId ? activitiesBySpanId.get(spanId) ?? [] : [];
     if (activities.length === 0) {
       return {
         ...node,
+        status: 'unknown',
         activity: undefined,
       };
     }
@@ -743,15 +752,18 @@ class MissionStore {
     client: PoolClient,
     missionId: string,
     branchIds: string[],
+    upToSequenceNum?: number,
   ): Promise<StoredOtlpSpan[]> {
     const result = await client.query(
       `
         SELECT *
         FROM spans
-        WHERE mission_id = $1 AND branch_id = ANY($2)
+        WHERE mission_id = $1
+          AND branch_id = ANY($2)
+          AND ($3::INTEGER IS NULL OR admission_seq <= $3)
         ORDER BY admission_seq ASC
       `,
-      [missionId, branchIds],
+      [missionId, branchIds, upToSequenceNum ?? null],
     );
     return result.rows.map((row) => this.mapSpanRow(row as Record<string, unknown>));
   }
@@ -1101,7 +1113,12 @@ class MissionStore {
       client.release();
     }
   }
-  private async getReplayEvidenceFromTelemetry(missionId: string, branchId = ROOT_BRANCH_ID, useCheckpoint = false): Promise<ReplayStateResponse | null> {
+  private async getSelectedTelemetryEvidenceFromTelemetry(
+    missionId: string,
+    branchId = ROOT_BRANCH_ID,
+    options: { useCheckpoint?: boolean; upToSequenceNum?: number } = {},
+  ): Promise<SelectedTelemetryEvidence | null> {
+    void options.useCheckpoint;
     const client = await pool.connect();
     try {
       // A frame is reconstructed from one database snapshot. Admission cutoffs
@@ -1123,18 +1140,37 @@ class MissionStore {
       const branchIds = lineage.length > 0 ? lineage.map((branch) => branch.id) : [branchId];
 
       // 1. Fetch raw spans from database
-      const spans = await this.listSpansForBranchesInternal(client, missionId, branchIds);
+      const spans = await this.listSpansForBranchesInternal(
+        client,
+        missionId,
+        branchIds,
+        options.upToSequenceNum,
+      );
 
       // 2. Fetch interrupts from database
       const interruptsRes = await client.query(
-        `SELECT * FROM interrupts WHERE mission_id = $1 AND branch_id = ANY($2)`,
-        [missionId, branchIds]
+        `SELECT *
+         FROM interrupts
+         WHERE mission_id = $1
+           AND branch_id = ANY($2)
+           AND ($3::INTEGER IS NULL OR requested_admission_seq <= $3)`,
+        [missionId, branchIds, options.upToSequenceNum ?? null]
       );
       const interrupts = interruptsRes.rows;
 
       // 3. Freeze ancestor membership at each persisted fork admission cutoff.
-      const selectedSpans = selectSpanRevisionsForBranch(spans, safeBranches, branchId);
-      const selectedInterrupts = selectInterruptsForBranch(interrupts, safeBranches, branchId).map((row) => ({
+      const selectedSpans = selectSpanRevisionsForBranch(
+        spans,
+        safeBranches,
+        branchId,
+        options.upToSequenceNum,
+      );
+      const selectedInterrupts = selectInterruptsForBranch(
+        interrupts,
+        safeBranches,
+        branchId,
+        options.upToSequenceNum,
+      ).map((row) => ({
         ...row,
         ...mapInterruptRowToRecord(row as Record<string, unknown>),
         governance_state_history: row.governance_state_history,
@@ -1143,10 +1179,10 @@ class MissionStore {
         decided_admission_seq: row.decided_admission_seq,
         resumed_admission_seq: row.resumed_admission_seq,
       }));
-      const replay = projectReplayEvidence(missionId, branchId, selectedSpans, selectedInterrupts);
       await client.query('COMMIT');
       return {
-        ...replay,
+        spans: selectedSpans,
+        interrupts: selectedInterrupts,
         branches: safeBranches,
       };
     } catch (error) {
@@ -1155,6 +1191,43 @@ class MissionStore {
     } finally {
       client.release();
     }
+  }
+
+  private async getReplayEvidenceFromTelemetry(
+    missionId: string,
+    branchId = ROOT_BRANCH_ID,
+    useCheckpoint = false,
+  ): Promise<ReplayStateResponse | null> {
+    const selected = await this.getSelectedTelemetryEvidenceFromTelemetry(
+      missionId,
+      branchId,
+      { useCheckpoint },
+    );
+    if (!selected) return null;
+    return {
+      ...projectReplayEvidence(missionId, branchId, selected.spans, selected.interrupts),
+      branches: selected.branches,
+    };
+  }
+
+  private async getRuntimeFrameEventsFromTelemetry(
+    missionId: string,
+    branchId = ROOT_BRANCH_ID,
+    upToSequenceNum?: number,
+  ): Promise<EventEnvelope[] | null> {
+    const selected = await this.getSelectedTelemetryEvidenceFromTelemetry(
+      missionId,
+      branchId,
+      { upToSequenceNum },
+    );
+    if (!selected) return null;
+    return projectRuntimeFrameEvents(
+      missionId,
+      branchId,
+      selected.spans,
+      selected.interrupts,
+      upToSequenceNum,
+    );
   }
 
   async getReplayFromTelemetry(missionId: string, branchId = ROOT_BRANCH_ID, useCheckpoint = false): Promise<ReplayStateResponse | null> {
@@ -1258,9 +1331,12 @@ class MissionStore {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
 
-    const replay = await this.getReplayEvidenceFromTelemetry(missionId, branchId);
-    if (!replay) return null;
-    const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId) as EventEnvelope[];
+    const selectedEvents = await this.getRuntimeFrameEventsFromTelemetry(
+      missionId,
+      branchId,
+      upToSequenceNum,
+    );
+    if (!selectedEvents) return null;
     const explanation = projectRuntimeExplanation({
       mission_id: missionId,
       branch_id: branchId,
@@ -1278,7 +1354,8 @@ class MissionStore {
       up_to_sequence_num: upToSequenceNum,
     };
 
-    return buildRuntimeSummaryWithOptionalLlm(input, useLlm);
+    const summary = buildRuntimeSummaryFromExplanation(input, explanation);
+    return useLlm ? enhanceRuntimeSummaryWithLlm(summary) : summary;
   }
 
   async getRuntimeExplanation(
@@ -1286,13 +1363,12 @@ class MissionStore {
     branchId = ROOT_BRANCH_ID,
     upToSequenceNum?: number,
   ): Promise<RuntimeExplanationProjection | null> {
-    const mission = await this.getMission(missionId);
-    if (!mission) return null;
-
-    const replay = await this.getReplayEvidenceFromTelemetry(missionId, branchId);
-    if (!replay) return null;
-
-    const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId) as EventEnvelope[];
+    const selectedEvents = await this.getRuntimeFrameEventsFromTelemetry(
+      missionId,
+      branchId,
+      upToSequenceNum,
+    );
+    if (!selectedEvents) return null;
     return projectRuntimeExplanation({
       mission_id: missionId,
       branch_id: branchId,
@@ -1310,9 +1386,12 @@ class MissionStore {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
 
-    const replay = await this.getReplayEvidenceFromTelemetry(missionId, branchId);
-    if (!replay) return null;
-    const selectedEvents = selectEventsForBranch(replay.events, replay.branches, branchId);
+    const selectedEvents = await this.getRuntimeFrameEventsFromTelemetry(
+      missionId,
+      branchId,
+      upToSequenceNum,
+    );
+    if (!selectedEvents) return null;
 
     return buildNodeProjection({
       mission_id: missionId,
@@ -1396,17 +1475,18 @@ class MissionStore {
     const mission = await this.getMission(missionId);
     if (!mission) return null;
 
-    const replay = await this.getReplayFromTelemetry(missionId, branchId);
-    if (!replay) return null;
-
-    const snapshot = replay.snapshots.find((s) => s.sequence_num === sequenceNum);
-    if (!snapshot) return null;
+    const events = await this.getRuntimeFrameEventsFromTelemetry(
+      missionId,
+      branchId,
+      sequenceNum,
+    );
+    if (!events?.some((event) => event.sequence_num === sequenceNum)) return null;
     const ctx: WhyThisStateContext = {
       explanation: projectRuntimeExplanation({
         mission_id: missionId,
         branch_id: branchId,
-        events: replay.events as EventEnvelope[],
-        as_of_sequence_num: snapshot.sequence_num,
+        events,
+        as_of_sequence_num: sequenceNum,
       }),
     };
 

@@ -10,5 +10,4 @@ export * from './projections/deterministicUnderstanding.js';
 export * from './projections/eventRenderers.js';
 export * from './projections/nodeStateProjection.js';
 export * from './projections/summaryProjection.js';
-export * from './projections/activityProjection.js';
 export * from './projections/explanationProjection.js';

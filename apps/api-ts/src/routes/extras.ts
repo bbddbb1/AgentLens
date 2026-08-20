@@ -128,9 +128,6 @@ extrasRouter.get('/api/v1/missions/:missionId/explanation', async (req, res) => 
   try {
     const query = RuntimeExplanationQueryV1Schema.safeParse(req.query);
     if (!query.success) return res.status(400).json({ detail: query.error.flatten() });
-    const mission = await missionStore.getMission(req.params.missionId);
-    if (!mission) return res.status(404).json({ detail: 'Mission not found' });
-
     const explanation = await missionStore.getRuntimeExplanation(
       req.params.missionId,
       query.data.branch_id,

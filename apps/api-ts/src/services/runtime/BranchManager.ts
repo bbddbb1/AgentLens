@@ -67,6 +67,7 @@ export function selectSpanRevisionsForBranch<T extends AdmittedBranchRecord>(
   spans: readonly T[],
   branches: ReplayBranch[],
   branchId = ROOT_BRANCH_ID,
+  frameCutoff?: number,
 ): T[] {
   const lineage = buildBranchLineage(branches, branchId);
   if (lineage.length === 0) return [];
@@ -74,7 +75,12 @@ export function selectSpanRevisionsForBranch<T extends AdmittedBranchRecord>(
   const selected: T[] = [];
   for (let index = 0; index < lineage.length; index += 1) {
     const branch = lineage[index];
-    const upperBound = lineage[index + 1]?.forked_from_sequence_num;
+    const forkBound = lineage[index + 1]?.forked_from_sequence_num;
+    const upperBound = forkBound === undefined
+      ? frameCutoff
+      : frameCutoff === undefined
+        ? forkBound
+        : Math.min(forkBound, frameCutoff);
     for (const span of spans) {
       if ((span.branch_id ?? branchId) !== branch.id) continue;
       if (upperBound !== undefined && (span.admission_seq ?? Number.MAX_SAFE_INTEGER) > upperBound) continue;
@@ -101,6 +107,7 @@ export function selectInterruptsForBranch<T extends AdmittedInterruptRecord>(
   interrupts: readonly T[],
   branches: ReplayBranch[],
   branchId = ROOT_BRANCH_ID,
+  frameCutoff?: number,
 ): T[] {
   const lineage = buildBranchLineage(branches, branchId);
   if (lineage.length === 0) return [];
@@ -108,7 +115,12 @@ export function selectInterruptsForBranch<T extends AdmittedInterruptRecord>(
 
   for (let index = 0; index < lineage.length; index += 1) {
     const branch = lineage[index];
-    const upperBound = lineage[index + 1]?.forked_from_sequence_num;
+    const forkBound = lineage[index + 1]?.forked_from_sequence_num;
+    const upperBound = forkBound === undefined
+      ? frameCutoff
+      : frameCutoff === undefined
+        ? forkBound
+        : Math.min(forkBound, frameCutoff);
     for (const source of interrupts) {
       if ((source.branch_id ?? branchId) !== branch.id) continue;
       const requested = Number(source.requested_admission_seq ?? 0);

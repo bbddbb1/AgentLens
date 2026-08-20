@@ -1084,22 +1084,37 @@ export function projectRuntimeStateAtFrame(
   };
 }
 
-export function projectReplayEvidence(
+function projectFrameEventStream(
   missionId: string,
   branchId: string,
   spans: any[],
-  interrupts: any[] = []
-): ReplayStateResponse {
+  interrupts: any[],
+  includeReplayGraph: boolean,
+  singleFrameCutoff?: number,
+): ReplayStateResponse | MissionEventRecord[] {
   const admittedSpans = normalizeAdmittedSpans(spans, branchId);
-  const sortedSpans = scopeSpanIdsForBranchView(admittedSpans, branchId).sort((left, right) =>
+  const projectionSpans = includeReplayGraph
+    ? admittedSpans
+    : materializeSpanRevisions(
+        admittedSpans,
+        singleFrameCutoff ?? admittedSpans.at(-1)?.admission_seq ?? 0,
+      );
+  const sortedSpans = scopeSpanIdsForBranchView(projectionSpans, branchId).sort((left, right) =>
     compareNanos(left.start_time_unix_nano, right.start_time_unix_nano)
     || left.admission_seq - right.admission_seq
     || String(left.span_id).localeCompare(String(right.span_id)),
   );
   const normalizedIndexByAdmission = new Map<number, ReturnType<typeof indexNormalizedActivities>>();
-  for (const cursor of [...new Set(admittedSpans.map((span) => span.admission_seq))]) {
-    const frameSpans = scopeSpanIdsForBranchView(materializeSpanRevisions(admittedSpans, cursor), branchId);
-    normalizedIndexByAdmission.set(cursor, indexNormalizedActivities(normalizeSpansToFacts(frameSpans)));
+  if (includeReplayGraph) {
+    for (const cursor of [...new Set(admittedSpans.map((span) => span.admission_seq))]) {
+      const frameSpans = scopeSpanIdsForBranchView(materializeSpanRevisions(admittedSpans, cursor), branchId);
+      normalizedIndexByAdmission.set(cursor, indexNormalizedActivities(normalizeSpansToFacts(frameSpans)));
+    }
+  } else {
+    // A direct frame has one exact revision membership and therefore one
+    // canonical normalization pass, regardless of historical frame count.
+    const frameIndex = indexNormalizedActivities(normalizeSpansToFacts(sortedSpans));
+    for (const span of sortedSpans) normalizedIndexByAdmission.set(span.admission_seq, frameIndex);
   }
   const executionRootCandidates = sortedSpans.filter(isExecutionRootCandidate);
   const executionRootCandidateIds = new Set(executionRootCandidates.map((span) => String(span.span_id)));
@@ -1525,6 +1540,11 @@ export function projectReplayEvidence(
     return a.id.localeCompare(b.id);
   });
 
+  // RuntimeExplanation consumes the compatible evidence stream directly.
+  // Historical Graph snapshots are a replay/debugger concern and must not be
+  // constructed on the single-frame semantic path.
+  if (!includeReplayGraph) return events;
+
   const governanceTransitions = interrupts.flatMap((interrupt) =>
     parseGovernanceStateHistory(interrupt.governance_state_history),
   );
@@ -1601,6 +1621,44 @@ export function projectReplayEvidence(
     snapshots,
     current_state: projectRuntimeStateAtFrame(missionId, branchId, events, lastSnapshot, interrupts),
   };
+}
+
+/**
+ * Project the exact compatible evidence stream needed by one canonical
+ * RuntimeExplanation frame. This deliberately stops before Graph/replay
+ * snapshot construction.
+ */
+export function projectRuntimeFrameEvents(
+  missionId: string,
+  branchId: string,
+  spans: any[],
+  interrupts: any[] = [],
+  upToSequenceNum?: number,
+): EventEnvelope[] {
+  const events = projectFrameEventStream(
+    missionId,
+    branchId,
+    spans,
+    interrupts,
+    false,
+    upToSequenceNum,
+  ) as MissionEventRecord[];
+  return eventsThroughCursor(events, upToSequenceNum) as EventEnvelope[];
+}
+
+export function projectReplayEvidence(
+  missionId: string,
+  branchId: string,
+  spans: any[],
+  interrupts: any[] = [],
+): ReplayStateResponse {
+  return projectFrameEventStream(
+    missionId,
+    branchId,
+    spans,
+    interrupts,
+    true,
+  ) as ReplayStateResponse;
 }
 
 /** Public Replay composition: evidence first, then L1 execution interpretation. */

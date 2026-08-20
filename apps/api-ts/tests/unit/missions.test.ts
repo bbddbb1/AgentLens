@@ -173,9 +173,7 @@ describe('missionStore — semantic presentation cache', () => {
 
   it('builds why-this-state from the exact requested frame and never falls back to latest', async () => {
     const getMission = vi.spyOn(missionStore, 'getMission').mockResolvedValue(fakeRow() as any);
-    const getReplay = vi.spyOn(missionStore, 'getReplayFromTelemetry').mockResolvedValue({
-      mission_id: 'mission-1', branch_id: 'main', branches: [],
-      events: [
+    const events = [
         {
           id: 'frame-zero-event', mission_id: 'mission-1', branch_id: 'main',
           branch_sequence_num: 0, sequence_num: 0, event_type: 'task.started',
@@ -188,13 +186,12 @@ describe('missionStore — semantic presentation cache', () => {
           timestamp: '2026-01-01T00:00:01.000Z', payload: { 'gen_ai.tool.name': 'late' }, metadata: {},
           span_id: 'late-span', causal: { triggered_by_event_id: 'frame-zero-event', tool_call_id: 'late' },
         },
-      ],
-      snapshots: [
-        { id: 'frame-0', mission_id: 'mission-1', branch_id: 'main', sequence_num: 0, timestamp: '2026-01-01T00:00:00.000Z', nodes: [], edges: [] },
-        { id: 'frame-1', mission_id: 'mission-1', branch_id: 'main', sequence_num: 1, timestamp: '2026-01-01T00:00:01.000Z', nodes: [], edges: [] },
-      ],
-      current_state: { status: 'active', phase: 'executing', agents: {}, interrupts: {}, nodes: [], edges: [] },
-    } as any);
+      ];
+    const getFrameEvents = vi.spyOn(missionStore as any, 'getRuntimeFrameEventsFromTelemetry')
+      .mockImplementation(async (_missionId: string, _branchId: string, cutoff?: number) =>
+        events.filter((event) => cutoff === undefined || event.sequence_num <= cutoff));
+    const getReplay = vi.spyOn(missionStore, 'getReplayFromTelemetry')
+      .mockRejectedValue(new Error('Graph replay must not be used'));
     mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
 
     try {
@@ -203,8 +200,10 @@ describe('missionStore — semantic presentation cache', () => {
       expect(historical?.summary).not.toContain('trigger reference');
       expect(historical?.evidence_refs?.some((ref) => ref.event_id === 'later-trigger')).toBe(false);
       expect(await missionStore.generateWhyThisState('mission-1', 2, 'main')).toBeNull();
+      expect(getReplay).not.toHaveBeenCalled();
     } finally {
       getMission.mockRestore();
+      getFrameEvents.mockRestore();
       getReplay.mockRestore();
     }
   });

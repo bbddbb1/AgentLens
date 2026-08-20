@@ -243,4 +243,22 @@ describe('immutable span-backed branch inheritance', () => {
       delivery_state: 'not_requested',
     }]);
   });
+
+  it('does not let a later child interrupt collision rename an inherited historical activity', () => {
+    const now = '2026-01-01T00:00:00.000Z';
+    const branches: ReplayBranch[] = [
+      { id: ROOT_BRANCH_ID, mission_id: 'm1', name: 'Main', status: 'active', metadata: {}, created_at: now, updated_at: now },
+      { id: 'child', mission_id: 'm1', name: 'Child', parent_branch_id: ROOT_BRANCH_ID, forked_from_sequence_num: 1, status: 'active', metadata: {}, created_at: now, updated_at: now },
+    ];
+    const interrupts = [
+      { branch_id: ROOT_BRANCH_ID, interrupt_id: 'same-local-id', requested_admission_seq: 1 },
+      { branch_id: 'child', interrupt_id: 'same-local-id', requested_admission_seq: 3 },
+    ];
+
+    expect(selectInterruptsForBranch(interrupts, branches, 'child', 1)).toEqual([
+      expect.objectContaining({ branch_id: ROOT_BRANCH_ID, interrupt_id: 'same-local-id' }),
+    ]);
+    expect(selectInterruptsForBranch(interrupts, branches, 'child', 3).map((row) => row.interrupt_id))
+      .toEqual(['main::same-local-id', 'child::same-local-id']);
+  });
 });

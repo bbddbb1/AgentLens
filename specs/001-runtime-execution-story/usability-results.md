@@ -10,7 +10,7 @@ Status: Pending live study execution
 
 ## Automated Validation Recorded
 
-- `apps/api-ts`: `node .\\node_modules\\vitest\\vitest.mjs run tests/unit/explanationProjection.test.ts tests/unit/summaryProjection.test.ts tests/unit/projection.test.ts tests/unit/routes.test.ts tests/unit/activityProjection.test.ts`
+- `apps/api-ts`: `node .\\node_modules\\vitest\\vitest.mjs run tests/unit/directRuntimeExplanation.test.ts tests/unit/explanationProjection.test.ts tests/unit/summaryProjection.test.ts tests/unit/projection.test.ts tests/unit/routes.test.ts`
 - `apps/web`: `node .\\node_modules\\vitest\\vitest.mjs run tests/unit/explanationContract.test.ts tests/unit/runtimeExplainability.test.ts tests/unit/stores.test.ts tests/unit/ropsPresentation.test.ts tests/unit/uxFidelity.test.ts tests/unit/uxFidelityAdversarial.test.ts`
 - `D:\\code\\BSOps`: `node .\\node_modules\\vitest\\vitest.mjs run apps/e2e-tests/src/srsran-e2e.test.ts` with AgentLens running on `http://localhost:8001`
 

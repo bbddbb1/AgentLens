@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -21,10 +21,37 @@ function stringLiterals(path: string): string[] {
   return values;
 }
 
+function declarationCalls(path: string, names: string[]): Map<string, Set<string>> {
+  const source = read(path);
+  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  const result = new Map(names.map((name) => [name, new Set<string>()]));
+  const declarationName = (node: ts.Node): string | undefined => {
+    if ((ts.isMethodDeclaration(node) || ts.isFunctionDeclaration(node)) && node.name) {
+      return ts.isIdentifier(node.name) || ts.isStringLiteralLike(node.name) ? node.name.text : undefined;
+    }
+    return undefined;
+  };
+  const collect = (node: ts.Node, calls: Set<string>): void => {
+    if (ts.isCallExpression(node)) {
+      const expression = node.expression;
+      if (ts.isIdentifier(expression)) calls.add(expression.text);
+      if (ts.isPropertyAccessExpression(expression)) calls.add(expression.name.text);
+    }
+    ts.forEachChild(node, (child) => collect(child, calls));
+  };
+  const visit = (node: ts.Node): void => {
+    const name = declarationName(node);
+    const calls = name ? result.get(name) : undefined;
+    if (calls) collect(node, calls);
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return result;
+}
+
 const universalProjectionFiles = [
   'packages/protocol/src/projections/explanationProjection.ts',
   'packages/protocol/src/projections/summaryProjection.ts',
-  'packages/protocol/src/projections/activityProjection.ts',
   'packages/protocol/src/projections/projectionScratch.ts',
 ];
 
@@ -72,6 +99,36 @@ describe('R0 Runtime architecture guards', () => {
     expect(publicIndex).not.toContain('./projections/');
     expect(internalIndex).toContain('./projections/explanationProjection.js');
     expect(internalIndex).toContain('./projections/summaryProjection.js');
+  });
+
+  it('keeps exact-frame semantic reads off replay and Graph construction', () => {
+    const storeCalls = declarationCalls('apps/api-ts/src/services/missionStore.ts', [
+      'getRuntimeExplanation',
+      'getRuntimeSummary',
+      'getNodeProjection',
+      'generateWhyThisState',
+      'getRuntimeFrameEventsFromTelemetry',
+    ]);
+    for (const name of ['getRuntimeExplanation', 'getRuntimeSummary', 'getNodeProjection', 'generateWhyThisState']) {
+      expect(storeCalls.get(name)?.has('getRuntimeFrameEventsFromTelemetry'), name).toBe(true);
+      expect(storeCalls.get(name)?.has('getReplayEvidenceFromTelemetry'), name).toBe(false);
+      expect(storeCalls.get(name)?.has('getReplayFromTelemetry'), name).toBe(false);
+    }
+    const projectionCalls = declarationCalls('apps/api-ts/src/services/runtime/projection.ts', [
+      'projectRuntimeFrameEvents',
+    ]).get('projectRuntimeFrameEvents');
+    expect(projectionCalls?.has('projectReplayEvidence')).toBe(false);
+    expect(projectionCalls?.has('projectTraceSnapshot')).toBe(false);
+  });
+
+  it('removes dead raw semantic projectors from the production tree', () => {
+    expect(existsSync(resolve(root, 'packages/protocol/src/projections/activityProjection.ts'))).toBe(false);
+    expect(existsSync(resolve(root, 'apps/api-ts/src/services/graphBuilder.ts'))).toBe(false);
+    const internalIndex = read('packages/protocol/src/internal.ts');
+    const summary = read('packages/protocol/src/projections/summaryProjection.ts');
+    expect(internalIndex).not.toContain('activityProjection');
+    expect(summary).not.toContain('describeRuntimeEvent');
+    expect(summary).not.toContain('function classifyEvent');
   });
 
   it('keeps overlap, chronology, and generic dependency out of causal authority', () => {

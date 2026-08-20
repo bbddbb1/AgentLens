@@ -9,10 +9,19 @@ import {
   isNodeProjectionCacheValid,
   projectNodeState,
   projectRuntimeSummary,
+  projectRuntimeSummaryFromExplanation,
 } from '@agentlens/protocol/internal';
+import type { RuntimeExplanationProjection } from '@agentlens/protocol';
 
 export function buildRuntimeSummary(input: ProjectRuntimeSummaryInput): RuntimeSummary {
   return projectRuntimeSummary(input);
+}
+
+export function buildRuntimeSummaryFromExplanation(
+  input: ProjectRuntimeSummaryInput,
+  explanation: RuntimeExplanationProjection,
+): RuntimeSummary {
+  return projectRuntimeSummaryFromExplanation(input, explanation);
 }
 
 /**

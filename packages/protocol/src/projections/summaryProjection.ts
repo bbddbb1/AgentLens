@@ -3,6 +3,7 @@ import type {
   MissionEventRecord,
   ProjectRuntimeSummaryInput,
   RuntimeActivity,
+  RuntimeExplanationProjection,
   RuntimePhaseLabel,
   RuntimePhaseSummary,
   RuntimeSummary,
@@ -19,28 +20,11 @@ import type {
 import { eventsThroughCursor } from './runtimeProjection.js';
 import { projectAllNodeStates } from './nodeStateProjection.js';
 import { projectRuntimeExplanation } from './explanationProjection.js';
-import {
-  NOISE_EVENT_TYPES,
-  payloadAgentId,
-  payloadString,
-} from './projectionScratch.js';
+import { payloadString } from './projectionScratch.js';
 
 const CONCISE_STORY_LIMIT = 5;
 
 type RuntimePhaseBasis = 'recorded' | 'derived' | 'unknown';
-
-function actorLabel(event: MissionEventRecord): string | undefined {
-  const agentId = payloadAgentId(event);
-  if (!agentId) return undefined;
-  const name = payloadString(event.payload, 'agent_name') ?? payloadString(event.payload, 'name');
-  return name ?? agentId;
-}
-
-function truncate(text: string, max = 120): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= max) return trimmed;
-  return `${trimmed.slice(0, max - 1)}...`;
-}
 
 function phaseLabelFromMissionPhase(phase: string | undefined): RuntimePhaseLabel {
   switch (phase) {
@@ -179,161 +163,6 @@ function buildStoryActivities(activities: RuntimeActivity[]): RuntimeActivity[] 
   return [...activities].sort(compareStoryActivities).slice(0, CONCISE_STORY_LIMIT);
 }
 
-export function describeRuntimeEvent(event: MissionEventRecord): string | null {
-  if (NOISE_EVENT_TYPES.has(event.event_type)) return null;
-
-  const payload = event.payload ?? {};
-  const agent = actorLabel(event) ?? 'Agent';
-
-  switch (event.event_type) {
-    case 'mission.created':
-      return 'Mission started';
-    case 'mission.phase_changed':
-      return `Phase changed to ${payloadString(payload, 'phase') ?? 'unknown'}`;
-    case 'mission.status_changed':
-      return `Status changed to ${payloadString(payload, 'status') ?? 'unknown'}`;
-    case 'agent.registered': {
-      const name = payloadString(payload, 'name') ?? agent;
-      const role = payloadString(payload, 'role');
-      return role ? `${name} joined (${role})` : `${name} joined`;
-    }
-    case 'task.started':
-      return `${agent} started ${payloadString(payload, 'task') ?? 'a task'}`;
-    case 'task.completed':
-      return `${agent} completed ${payloadString(payload, 'task') ?? 'a task'}`;
-    case 'task.failed':
-      return `${agent} failed ${payloadString(payload, 'task') ?? 'a task'}`;
-    case 'tool.called':
-      return `${agent} used ${payloadString(payload, 'tool_name') ?? payloadString(payload, 'gen_ai.tool.name') ?? 'a tool'}`;
-    case 'tool.completed':
-      return `${agent} finished ${payloadString(payload, 'tool_name') ?? 'tool'} call`;
-    case 'tool.failed':
-      return `${agent} tool call failed (${payloadString(payload, 'tool_name') ?? 'tool'})`;
-    case 'delegation':
-      return `${agent} delegated to ${payloadString(payload, 'target_agent_id') ?? 'another agent'}`;
-    case 'handoff.requested':
-      return `${agent} requested handoff to ${payloadString(payload, 'target_agent_id') ?? 'another agent'}`;
-    case 'handoff.accepted':
-      return `${payloadString(payload, 'target_agent_id') ?? 'Agent'} accepted handoff from ${agent}`;
-    case 'handoff.rejected':
-      return `${payloadString(payload, 'target_agent_id') ?? 'Agent'} rejected handoff from ${agent}`;
-    case 'critique':
-      return `${agent} critiqued ${payloadString(payload, 'target_agent_id') ?? 'peer'}${payloadString(payload, 'result') ? `: ${payloadString(payload, 'result')}` : ''}`;
-    case 'review.started':
-      return `${agent} started review`;
-    case 'review.approved':
-      return `${agent} approved review`;
-    case 'review.changes_requested':
-      return `${agent} requested changes in review`;
-    case 'review.rejected':
-      return `${agent} rejected in review`;
-    case 'escalation':
-      return `${agent} escalated to ${payloadString(payload, 'target_agent_id') ?? 'oversight'}`;
-    case 'memory.written': {
-      const key = payloadString(payload, 'memory_key') ?? payloadString(payload, 'key') ?? 'memory';
-      return `${agent} wrote to ${key}`;
-    }
-    case 'memory.read': {
-      const key = payloadString(payload, 'memory_key') ?? payloadString(payload, 'key') ?? 'memory';
-      return `${agent} read from ${key}`;
-    }
-    case 'observation.recorded': {
-      const insight = payloadString(payload, 'insight');
-      return insight ? `${agent} recorded: ${truncate(insight, 80)}` : `${agent} recorded an observation`;
-    }
-    case 'artifact.created':
-      return `${agent} created artifact ${payloadString(payload, 'artifact_name') ?? payloadString(payload, 'name') ?? 'output'}`;
-    case 'artifact.updated':
-      return `${agent} updated artifact ${payloadString(payload, 'artifact_name') ?? payloadString(payload, 'name') ?? 'output'}`;
-    case 'interrupt.requested':
-      return `${agent} requested human intervention`;
-    case 'interrupt.decision': {
-      const decision = (payloadString(payload, 'decision') ?? 'decided').toUpperCase();
-      const comment = payloadString(payload, 'comment');
-      return `Human decision: ${decision}${comment ? ` - ${truncate(comment, 80)}` : ''}`;
-    }
-    case 'interrupt.resumed':
-      return `${agent} resumed after human decision`;
-    case 'span.failed':
-      return `${agent} span failed`;
-    default:
-      return null;
-  }
-}
-
-function classifyEvent(
-  event: MissionEventRecord,
-  text: string,
-  buckets: {
-    observations: RuntimeSummaryObservation[];
-    decisions: RuntimeSummaryDecision[];
-    evidence: RuntimeSummaryEvidence[];
-    actions: RuntimeSummaryAction[];
-    warnings: RuntimeSummaryWarning[];
-    artifacts: RuntimeSummaryArtifact[];
-  },
-): void {
-  const actor = actorLabel(event);
-  const base = { sequence_num: event.sequence_num, actor };
-
-  switch (event.event_type) {
-    case 'critique':
-    case 'review.changes_requested':
-    case 'observation.recorded':
-    case 'hypothesis.proposed':
-      buckets.observations.push({ text, ...base });
-      break;
-    case 'agent.registered': {
-      const summary = payloadString(event.payload, 'summary') ?? payloadString(event.payload, 'goal');
-      if (summary) buckets.observations.push({ text: truncate(summary), ...base });
-      break;
-    }
-    case 'interrupt.decision':
-    case 'review.approved':
-    case 'review.rejected':
-    case 'handoff.accepted':
-    case 'handoff.rejected':
-    case 'decision.made':
-      buckets.decisions.push({ text, ...base });
-      break;
-    case 'memory.written':
-    case 'memory.read':
-      buckets.evidence.push({
-        text,
-        source: payloadString(event.payload, 'memory_key') ?? payloadString(event.payload, 'key'),
-        sequence_num: event.sequence_num,
-      });
-      break;
-    case 'tool.completed':
-      buckets.actions.push({ text, status: 'completed', ...base });
-      break;
-    case 'tool.called':
-    case 'task.started':
-    case 'delegation':
-    case 'handoff.requested':
-      buckets.actions.push({ text, status: 'active', ...base });
-      break;
-    case 'task.failed':
-    case 'tool.failed':
-    case 'span.failed':
-      buckets.warnings.push({ text, severity: 'high', ...base });
-      break;
-    case 'escalation':
-      buckets.warnings.push({ text, severity: 'medium', ...base });
-      break;
-    case 'artifact.created':
-    case 'artifact.updated':
-      buckets.artifacts.push({
-        name: payloadString(event.payload, 'artifact_name') ?? payloadString(event.payload, 'name') ?? 'artifact',
-        type: payloadString(event.payload, 'artifact_type') ?? payloadString(event.payload, 'type'),
-        sequence_num: event.sequence_num,
-      });
-      break;
-    default:
-      break;
-  }
-}
-
 function toCompatibilityActivity(activity: import('../types.js').RuntimeExplanationActivity): RuntimeActivity {
   return {
     id: activity.id,
@@ -342,13 +171,7 @@ function toCompatibilityActivity(activity: import('../types.js').RuntimeExplanat
     title: activity.title,
     subtitle: activity.subtitle,
     action: activity.action,
-    outcome:
-      activity.outcome
-      ?? (activity.status === 'failed' ? 'Failed'
-        : activity.status === 'waiting' ? 'Waiting'
-          : activity.status === 'completed' ? 'Completed'
-            : activity.status === 'unknown' ? 'Unknown'
-              : 'Active'),
+    outcome: activity.outcome ?? 'Unknown',
     status: activity.status === 'waiting' ? 'waiting' : activity.status,
     sequence_num: activity.sequence_num,
     timestamp: activity.started_at ?? activity.ended_at,
@@ -432,13 +255,21 @@ function summaryPendingWork(
 }
 
 export function projectRuntimeSummary(input: ProjectRuntimeSummaryInput): RuntimeSummary {
-  const events = eventsThroughCursor(input.events, input.up_to_sequence_num);
   const explanation = projectRuntimeExplanation({
     mission_id: input.mission_id,
     branch_id: input.branch_id,
     events: input.events as EventEnvelope[],
     as_of_sequence_num: input.up_to_sequence_num,
   });
+  return projectRuntimeSummaryFromExplanation(input, explanation);
+}
+
+/** Compatibility summary derived from one already-canonical explanation. */
+export function projectRuntimeSummaryFromExplanation(
+  input: ProjectRuntimeSummaryInput,
+  explanation: RuntimeExplanationProjection,
+): RuntimeSummary {
+  const events = eventsThroughCursor(input.events, input.up_to_sequence_num);
 
   const progress: RuntimeSummaryProgressEntry[] = explanation.activities.map((activity) => ({
     sequence_num: activity.sequence_num ?? 0,

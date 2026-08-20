@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeRuntimeEvent, projectRuntimeSummary } from '@agentlens/protocol/internal';
+import { projectRuntimeSummary } from '@agentlens/protocol/internal';
 import type { MissionEventRecord } from '@agentlens/protocol';
 
 function event(
@@ -20,31 +20,6 @@ function event(
     metadata: {},
   };
 }
-
-describe('describeRuntimeEvent', () => {
-  it('returns null for noisy span events', () => {
-    expect(describeRuntimeEvent(event('span.started', {}))).toBeNull();
-    expect(describeRuntimeEvent(event('span.completed', {}))).toBeNull();
-  });
-
-  it('describes tool and task events generically', () => {
-    expect(describeRuntimeEvent(event('tool.called', { tool_name: 'grep', agent_id: 'researcher' }, 1))).toContain('grep');
-    expect(describeRuntimeEvent(event('task.started', { task: 'Collect logs', agent_id: 'worker' }, 2))).toContain('Collect logs');
-  });
-
-  it('does not turn workload events into Core narrative', () => {
-    expect(
-      describeRuntimeEvent(
-        event('hypothesis.proposed', { 'hypothesis.description': 'RF interference on sector 3' }, 3),
-      ),
-    ).toBeNull();
-    expect(
-      describeRuntimeEvent(
-        event('decision.made', { 'decision.type': 'root_cause', 'decision.summary': 'Faulty antenna' }, 4),
-      ),
-    ).toBeNull();
-  });
-});
 
 describe('projectRuntimeSummary', () => {
   it('uses the explanation as the single run status and phase authority', () => {

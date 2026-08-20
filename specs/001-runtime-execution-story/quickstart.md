@@ -22,7 +22,7 @@ pnpm --filter @agentlens/protocol build
 ## 2. Run targeted backend/runtime-story tests
 
 ```bash
-node .\node_modules\vitest\vitest.mjs run tests/unit/explanationProjection.test.ts tests/unit/summaryProjection.test.ts tests/unit/projection.test.ts tests/unit/routes.test.ts tests/unit/activityProjection.test.ts
+node .\node_modules\vitest\vitest.mjs run tests/unit/directRuntimeExplanation.test.ts tests/unit/explanationProjection.test.ts tests/unit/summaryProjection.test.ts tests/unit/projection.test.ts tests/unit/routes.test.ts
 ```
 
 These tests should confirm:

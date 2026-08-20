@@ -215,4 +215,62 @@ describe('R0-B2a downstream surface convergence', () => {
       outcome: 'Failure',
     });
   });
+
+  it('attaches canonical status by collision-safe runtime span identity', () => {
+    const scopedSpanId = 'child::trace-child::same-local-span';
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'surface-mission',
+      branch_id: 'child',
+      events: [{
+        id: 'event-1',
+        mission_id: 'surface-mission',
+        branch_id: 'child',
+        sequence_num: 1,
+        branch_sequence_num: 1,
+        event_type: 'span.failed',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        span_id: scopedSpanId,
+        trace_id: 'trace-child',
+        source_span_id: 'same-local-span',
+        payload: { operation_name: 'execute_tool', status_code: 'ERROR', 'gen_ai.tool.name': 'search' },
+        metadata: {},
+      }] as EventEnvelope[],
+    });
+    const nodes = attachExplanationToNodes([{
+      id: scopedSpanId,
+      type: 'tool',
+      label: 'structural span',
+      status: 'completed',
+      position: { x: 0, y: 0 },
+      span_id: scopedSpanId,
+      source_span_id: 'same-local-span',
+      metadata: {},
+    }], explanation);
+
+    expect(nodes[0]?.status).toBe('failed');
+    expect(nodes[0]?.activity?.source_span_id).toBe(scopedSpanId);
+  });
+
+  it('does not publish raw Graph lifecycle when no canonical activity is observable', () => {
+    const explanation = projectRuntimeExplanation({
+      mission_id: 'surface-mission',
+      branch_id: 'main',
+      events: [],
+    });
+    const nodes = attachExplanationToNodes([{
+      id: 'opaque-span',
+      type: 'task',
+      label: 'opaque structural span',
+      status: 'completed',
+      position: { x: 0, y: 0 },
+      span_id: 'opaque-span',
+      source_span_id: 'opaque-span',
+      metadata: {},
+    }], explanation);
+
+    expect(nodes[0]).toMatchObject({
+      status: 'unknown',
+      activity: undefined,
+    });
+  });
 });

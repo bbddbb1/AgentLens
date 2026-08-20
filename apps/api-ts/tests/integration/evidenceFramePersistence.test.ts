@@ -648,6 +648,7 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
     );
     expect(childRows.rowCount).toBe(0);
     const childBefore = await missionStore.getReplayFromTelemetry(mission.id, child!.id);
+    const childExplanationBefore = await missionStore.getRuntimeExplanation(mission.id, child!.id, cutoff);
     expect(childBefore?.current_state?.interrupts['fork-request']).toMatchObject({
       reason: 'exact reason', decision_state: 'recorded', runtime_outcome: 'awaiting_interaction',
     });
@@ -661,6 +662,9 @@ suite('R0-A PostgreSQL evidence/frame foundation', () => {
       reason: 'child-local collision', resume_token: 'child-fork-token-0123456789',
     });
     const childWithLocal = await missionStore.getReplayFromTelemetry(mission.id, child!.id);
+    const childExplanationReread = await missionStore.getRuntimeExplanation(mission.id, child!.id, cutoff);
+    expect(childExplanationReread).toEqual(childExplanationBefore);
+    expect(childExplanationReread?.activities.some((activity) => activity.id === 'human:fork-request')).toBe(true);
     const colliding = Object.values(childWithLocal?.current_state?.interrupts ?? {})
       .filter((interrupt) => String(interrupt.interrupt_id).endsWith('fork-request'));
     expect(colliding).toHaveLength(2);
